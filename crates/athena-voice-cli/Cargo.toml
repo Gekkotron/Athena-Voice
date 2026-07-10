@@ -8,6 +8,9 @@ authors.workspace = true
 repository.workspace = true
 description = "Athena-Voice command-line binary."
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "athena-voice"
 path = "src/main.rs"
@@ -28,6 +31,8 @@ athena-voice-storage = { path = "../athena-voice-storage" }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
+serial_test = "3"
+tempfile = "3"
 
 [lints]
 workspace = true

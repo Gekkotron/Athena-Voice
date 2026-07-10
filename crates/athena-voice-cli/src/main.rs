@@ -2,13 +2,12 @@
 
 use clap::Parser;
 
-mod cli;
-
 fn main() -> anyhow::Result<()> {
-    let cli = cli::Cli::parse();
+    let cli = athena_voice_cli::cli::Cli::parse();
     match cli.command {
-        cli::Command::Serve(args) => {
-            println!("stub: serve {args:?}");
+        athena_voice_cli::cli::Command::Serve(args) => {
+            let cfg = athena_voice_cli::config::load(&args.config)?;
+            println!("stub: serve {args:?} → {cfg:?}");
             Ok(())
         }
     }

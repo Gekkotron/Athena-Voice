@@ -1,0 +1,12 @@
+# Athena-Voice — example configuration.
+# Copy to `athena.toml` and adjust.
+
+locales = ["fr", "en"]
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[storage]
+# Any sqlx-compatible URL. Use "sqlite::memory:" for ephemeral tests.
+database_url = "sqlite:./athena.db"
