@@ -19,7 +19,7 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    /// Opens a SQLite database at `url` (e.g. `"sqlite:./athena.db"` or `"sqlite::memory:"`),
+    /// Opens a `SQLite` database at `url` (e.g. `"sqlite:./athena.db"` or `"sqlite::memory:"`),
     /// enables WAL mode, and applies migrations.
     pub async fn open(url: &str) -> Result<Self, StoreError> {
         let opts = SqliteConnectOptions::from_str(url)
@@ -231,17 +231,46 @@ impl Store for SqliteStore {
 
     async fn provision_satellite(
         &self,
-        _id: SatelliteId,
-        _api_key_hash: &str,
+        id: SatelliteId,
+        api_key_hash: &str,
     ) -> Result<(), StoreError> {
-        unimplemented!("Task 14")
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO satellites (id, api_key_hash, created_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(id) DO UPDATE SET api_key_hash = excluded.api_key_hash",
+        )
+        .bind(id.as_str())
+        .bind(api_key_hash)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn find_satellite(
         &self,
-        _id: &SatelliteId,
+        id: &SatelliteId,
     ) -> Result<Option<SatelliteRow>, StoreError> {
-        unimplemented!("Task 14")
+        let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, api_key_hash, created_at, last_seen FROM satellites WHERE id = ?1",
+        )
+        .bind(id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((raw_id, hash, created, last_seen)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(SatelliteRow {
+            id: SatelliteId::new(raw_id).map_err(decode_err)?,
+            api_key_hash: hash,
+            created_at: DateTime::parse_from_rfc3339(&created)
+                .map_err(decode_err)?
+                .with_timezone(&Utc),
+            last_seen: last_seen
+                .map(|s| DateTime::parse_from_rfc3339(&s).map(|d| d.with_timezone(&Utc)))
+                .transpose()
+                .map_err(decode_err)?,
+        }))
     }
 }
 
