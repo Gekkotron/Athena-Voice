@@ -181,12 +181,28 @@ impl Store for SqliteStore {
 
     async fn append_error(
         &self,
-        _session: SessionId,
-        _stage: Stage,
-        _variant: &str,
-        _message: &str,
+        session: SessionId,
+        stage: Stage,
+        variant: &str,
+        message: &str,
     ) -> Result<(), StoreError> {
-        unimplemented!("Task 12")
+        let stage_str = serde_json::to_value(stage)?
+            .as_str()
+            .ok_or_else(|| StoreError::NotFound("stage serde".into()))?
+            .to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO errors (session, stage, variant, message, at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(session.to_string())
+        .bind(stage_str)
+        .bind(variant)
+        .bind(message)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn skill_kv_get(
