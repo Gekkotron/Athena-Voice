@@ -1,0 +1,27 @@
+[package]
+name = "athena-voice-providers"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "STT / LLM / TTS provider adapters for Athena-Voice (Plan 2: fakes only)."
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+toml = "0.8"
+
+[lints]
+workspace = true

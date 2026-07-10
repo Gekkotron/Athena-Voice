@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/athena-voice-core",
     "crates/athena-voice-storage",
+    "crates/athena-voice-providers",
+    "crates/athena-voice-runtime",
     "crates/athena-voice-cli",
 ]
 
@@ -23,7 +25,11 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # runtime
+dashmap = "6"
+futures = "0.3"
+rumqttc = { version = "0.24", default-features = false, features = ["use-native-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs"] }
+tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }
 
 # tracing

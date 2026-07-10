@@ -1,0 +1,38 @@
+[package]
+name = "athena-voice-runtime"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Actor DAG, MQTT client, satellite adapter, and event bus for Athena-Voice."
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+rumqttc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+toml = "0.8"
+
+athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
+athena-voice-providers = { path = "../athena-voice-providers", version = "0.1" }
+athena-voice-storage = { path = "../athena-voice-storage", version = "0.1" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+rumqttd = { version = "0.19", default-features = false }
+tempfile = "3"
+portpicker = "0.1"
+
+[lints]
+workspace = true
