@@ -9,6 +9,18 @@ repository.workspace = true
 description = "Persistence layer for Athena-Voice (SQLite default, Postgres feature)."
 
 [dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+athena-voice-core = { path = "../athena-voice-core" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true
