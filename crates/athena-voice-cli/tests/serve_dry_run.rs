@@ -18,18 +18,23 @@ port = 0
 
 [storage]
 database_url = "sqlite::memory:"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice"
+
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"
         "#
     )
     .unwrap();
 
     Command::cargo_bin("athena-voice")
         .unwrap()
-        .args([
-            "serve",
-            "--dry-run",
-            "--config",
-            cfg.path().to_str().unwrap(),
-        ])
+        .args(["serve", "--dry-run", "--config", cfg.path().to_str().unwrap()])
         .assert()
         .success()
         .stdout(predicate::str::contains("ready"));

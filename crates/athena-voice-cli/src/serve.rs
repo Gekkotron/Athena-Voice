@@ -1,3 +1,8 @@
+use std::sync::Arc;
+
+use athena_voice_providers::ProviderFactory;
+use athena_voice_runtime::Runtime;
+use athena_voice_runtime::mqtt::MqttConfig as RuntimeMqttConfig;
 use athena_voice_storage::SqliteStore;
 
 use crate::cli::ServeArgs;
@@ -25,7 +30,20 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let factory = Arc::new(ProviderFactory::new(&cfg.providers));
+    let runtime_mqtt = RuntimeMqttConfig {
+        host: cfg.mqtt.host.clone(),
+        port: cfg.mqtt.port,
+        client_id: cfg.mqtt.client_id.clone(),
+        username: cfg.mqtt.username.clone(),
+        password: cfg.mqtt.password.clone(),
+        keep_alive_secs: cfg.mqtt.keep_alive_secs,
+    };
+    let runtime = Runtime::spawn(runtime_mqtt, factory)?;
+    tracing::info!("runtime spawned; awaiting SIGINT");
+
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("shutting down");
+    runtime.shutdown().await;
     Ok(())
 }

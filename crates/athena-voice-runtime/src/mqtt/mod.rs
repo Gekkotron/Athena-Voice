@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::error::RuntimeError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MqttConfig {
     pub host: String,
     pub port: u16,
