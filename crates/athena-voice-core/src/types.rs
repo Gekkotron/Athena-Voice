@@ -84,7 +84,11 @@ mod tests {
 
     #[test]
     fn transcript_serde_roundtrip_final() {
-        let a = Transcript { text: "hello".into(), is_final: true, confidence: Some(0.95) };
+        let a = Transcript {
+            text: "hello".into(),
+            is_final: true,
+            confidence: Some(0.95),
+        };
         let json = serde_json::to_string(&a).unwrap();
         assert!(json.contains("\"is_final\":true"));
         let b: Transcript = serde_json::from_str(&json).unwrap();
@@ -95,9 +99,16 @@ mod tests {
 
     #[test]
     fn transcript_serde_omits_none_confidence() {
-        let a = Transcript { text: "hi".into(), is_final: false, confidence: None };
+        let a = Transcript {
+            text: "hi".into(),
+            is_final: false,
+            confidence: None,
+        };
         let json = serde_json::to_string(&a).unwrap();
-        assert!(!json.contains("confidence"), "unexpected key present in {json}");
+        assert!(
+            !json.contains("confidence"),
+            "unexpected key present in {json}"
+        );
     }
 
     #[test]
@@ -105,7 +116,11 @@ mod tests {
         let mut slots = std::collections::BTreeMap::new();
         slots.insert("city".into(), serde_json::json!("Paris"));
         slots.insert("day".into(), serde_json::json!(1));
-        let a = Intent { name: "weather.query".into(), slots, confidence: 0.87 };
+        let a = Intent {
+            name: "weather.query".into(),
+            slots,
+            confidence: 0.87,
+        };
         let json = serde_json::to_string(&a).unwrap();
         let b: Intent = serde_json::from_str(&json).unwrap();
         assert_eq!(a.name, b.name);
@@ -115,7 +130,10 @@ mod tests {
 
     #[test]
     fn completion_serde_roundtrip() {
-        let a = Completion { text: "il fait beau".into(), finish: FinishReason::Stop };
+        let a = Completion {
+            text: "il fait beau".into(),
+            finish: FinishReason::Stop,
+        };
         let json = serde_json::to_string(&a).unwrap();
         assert!(json.contains("\"finish\":\"stop\""));
         let b: Completion = serde_json::from_str(&json).unwrap();

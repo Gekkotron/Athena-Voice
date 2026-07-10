@@ -13,7 +13,9 @@ async fn record_and_get_session() {
     let sat = SatelliteId::new("phone-01").unwrap();
     let loc = Locale::new("fr").unwrap();
 
-    s.record_session(sid, sat.clone(), loc.clone()).await.unwrap();
+    s.record_session(sid, sat.clone(), loc.clone())
+        .await
+        .unwrap();
 
     let row = s.get_session(sid).await.unwrap().expect("session row");
     assert_eq!(row.session, sid);
@@ -27,9 +29,13 @@ async fn record_and_get_session() {
 async fn finalize_updates_outcome_and_ended_at() {
     let s = store().await;
     let sid = SessionId::new_v4();
-    s.record_session(sid, SatelliteId::new("phone-01").unwrap(), Locale::new("en").unwrap())
-        .await
-        .unwrap();
+    s.record_session(
+        sid,
+        SatelliteId::new("phone-01").unwrap(),
+        Locale::new("en").unwrap(),
+    )
+    .await
+    .unwrap();
 
     s.finalize_session(sid, Outcome::Ok).await.unwrap();
 

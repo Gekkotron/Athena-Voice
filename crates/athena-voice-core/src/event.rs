@@ -130,7 +130,13 @@ mod tests {
     #[test]
     fn outcome_variants_snake_case() {
         assert_eq!(serde_json::to_string(&Outcome::Ok).unwrap(), "\"ok\"");
-        assert_eq!(serde_json::to_string(&Outcome::Overloaded).unwrap(), "\"overloaded\"");
-        assert_eq!(serde_json::to_string(&Outcome::Orphaned).unwrap(), "\"orphaned\"");
+        assert_eq!(
+            serde_json::to_string(&Outcome::Overloaded).unwrap(),
+            "\"overloaded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Outcome::Orphaned).unwrap(),
+            "\"orphaned\""
+        );
     }
 }

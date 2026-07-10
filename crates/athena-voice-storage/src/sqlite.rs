@@ -80,15 +80,13 @@ impl Store for SqliteStore {
             .as_str()
             .ok_or_else(|| StoreError::NotFound("outcome serde".into()))?
             .to_string();
-        let n = sqlx::query(
-            "UPDATE sessions SET ended_at = ?1, outcome = ?2 WHERE session = ?3",
-        )
-        .bind(now)
-        .bind(outcome_str)
-        .bind(session.to_string())
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
+        let n = sqlx::query("UPDATE sessions SET ended_at = ?1, outcome = ?2 WHERE session = ?3")
+            .bind(now)
+            .bind(outcome_str)
+            .bind(session.to_string())
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
         if n == 0 {
             return Err(StoreError::NotFound(format!("session {session}")));
         }
@@ -96,14 +94,20 @@ impl Store for SqliteStore {
     }
 
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionRow>, StoreError> {
-        let row_opt: Option<(String, String, String, String, Option<String>, Option<String>)> =
-            sqlx::query_as(
-                "SELECT session, satellite, locale, started_at, ended_at, outcome \
+        let row_opt: Option<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
+            "SELECT session, satellite, locale, started_at, ended_at, outcome \
                  FROM sessions WHERE session = ?1",
-            )
-            .bind(session.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
+        )
+        .bind(session.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
         let Some((s, sat, loc, started, ended, outcome)) = row_opt else {
             return Ok(None);
         };
@@ -138,15 +142,13 @@ impl Store for SqliteStore {
             .to_string();
         let payload = serde_json::to_string(&value)?;
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO events (session, kind, payload, at) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind(session)
-        .bind(kind)
-        .bind(payload)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
+        sqlx::query("INSERT INTO events (session, kind, payload, at) VALUES (?1, ?2, ?3, ?4)")
+            .bind(session)
+            .bind(kind)
+            .bind(payload)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -206,13 +208,12 @@ impl Store for SqliteStore {
     }
 
     async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        let row: Option<(Vec<u8>,)> = sqlx::query_as(
-            "SELECT value FROM skill_kv WHERE skill = ?1 AND key = ?2",
-        )
-        .bind(skill)
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Vec<u8>,)> =
+            sqlx::query_as("SELECT value FROM skill_kv WHERE skill = ?1 AND key = ?2")
+                .bind(skill)
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(v,)| v))
     }
 
@@ -247,10 +248,7 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn find_satellite(
-        &self,
-        id: &SatelliteId,
-    ) -> Result<Option<SatelliteRow>, StoreError> {
+    async fn find_satellite(&self, id: &SatelliteId) -> Result<Option<SatelliteRow>, StoreError> {
         let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
             "SELECT id, api_key_hash, created_at, last_seen FROM satellites WHERE id = ?1",
         )
@@ -290,6 +288,9 @@ mod tests {
     #[tokio::test]
     async fn open_uncreatable_path_returns_error() {
         let res = SqliteStore::open("sqlite:///nonexistent-parent-abc123xyz/db.sqlite").await;
-        assert!(res.is_err(), "expected error opening under a missing parent dir");
+        assert!(
+            res.is_err(),
+            "expected error opening under a missing parent dir"
+        );
     }
 }

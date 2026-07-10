@@ -19,7 +19,10 @@ pub fn init() -> Result<(), LoggingError> {
         return Err(LoggingError::AlreadyInit);
     }
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let json = fmt::layer().json().with_current_span(true).with_span_list(true);
+    let json = fmt::layer()
+        .json()
+        .with_current_span(true)
+        .with_span_list(true);
     tracing_subscriber::registry()
         .with(filter)
         .with(json)

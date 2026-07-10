@@ -49,6 +49,5 @@ pub trait Store: Send + Sync + 'static {
         api_key_hash: &str,
     ) -> Result<(), StoreError>;
 
-    async fn find_satellite(&self, id: &SatelliteId)
-    -> Result<Option<SatelliteRow>, StoreError>;
+    async fn find_satellite(&self, id: &SatelliteId) -> Result<Option<SatelliteRow>, StoreError>;
 }

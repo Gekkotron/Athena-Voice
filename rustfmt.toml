@@ -2,5 +2,8 @@ edition = "2024"
 max_width = 100
 tab_spaces = 4
 newline_style = "Unix"
-imports_granularity = "Crate"
-group_imports = "StdExternalCrate"
+
+# These are nightly-only in rustfmt and would warn on every stable run.
+# Enable once we move to a nightly rustfmt or once they stabilise:
+#   imports_granularity = "Crate"
+#   group_imports       = "StdExternalCrate"
