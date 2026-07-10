@@ -35,10 +35,16 @@ pub enum ConfigError {
     },
 
     #[error("failed to parse config: {0}")]
-    Parse(#[from] FigmentError),
+    Parse(Box<FigmentError>),
 
     #[error("invalid config: {0}")]
     Invalid(String),
+}
+
+impl From<FigmentError> for ConfigError {
+    fn from(e: FigmentError) -> Self {
+        Self::Parse(Box::new(e))
+    }
 }
 
 pub fn load(path: &Path) -> Result<Config, ConfigError> {
