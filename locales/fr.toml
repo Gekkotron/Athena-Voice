@@ -1,0 +1,11 @@
+locale = "fr"
+llm_system_prompt = "Tu es un assistant vocal utile, concis et amical. Réponds toujours en français."
+
+[error_phrases]
+stt_unavailable = "Je n'ai pas pu vous entendre."
+llm_unavailable = "Mon cerveau est hors ligne, réessayez plus tard."
+tts_unavailable = "Désolé, je ne peux pas parler pour le moment."
+overloaded      = "Le système est occupé, réessayez dans un instant."
+timeout         = "Désolé, j'ai mis trop de temps à répondre."
+protocol_error  = "Erreur de protocole, la session est annulée."
+bad_audio       = "Le format audio n'est pas supporté."
