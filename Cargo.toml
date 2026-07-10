@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
 repository = "https://github.com/Gekkotron/Athena-Voice"
