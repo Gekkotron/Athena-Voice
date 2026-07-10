@@ -30,26 +30,24 @@ pub fn spawn_tts(
         loop {
             tokio::select! {
                 () = cancel.cancelled() => break,
-                maybe = token_rx.recv() => match maybe {
-                    Some(tok) => {
-                        if !buf.is_empty() {
-                            buf.push(' ');
-                        }
-                        buf.push_str(&tok);
-                        // Flush on sentence boundary or when buffer is large.
-                        let should_flush = buf.chars().last().is_some_and(is_sentence_boundary)
-                            || buf.len() >= 100;
-                        if should_flush {
-                            seq = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx).await;
-                            buf.clear();
-                        }
-                    }
-                    None => {
+                maybe = token_rx.recv() => {
+                    let Some(tok) = maybe else {
                         // Drain remaining buffered text as one final sentence.
                         if !buf.is_empty() {
                             let _ = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx).await;
                         }
                         break;
+                    };
+                    if !buf.is_empty() {
+                        buf.push(' ');
+                    }
+                    buf.push_str(&tok);
+                    // Flush on sentence boundary or when buffer is large.
+                    let should_flush = buf.chars().last().is_some_and(is_sentence_boundary)
+                        || buf.len() >= 100;
+                    if should_flush {
+                        seq = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx).await;
+                        buf.clear();
                     }
                 }
             }
@@ -66,7 +64,10 @@ async fn flush(
     chunk_tx: &mpsc::Sender<Bytes>,
     event_tx: &broadcast::Sender<Event>,
 ) -> u32 {
-    let mut audio = match tts.synthesize(session, locale.clone(), text.to_string()).await {
+    let mut audio = match tts
+        .synthesize(session, locale.clone(), text.to_string())
+        .await
+    {
         Ok(s) => s,
         Err(err) => {
             warn!(error = %err, "tts synthesize failed");
@@ -80,7 +81,11 @@ async fn flush(
                 if chunk_tx.send(chunk).await.is_err() {
                     return seq;
                 }
-                let _ = event_tx.send(Event::TtsChunk { session, seq, bytes_len });
+                let _ = event_tx.send(Event::TtsChunk {
+                    session,
+                    seq,
+                    bytes_len,
+                });
                 seq = seq.saturating_add(1);
             }
             Err(err) => {

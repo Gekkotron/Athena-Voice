@@ -97,29 +97,73 @@ mod tests {
 
     #[test]
     fn stt_is_retryable_truth_table() {
-        assert!(SttError::Timeout { name: "fake", ms: 5000 }.is_retryable());
-        assert!(SttError::Unavailable { name: "fake", reason: "boom".into() }.is_retryable());
+        assert!(
+            SttError::Timeout {
+                name: "fake",
+                ms: 5000
+            }
+            .is_retryable()
+        );
+        assert!(
+            SttError::Unavailable {
+                name: "fake",
+                reason: "boom".into()
+            }
+            .is_retryable()
+        );
         assert!(!SttError::BadAudio("bad".into()).is_retryable());
-        assert!(!SttError::CircuitOpen { retry_after_ms: 60_000 }.is_retryable());
+        assert!(
+            !SttError::CircuitOpen {
+                retry_after_ms: 60_000
+            }
+            .is_retryable()
+        );
         assert!(!SttError::Cancelled.is_retryable());
     }
 
     #[test]
     fn llm_no_retry_by_default() {
-        assert!(!LlmError::Timeout { name: "fake", ms: 5000 }.is_retryable());
-        assert!(!LlmError::Unavailable { name: "fake", reason: "boom".into() }.is_retryable());
+        assert!(
+            !LlmError::Timeout {
+                name: "fake",
+                ms: 5000
+            }
+            .is_retryable()
+        );
+        assert!(
+            !LlmError::Unavailable {
+                name: "fake",
+                reason: "boom".into()
+            }
+            .is_retryable()
+        );
     }
 
     #[test]
     fn tts_retryable_on_transient() {
-        assert!(TtsError::Timeout { name: "fake", ms: 5000 }.is_retryable());
-        assert!(TtsError::Unavailable { name: "fake", reason: "boom".into() }.is_retryable());
+        assert!(
+            TtsError::Timeout {
+                name: "fake",
+                ms: 5000
+            }
+            .is_retryable()
+        );
+        assert!(
+            TtsError::Unavailable {
+                name: "fake",
+                reason: "boom".into()
+            }
+            .is_retryable()
+        );
         assert!(!TtsError::Cancelled.is_retryable());
     }
 
     #[test]
     fn variant_names_are_stable_strings() {
-        assert_eq!(SttError::Timeout { name: "x", ms: 0 }.variant_name(), "Timeout");
+        assert_eq!(
+            SttError::Timeout { name: "x", ms: 0 }.variant_name(),
+            "Timeout"
+        );
         assert_eq!(LlmError::Cancelled.variant_name(), "Cancelled");
         assert_eq!(TtsError::BadAudio(String::new()).variant_name(), "BadAudio");
     }

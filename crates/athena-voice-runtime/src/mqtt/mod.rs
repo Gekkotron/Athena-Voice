@@ -36,7 +36,10 @@ impl MqttClient {
             opts.set_credentials(u, p);
         }
         let (tx, event_loop) = AsyncClient::new(opts, 128);
-        Ok(Self { tx, event_loop: Arc::new(Mutex::new(event_loop)) })
+        Ok(Self {
+            tx,
+            event_loop: Arc::new(Mutex::new(event_loop)),
+        })
     }
 }
 

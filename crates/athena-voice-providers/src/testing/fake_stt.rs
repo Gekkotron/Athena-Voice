@@ -40,7 +40,10 @@ impl FakeSttBuilder {
 
     #[must_use]
     pub fn build(self) -> FakeStt {
-        FakeStt { preset: self.preset, default: self.default }
+        FakeStt {
+            preset: self.preset,
+            default: self.default,
+        }
     }
 }
 
@@ -73,18 +76,28 @@ mod tests {
     use super::*;
 
     fn transcript(text: &str, is_final: bool) -> Transcript {
-        Transcript { text: text.into(), is_final, confidence: Some(1.0) }
+        Transcript {
+            text: text.into(),
+            is_final,
+            confidence: Some(1.0),
+        }
     }
 
     #[tokio::test]
     async fn emits_preset_transcripts_in_order() {
         let sid = SessionId::new_v4();
         let stt = FakeStt::builder()
-            .preset(sid, vec![transcript("bon", false), transcript("bonjour", true)])
+            .preset(
+                sid,
+                vec![transcript("bon", false), transcript("bonjour", true)],
+            )
             .build();
 
         let audio: AudioFrameStream = Box::pin(stream::empty());
-        let mut ts = stt.transcribe(sid, Locale::new("fr").unwrap(), audio).await.unwrap();
+        let mut ts = stt
+            .transcribe(sid, Locale::new("fr").unwrap(), audio)
+            .await
+            .unwrap();
         let a = ts.next().await.unwrap().unwrap();
         let b = ts.next().await.unwrap().unwrap();
         assert!(ts.next().await.is_none());
@@ -103,7 +116,10 @@ mod tests {
 
         let sid = SessionId::new_v4();
         let audio: AudioFrameStream = Box::pin(stream::empty());
-        let mut ts = stt.transcribe(sid, Locale::new("en").unwrap(), audio).await.unwrap();
+        let mut ts = stt
+            .transcribe(sid, Locale::new("en").unwrap(), audio)
+            .await
+            .unwrap();
         let final_t = ts.next().await.unwrap().unwrap();
         assert_eq!(final_t.text, "hello");
         assert!(final_t.is_final);
@@ -114,7 +130,10 @@ mod tests {
         let stt = FakeStt::builder().build();
         let sid = SessionId::new_v4();
         let audio: AudioFrameStream = Box::pin(stream::empty());
-        let mut ts = stt.transcribe(sid, Locale::new("en").unwrap(), audio).await.unwrap();
+        let mut ts = stt
+            .transcribe(sid, Locale::new("en").unwrap(), audio)
+            .await
+            .unwrap();
         assert!(ts.next().await.is_none());
     }
 

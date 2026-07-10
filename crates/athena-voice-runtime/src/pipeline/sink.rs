@@ -77,6 +77,9 @@ pub fn spawn_sink(
         {
             warn!(error = %e, "sink done publish failed");
         }
-        let _ = event_tx.send(Event::SessionEnded { session, outcome: Outcome::Ok });
+        let _ = event_tx.send(Event::SessionEnded {
+            session,
+            outcome: Outcome::Ok,
+        });
     })
 }

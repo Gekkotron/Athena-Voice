@@ -38,7 +38,12 @@ impl SessionManager {
         }
         self.map.insert(
             session,
-            SessionState { sat, locale, cancel: CancellationToken::new(), audio_tx },
+            SessionState {
+                sat,
+                locale,
+                cancel: CancellationToken::new(),
+                audio_tx,
+            },
         );
         Ok(())
     }
@@ -55,6 +60,9 @@ impl SessionManager {
     }
 
     pub fn cancel_all(&self) {
+        // DashMap requires the explicit `.iter()` method; `for entry in &self.map`
+        // wouldn't compile since DashMap doesn't expose IntoIterator for &Self.
+        #[allow(clippy::explicit_iter_loop)]
         for entry in self.map.iter() {
             entry.value().cancel.cancel();
         }
@@ -101,7 +109,10 @@ mod tests {
         let mgr = SessionManager::default();
         let (sid, sat, loc, tx) = state();
         mgr.open(sid, sat.clone(), loc.clone(), tx.clone()).unwrap();
-        assert!(matches!(mgr.open(sid, sat, loc, tx), Err(SessionExists { .. })));
+        assert!(matches!(
+            mgr.open(sid, sat, loc, tx),
+            Err(SessionExists { .. })
+        ));
     }
 
     #[tokio::test]

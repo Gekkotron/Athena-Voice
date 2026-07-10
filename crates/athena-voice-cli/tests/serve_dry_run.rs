@@ -34,7 +34,12 @@ tts = "fake"
 
     Command::cargo_bin("athena-voice")
         .unwrap()
-        .args(["serve", "--dry-run", "--config", cfg.path().to_str().unwrap()])
+        .args([
+            "serve",
+            "--dry-run",
+            "--config",
+            cfg.path().to_str().unwrap(),
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("ready"));

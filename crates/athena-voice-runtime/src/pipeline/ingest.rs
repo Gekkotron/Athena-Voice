@@ -37,7 +37,11 @@ mod tests {
     use athena_voice_core::ids::SessionId;
 
     fn frame(session: SessionId, seq: u32, pcm: &[u8]) -> AudioFrame {
-        AudioFrame { session, seq, pcm: Bytes::copy_from_slice(pcm) }
+        AudioFrame {
+            session,
+            seq,
+            pcm: Bytes::copy_from_slice(pcm),
+        }
     }
 
     #[tokio::test]

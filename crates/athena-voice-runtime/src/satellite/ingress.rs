@@ -60,7 +60,7 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
             };
             match poll_result {
                 Ok(rumqttc::Event::Incoming(rumqttc::Incoming::Publish(p))) => {
-                    handle_publish(&deps, &p.topic, &p.payload).await;
+                    handle_publish(&deps, &p.topic, &p.payload);
                 }
                 Ok(_) => {}
                 Err(err) => {
@@ -74,14 +74,14 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
     })
 }
 
-async fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
+fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
     let Some(parsed) = topics::parse_satellite_topic(topic) else {
         return;
     };
     match parsed {
         ParsedTopic::Start { sat, sid } => {
             let locale = extract_locale(payload).unwrap_or_else(|| Locale::new("en").unwrap());
-            open_session(deps, sat, sid, locale).await;
+            open_session(deps, sat, sid, locale);
         }
         ParsedTopic::Audio { sat: _, sid } => {
             if let Some(state) = deps.session_manager.get(sid) {
@@ -107,12 +107,7 @@ fn extract_locale(payload: &[u8]) -> Option<Locale> {
     Locale::new(raw).ok()
 }
 
-async fn open_session(
-    deps: &SatelliteDeps,
-    sat: SatelliteId,
-    sid: SessionId,
-    locale: Locale,
-) {
+fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: Locale) {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioFrame>(64);
     if deps
         .session_manager
@@ -224,7 +219,7 @@ fn spawn_transcript_egress(
                                 .await;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {},
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }

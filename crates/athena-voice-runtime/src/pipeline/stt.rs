@@ -77,8 +77,16 @@ mod tests {
                 .preset(
                     sid,
                     vec![
-                        Transcript { text: "bon".into(), is_final: false, confidence: None },
-                        Transcript { text: "bonjour".into(), is_final: true, confidence: None },
+                        Transcript {
+                            text: "bon".into(),
+                            is_final: false,
+                            confidence: None,
+                        },
+                        Transcript {
+                            text: "bonjour".into(),
+                            is_final: true,
+                            confidence: None,
+                        },
                     ],
                 )
                 .build(),
@@ -95,7 +103,11 @@ mod tests {
         );
 
         audio_tx
-            .send(AudioFrame { session: sid, seq: 0, pcm: Bytes::from_static(&[1]) })
+            .send(AudioFrame {
+                session: sid,
+                seq: 0,
+                pcm: Bytes::from_static(&[1]),
+            })
             .await
             .unwrap();
         drop(audio_tx);

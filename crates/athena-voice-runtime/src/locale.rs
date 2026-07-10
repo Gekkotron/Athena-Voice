@@ -25,7 +25,12 @@ pub fn load_pack(path: &Path) -> Result<LocalePack, RuntimeError> {
             path.display()
         )));
     }
-    for required in ["stt_unavailable", "llm_unavailable", "tts_unavailable", "overloaded"] {
+    for required in [
+        "stt_unavailable",
+        "llm_unavailable",
+        "tts_unavailable",
+        "overloaded",
+    ] {
         if !pack.error_phrases.contains_key(required) {
             return Err(RuntimeError::Locale(format!(
                 "{}: missing required error_phrases.{required}",
@@ -68,8 +73,9 @@ mod tests {
 
     #[test]
     fn missing_required_key_rejected() {
-        let mut f = tempfile::NamedTempFile::new().unwrap();
         use std::io::Write;
+
+        let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(
             f,
             r#"

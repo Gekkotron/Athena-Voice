@@ -54,8 +54,7 @@ impl Llm for FakeLlm {
             .rules
             .iter()
             .find(|(sub, _)| prompt.contains(sub))
-            .map(|(_, r)| r.clone())
-            .unwrap_or_else(|| fallback(&locale).to_string());
+            .map_or_else(|| fallback(&locale).to_string(), |(_, r)| r.clone());
         let tokens: Vec<String> = response.split_whitespace().map(String::from).collect();
         let s = stream::iter(tokens.into_iter().map(Ok::<_, BoxError>));
         Ok(Box::pin(s.boxed()))

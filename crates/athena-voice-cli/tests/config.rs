@@ -46,7 +46,10 @@ database_url = "sqlite::memory:"
     assert_eq!(c.mqtt.host, "127.0.0.1");
     assert_eq!(c.mqtt.port, 1883);
     assert_eq!(c.mqtt.client_id, "athena-voice");
-    assert!(matches!(c.providers.stt, athena_voice_providers::StageChoice::Fake));
+    assert!(matches!(
+        c.providers.stt,
+        athena_voice_providers::StageChoice::Fake
+    ));
 }
 
 #[test]

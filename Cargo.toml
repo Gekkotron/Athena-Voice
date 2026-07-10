@@ -55,6 +55,11 @@ pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Noisy pedantic lints muted while the codebase is still under construction:
+doc_markdown = "allow"          # We use natural prose in doc comments.
+must_use_candidate = "allow"    # Adding #[must_use] to every getter is churn.
+needless_pass_by_value = "allow"  # Actor-DAG code often takes owned values by design.
+result_large_err = "allow"      # Error variants with source strings are inherently large.
 
 [profile.release]
 lto = "thin"

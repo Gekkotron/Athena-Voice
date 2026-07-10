@@ -45,12 +45,20 @@ mod tests {
         let sid = SessionId::new_v4();
         let handle = spawn_router(t_rx, llm_tx, ev_tx, sid, CancellationToken::new());
 
-        t_tx.send(Transcript { text: "bon".into(), is_final: false, confidence: None })
-            .await
-            .unwrap();
-        t_tx.send(Transcript { text: "bonjour".into(), is_final: true, confidence: None })
-            .await
-            .unwrap();
+        t_tx.send(Transcript {
+            text: "bon".into(),
+            is_final: false,
+            confidence: None,
+        })
+        .await
+        .unwrap();
+        t_tx.send(Transcript {
+            text: "bonjour".into(),
+            is_final: true,
+            confidence: None,
+        })
+        .await
+        .unwrap();
         drop(t_tx);
 
         let prompt = llm_rx.recv().await.unwrap();

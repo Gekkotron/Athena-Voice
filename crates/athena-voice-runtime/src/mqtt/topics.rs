@@ -96,14 +96,20 @@ mod tests {
     fn parse_audio() {
         let sid = SessionId::new_v4();
         let topic = format!("athena/sat/phone-01/session/{sid}/audio");
-        assert!(matches!(parse_satellite_topic(&topic), Some(ParsedTopic::Audio { .. })));
+        assert!(matches!(
+            parse_satellite_topic(&topic),
+            Some(ParsedTopic::Audio { .. })
+        ));
     }
 
     #[test]
     fn parse_end() {
         let sid = SessionId::new_v4();
         let topic = format!("athena/sat/phone-01/session/{sid}/end");
-        assert!(matches!(parse_satellite_topic(&topic), Some(ParsedTopic::End { .. })));
+        assert!(matches!(
+            parse_satellite_topic(&topic),
+            Some(ParsedTopic::End { .. })
+        ));
     }
 
     #[test]

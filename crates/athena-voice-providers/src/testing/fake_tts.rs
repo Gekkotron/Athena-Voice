@@ -46,7 +46,11 @@ mod tests {
     async fn one_chunk_per_word() {
         let tts = FakeTts::new();
         let mut audio = tts
-            .synthesize(SessionId::new_v4(), Locale::new("en").unwrap(), "hello world".into())
+            .synthesize(
+                SessionId::new_v4(),
+                Locale::new("en").unwrap(),
+                "hello world".into(),
+            )
             .await
             .unwrap();
         let mut chunks = Vec::new();
@@ -62,7 +66,11 @@ mod tests {
     async fn empty_text_empty_stream() {
         let tts = FakeTts::new();
         let mut audio = tts
-            .synthesize(SessionId::new_v4(), Locale::new("en").unwrap(), String::new())
+            .synthesize(
+                SessionId::new_v4(),
+                Locale::new("en").unwrap(),
+                String::new(),
+            )
             .await
             .unwrap();
         assert!(audio.next().await.is_none());
