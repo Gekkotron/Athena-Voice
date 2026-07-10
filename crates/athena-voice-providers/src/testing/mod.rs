@@ -2,3 +2,4 @@
 
 pub mod fake_llm;
 pub mod fake_stt;
+pub mod fake_tts;
