@@ -205,21 +205,28 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn skill_kv_get(
-        &self,
-        _skill: &str,
-        _key: &str,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        unimplemented!("Task 13")
+    async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let row: Option<(Vec<u8>,)> = sqlx::query_as(
+            "SELECT value FROM skill_kv WHERE skill = ?1 AND key = ?2",
+        )
+        .bind(skill)
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(v,)| v))
     }
 
-    async fn skill_kv_set(
-        &self,
-        _skill: &str,
-        _key: &str,
-        _value: &[u8],
-    ) -> Result<(), StoreError> {
-        unimplemented!("Task 13")
+    async fn skill_kv_set(&self, skill: &str, key: &str, value: &[u8]) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO skill_kv (skill, key, value) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(skill, key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(skill)
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn provision_satellite(
