@@ -124,16 +124,59 @@ impl Store for SqliteStore {
         }))
     }
 
-    async fn append_event(&self, _event: &Event) -> Result<(), StoreError> {
-        unimplemented!("Task 11")
+    async fn append_event(&self, event: &Event) -> Result<(), StoreError> {
+        let value = serde_json::to_value(event)?;
+        let kind = value
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let session = value
+            .get("session")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| StoreError::NotFound("event has no `session` field".into()))?
+            .to_string();
+        let payload = serde_json::to_string(&value)?;
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO events (session, kind, payload, at) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(session)
+        .bind(kind)
+        .bind(payload)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn list_events_by_session(
         &self,
-        _session: SessionId,
-        _limit: u32,
+        session: SessionId,
+        limit: u32,
     ) -> Result<Vec<EventRow>, StoreError> {
-        unimplemented!("Task 11")
+        let rows: Vec<(i64, String, String, String, String)> = sqlx::query_as(
+            "SELECT id, session, kind, payload, at FROM events \
+             WHERE session = ?1 ORDER BY id ASC LIMIT ?2",
+        )
+        .bind(session.to_string())
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|(id, sess, kind, payload, at)| {
+                Ok(EventRow {
+                    id,
+                    session: sess.parse().map_err(decode_err)?,
+                    kind,
+                    payload: serde_json::from_str(&payload)?,
+                    at: DateTime::parse_from_rfc3339(&at)
+                        .map_err(decode_err)?
+                        .with_timezone(&Utc),
+                })
+            })
+            .collect()
     }
 
     async fn append_error(
