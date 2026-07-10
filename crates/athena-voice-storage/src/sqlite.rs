@@ -1,9 +1,16 @@
 use std::str::FromStr;
 
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
+use athena_voice_core::event::{Event, Outcome, Stage};
+use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
+
 use crate::error::StoreError;
+use crate::models::{EventRow, SatelliteRow, SessionRow};
+use crate::store::Store;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -37,6 +44,141 @@ impl SqliteStore {
     }
 }
 
+fn decode_err<E: std::error::Error + Send + Sync + 'static>(e: E) -> StoreError {
+    StoreError::Db(sqlx::Error::Decode(Box::new(e)))
+}
+
+#[async_trait]
+impl Store for SqliteStore {
+    async fn record_session(
+        &self,
+        session: SessionId,
+        satellite: SatelliteId,
+        locale: Locale,
+    ) -> Result<(), StoreError> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO sessions (session, satellite, locale, started_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(session.to_string())
+        .bind(satellite.as_str())
+        .bind(locale.as_str())
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn finalize_session(
+        &self,
+        session: SessionId,
+        outcome: Outcome,
+    ) -> Result<(), StoreError> {
+        let now = Utc::now().to_rfc3339();
+        let outcome_str = serde_json::to_value(outcome)?
+            .as_str()
+            .ok_or_else(|| StoreError::NotFound("outcome serde".into()))?
+            .to_string();
+        let n = sqlx::query(
+            "UPDATE sessions SET ended_at = ?1, outcome = ?2 WHERE session = ?3",
+        )
+        .bind(now)
+        .bind(outcome_str)
+        .bind(session.to_string())
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Err(StoreError::NotFound(format!("session {session}")));
+        }
+        Ok(())
+    }
+
+    async fn get_session(&self, session: SessionId) -> Result<Option<SessionRow>, StoreError> {
+        let row_opt: Option<(String, String, String, String, Option<String>, Option<String>)> =
+            sqlx::query_as(
+                "SELECT session, satellite, locale, started_at, ended_at, outcome \
+                 FROM sessions WHERE session = ?1",
+            )
+            .bind(session.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
+        let Some((s, sat, loc, started, ended, outcome)) = row_opt else {
+            return Ok(None);
+        };
+        Ok(Some(SessionRow {
+            session: s.parse().map_err(decode_err)?,
+            satellite: SatelliteId::new(sat).map_err(decode_err)?,
+            locale: Locale::new(loc).map_err(decode_err)?,
+            started_at: DateTime::parse_from_rfc3339(&started)
+                .map_err(decode_err)?
+                .with_timezone(&Utc),
+            ended_at: ended
+                .map(|s| DateTime::parse_from_rfc3339(&s).map(|d| d.with_timezone(&Utc)))
+                .transpose()
+                .map_err(decode_err)?,
+            outcome: outcome
+                .map(|s| serde_json::from_value::<Outcome>(serde_json::Value::String(s)))
+                .transpose()?,
+        }))
+    }
+
+    async fn append_event(&self, _event: &Event) -> Result<(), StoreError> {
+        unimplemented!("Task 11")
+    }
+
+    async fn list_events_by_session(
+        &self,
+        _session: SessionId,
+        _limit: u32,
+    ) -> Result<Vec<EventRow>, StoreError> {
+        unimplemented!("Task 11")
+    }
+
+    async fn append_error(
+        &self,
+        _session: SessionId,
+        _stage: Stage,
+        _variant: &str,
+        _message: &str,
+    ) -> Result<(), StoreError> {
+        unimplemented!("Task 12")
+    }
+
+    async fn skill_kv_get(
+        &self,
+        _skill: &str,
+        _key: &str,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        unimplemented!("Task 13")
+    }
+
+    async fn skill_kv_set(
+        &self,
+        _skill: &str,
+        _key: &str,
+        _value: &[u8],
+    ) -> Result<(), StoreError> {
+        unimplemented!("Task 13")
+    }
+
+    async fn provision_satellite(
+        &self,
+        _id: SatelliteId,
+        _api_key_hash: &str,
+    ) -> Result<(), StoreError> {
+        unimplemented!("Task 14")
+    }
+
+    async fn find_satellite(
+        &self,
+        _id: &SatelliteId,
+    ) -> Result<Option<SatelliteRow>, StoreError> {
+        unimplemented!("Task 14")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,7 +194,6 @@ mod tests {
 
     #[tokio::test]
     async fn open_uncreatable_path_returns_error() {
-        // Parent directory doesn't exist and sqlx does not auto-create parents.
         let res = SqliteStore::open("sqlite:///nonexistent-parent-abc123xyz/db.sqlite").await;
         assert!(res.is_err(), "expected error opening under a missing parent dir");
     }
