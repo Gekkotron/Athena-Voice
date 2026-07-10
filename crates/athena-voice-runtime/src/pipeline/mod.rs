@@ -1,1 +1,4 @@
-//! Placeholder; individual actors fill in Tasks 11-14.
+//! Pipeline actors. Wired together in `Runtime::spawn` (Task 18).
+
+pub mod ingest;
+pub mod vad;
