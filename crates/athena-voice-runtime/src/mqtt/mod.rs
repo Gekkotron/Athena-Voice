@@ -1,1 +1,3 @@
-//! Placeholder; topics fills in Task 7, client in Task 8.
+//! MQTT wrapper for Athena-Voice runtime.
+
+pub mod topics;
