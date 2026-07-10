@@ -65,7 +65,8 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
-        with: { tool: cargo-llvm-cov,nextest }
+        with:
+          tool: cargo-llvm-cov,nextest
       - name: Generate coverage
         run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4

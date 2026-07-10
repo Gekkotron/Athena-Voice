@@ -25,8 +25,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-athena-voice-core = { path = "../athena-voice-core" }
-athena-voice-storage = { path = "../athena-voice-storage" }
+athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
+athena-voice-storage = { path = "../athena-voice-storage", version = "0.1" }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

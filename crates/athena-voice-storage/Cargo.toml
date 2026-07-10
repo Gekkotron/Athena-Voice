@@ -17,7 +17,7 @@ sqlx = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
-athena-voice-core = { path = "../athena-voice-core" }
+athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
