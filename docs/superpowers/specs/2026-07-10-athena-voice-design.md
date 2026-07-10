@@ -1,7 +1,7 @@
 # Athena-Voice — Design Spec
 
 **Date:** 2026-07-10
-**Author:** Gekkotron (`Gekkotron`)
+**Author:** Gekkotron
 **Status:** Approved for implementation planning
 **Predecessor:** [`github.com/Gekkotron/VoiceAssist`](https://github.com/Gekkotron/VoiceAssist) — used as a **behaviour reference only**; no code is reused (see §3).
 
