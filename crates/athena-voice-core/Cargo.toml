@@ -12,6 +12,7 @@ description = "Type vocabulary and provider traits for Athena-Voice."
 async-trait = { workspace = true }
 base64 = "0.22"
 bytes = { workspace = true }
+futures-core = "0.3"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
