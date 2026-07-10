@@ -6,3 +6,4 @@ pub mod factory;
 pub mod testing;
 
 pub use error::{LlmError, SttError, TtsError};
+pub use factory::{ProviderConfig, ProviderFactory, StageChoice};
