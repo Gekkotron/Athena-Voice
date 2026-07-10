@@ -1,1 +1,5 @@
-//! Placeholder; ingress + egress in Tasks 15-16.
+//! SatelliteAdapter: bidirectional MQTT ↔ pipeline bridge.
+
+pub mod ingress;
+
+pub use ingress::{SatelliteDeps, spawn_satellite};
