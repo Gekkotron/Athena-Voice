@@ -172,7 +172,7 @@ mod tests {
         assert!(SatelliteId::new("Phone-01").is_err());
         assert!(SatelliteId::new("phone_01").is_err());
         assert!(SatelliteId::new("phone/01").is_err());
-        assert!(SatelliteId::new(&"a".repeat(65)).is_err());
+        assert!(SatelliteId::new("a".repeat(65)).is_err());
     }
 
     #[test]

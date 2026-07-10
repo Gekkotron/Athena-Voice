@@ -84,9 +84,6 @@ mod tests {
         let ja = Locale::new("ja").unwrap();
         let msg = CoreError::Cancelled.to_user_message(&ja);
         assert!(!msg.is_empty());
-        assert!(
-            msg.chars().all(|c| c.is_ascii()),
-            "expected ASCII EN fallback, got: {msg}"
-        );
+        assert!(msg.is_ascii(), "expected ASCII EN fallback, got: {msg}");
     }
 }

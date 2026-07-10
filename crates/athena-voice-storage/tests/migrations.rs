@@ -1,4 +1,4 @@
-//! Tests that the initial migration applies cleanly to an in-memory SQLite.
+//! Tests that the initial migration applies cleanly to an in-memory `SQLite`.
 
 use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
