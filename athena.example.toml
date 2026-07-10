@@ -10,3 +10,16 @@ port = 8080
 [storage]
 # Any sqlx-compatible URL. Use "sqlite::memory:" for ephemeral tests.
 database_url = "sqlite:./athena.db"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice"
+keep_alive_secs = 30
+# username = "athena"
+# password = "changeme"
+
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"

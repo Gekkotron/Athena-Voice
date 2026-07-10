@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use athena_voice_core::ids::Locale;
+use athena_voice_providers::ProviderConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub locales: Vec<Locale>,
     pub server: ServerConfig,
     pub storage: StorageConfig,
+    pub mqtt: MqttConfig,
+    pub providers: ProviderConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -23,6 +26,23 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageConfig {
     pub database_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MqttConfig {
+    pub host: String,
+    pub port: u16,
+    pub client_id: String,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default = "default_keep_alive")]
+    pub keep_alive_secs: u64,
+}
+
+fn default_keep_alive() -> u64 {
+    30
 }
 
 #[derive(Debug, Error)]

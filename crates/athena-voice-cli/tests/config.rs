@@ -4,9 +4,22 @@ use athena_voice_cli::config::{Config, load};
 use serial_test::serial;
 use tempfile::NamedTempFile;
 
+const MIN_SECTIONS: &str = r#"
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice"
+
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"
+"#;
+
 fn write_config(contents: &str) -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
     f.write_all(contents.as_bytes()).unwrap();
+    f.write_all(MIN_SECTIONS.as_bytes()).unwrap();
     f
 }
 
@@ -30,6 +43,10 @@ database_url = "sqlite::memory:"
     assert_eq!(c.server.port, 9000);
     assert_eq!(c.storage.database_url, "sqlite::memory:");
     assert_eq!(c.locales.len(), 2);
+    assert_eq!(c.mqtt.host, "127.0.0.1");
+    assert_eq!(c.mqtt.port, 1883);
+    assert_eq!(c.mqtt.client_id, "athena-voice");
+    assert!(matches!(c.providers.stt, athena_voice_providers::StageChoice::Fake));
 }
 
 #[test]
@@ -47,8 +64,6 @@ port = 8080
 database_url = "sqlite::memory:"
         "#,
     );
-    // Edition 2024: set_var/remove_var are unsafe. Nextest runs each test in its own
-    // process, so this global mutation cannot race with other tests.
     // SAFETY: single-threaded test process; no other threads reading env.
     unsafe {
         std::env::set_var("ATHENA__SERVER__PORT", "9999");
