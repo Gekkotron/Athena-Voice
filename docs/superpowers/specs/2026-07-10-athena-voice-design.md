@@ -113,7 +113,7 @@ The framework is domain-neutral: everything specific to home automation, French 
 ### 4.2 Layered responsibilities
 
 - **Edge layer.** `SatelliteAdapter` (MQTT subscriber for `athena/sat/+/session/#`) and `Dashboard` (axum HTTP + WebSocket). Both terminate at the process boundary.
-- **Pipeline layer.** Actor DAG: Ingest → VAD → STT → IntentRouter → SkillDispatcher → (skill or LLM) → ResponseSink → TTS → ResponseSink → back onto MQTT. Every actor is a `tokio::spawn`-ed task with bounded `mpsc` channels. Correlation via `SessionId` carried in every payload.
+- **Pipeline layer.** Actor DAG: Ingest → VAD → STT → IntentRouter → SkillDispatcher (or LLM fallback) → TTS → ResponseSink (MQTT publish adapter) → back onto MQTT. Every actor is a `tokio::spawn`-ed task with bounded `mpsc` channels. Correlation via `SessionId` carried in every payload.
 - **Extension layer.** Two surfaces:
     - **WASM plugins (Extism):** in-process skills; host functions for logging, allowlisted HTTP, per-skill KV in SQLite, scoped MQTT publish, config read.
     - **MQTT services:** any-language STT / LLM / TTS providers, or additional skills, subscribed under `athena/providers/…` and `athena/skills/…`.
@@ -272,7 +272,7 @@ Single binary. `main` parses config, builds the actor DAG, spawns everything, wa
 
 ### 6.2 LLM-fallback path (v1 default; no skills shipped)
 
-Steps 1–5 identical. At the router, no rule matches → `Llm::complete(prompt=text, locale, history)` streams tokens; the response actor buffers by sentence and calls `Tts::synthesize` per sentence to hide latency. Emits `Event::LlmFallback` instead of `IntentMatched`.
+Steps 1–5 identical. At the router, no rule matches → `Llm::complete(prompt=text, locale, history)` streams tokens. A sentence-boundary buffer between `Llm` and `Tts` emits each sentence as soon as it closes (`.`, `!`, `?`, or a configurable soft-break length); the `Tts` actor synthesises per sentence so first Opus chunks reach the phone as soon as the first sentence completes. Emits `Event::LlmFallback` instead of `IntentMatched`.
 
 ### 6.3 Wire payloads
 
@@ -381,7 +381,7 @@ Each crate exports typed errors via `thiserror`. `anyhow` only at the CLI bounda
 
 ### 7.2 Failure matrix
 
-Reproduced in full at [`docs/superpowers/specs/appendix/failure-matrix.md`](appendix/failure-matrix.md) — an abbreviated version:
+Abbreviated (full failure matrix — all detection points, event names, and paired integration tests — is produced during implementation-plan authoring):
 
 | # | Failure | Response | Satellite outcome |
 |---|---|---|---|
@@ -463,14 +463,14 @@ Provider RPCs take `&CancellationToken`. Cancel propagates to remote HTTP calls 
 
 ## 8. Testing
 
-### 8.1 Pyramid
+### 8.1 Layers (fewest tests at top, most at bottom)
 
 ```
-              Manual acceptance (rare)
-              End-to-end (testcontainers)
-              Integration (per-crate, in-process)
-              Unit tests
-              Property + fuzz + micro-benchmarks
+        ▲                Manual acceptance (per release, ~7 checks)
+        │                End-to-end (~8 tests, testcontainers)
+   fewer│                Integration (~30 tests, in-process)
+        │                Unit tests (bulk)
+   more▼                Property + fuzz + micro-benchmarks
 ```
 
 ### 8.2 Unit tests
