@@ -17,6 +17,12 @@ Thumbs.db
 .env.local
 athena.local.toml
 
+# Local databases (default config points here)
+athena.db
+athena.db-*
+*.sqlite
+*.sqlite-*
+
 # Coverage
 /coverage
 *.profraw
