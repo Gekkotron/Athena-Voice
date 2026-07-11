@@ -27,6 +27,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # runtime
 dashmap = "6"
 futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rumqttc = { version = "0.24", default-features = false, features = ["use-native-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs"] }
 tokio-stream = "0.1"

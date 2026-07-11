@@ -12,7 +12,9 @@ description = "STT / LLM / TTS provider adapters for Athena-Voice (Plan 2: fakes
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -20,6 +22,7 @@ tracing = { workspace = true }
 athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
 
 [dev-dependencies]
+mockito = "1.5"
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 toml = "0.8"
 

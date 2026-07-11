@@ -3,6 +3,7 @@
 
 pub mod error;
 pub mod factory;
+pub mod remote;
 pub mod testing;
 
 pub use error::{LlmError, SttError, TtsError};
