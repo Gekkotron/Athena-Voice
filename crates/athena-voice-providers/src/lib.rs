@@ -5,6 +5,7 @@ pub mod circuit;
 pub mod error;
 pub mod factory;
 pub mod remote;
+pub mod retry;
 pub mod testing;
 
 pub use error::{LlmError, SttError, TtsError};
