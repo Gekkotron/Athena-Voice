@@ -9,6 +9,7 @@ repository.workspace = true
 description = "STT / LLM / TTS provider adapters for Athena-Voice (Plan 2: fakes only)."
 
 [dependencies]
+async-stream = "0.3"
 async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }

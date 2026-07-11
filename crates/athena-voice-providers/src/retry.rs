@@ -22,7 +22,10 @@ impl RetryConfig {
     /// a different answer.
     #[must_use]
     pub fn llm() -> Self {
-        Self { max_attempts: 1, backoff: vec![] }
+        Self {
+            max_attempts: 1,
+            backoff: vec![],
+        }
     }
 
     /// STT: the audio stream can't be replayed without buffering, so retry is
@@ -30,13 +33,19 @@ impl RetryConfig {
     /// happen at a level that owns the raw PCM.
     #[must_use]
     pub fn stt() -> Self {
-        Self { max_attempts: 1, backoff: vec![] }
+        Self {
+            max_attempts: 1,
+            backoff: vec![],
+        }
     }
 
     /// TTS: text is owned and cheap to clone; retry twice on transient failure.
     #[must_use]
     pub fn tts() -> Self {
-        Self { max_attempts: 2, backoff: vec![Duration::from_millis(200)] }
+        Self {
+            max_attempts: 2,
+            backoff: vec![Duration::from_millis(200)],
+        }
     }
 }
 
@@ -142,7 +151,11 @@ pub struct RetryingTts {
 impl RetryingTts {
     #[must_use]
     pub fn new(inner: Arc<dyn Tts>, circuit: Arc<CircuitBreaker>, config: RetryConfig) -> Self {
-        Self { inner, circuit, config }
+        Self {
+            inner,
+            circuit,
+            config,
+        }
     }
 }
 
@@ -159,7 +172,11 @@ impl Tts for RetryingTts {
         }
         let mut last_err: Option<BoxError> = None;
         for attempt in 0..self.config.max_attempts {
-            match self.inner.synthesize(session, locale.clone(), text.clone()).await {
+            match self
+                .inner
+                .synthesize(session, locale.clone(), text.clone())
+                .await
+            {
                 Ok(s) => {
                     self.circuit.record_success();
                     return Ok(s);
@@ -221,7 +238,11 @@ mod tests {
         let inner: Arc<dyn Tts> = Arc::new(FailingThenSuccessTts {
             remaining_failures: AtomicU32::new(1),
         });
-        let circuit = Arc::new(CircuitBreaker::new(10, Duration::from_secs(60), Duration::from_secs(15)));
+        let circuit = Arc::new(CircuitBreaker::new(
+            10,
+            Duration::from_secs(60),
+            Duration::from_secs(15),
+        ));
         let retrying = RetryingTts::new(inner, circuit, RetryConfig::tts());
         let res = retrying
             .synthesize(SessionId::new_v4(), Locale::new("fr").unwrap(), "hi".into())
@@ -234,7 +255,11 @@ mod tests {
         let inner: Arc<dyn Tts> = Arc::new(FailingThenSuccessTts {
             remaining_failures: AtomicU32::new(10),
         });
-        let circuit = Arc::new(CircuitBreaker::new(100, Duration::from_secs(60), Duration::from_secs(15)));
+        let circuit = Arc::new(CircuitBreaker::new(
+            100,
+            Duration::from_secs(60),
+            Duration::from_secs(15),
+        ));
         let retrying = RetryingTts::new(inner, circuit, RetryConfig::tts());
         let res = retrying
             .synthesize(SessionId::new_v4(), Locale::new("fr").unwrap(), "hi".into())

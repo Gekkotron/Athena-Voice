@@ -69,13 +69,19 @@ impl CircuitBreaker {
             State::Closed { failures } => {
                 let new_failures = failures + 1;
                 if new_failures >= self.failure_threshold {
-                    *st = State::Open { until: now + self.open_duration };
+                    *st = State::Open {
+                        until: now + self.open_duration,
+                    };
                 } else {
-                    *st = State::Closed { failures: new_failures };
+                    *st = State::Closed {
+                        failures: new_failures,
+                    };
                 }
             }
             State::HalfOpen { .. } => {
-                *st = State::Open { until: now + self.open_duration };
+                *st = State::Open {
+                    until: now + self.open_duration,
+                };
             }
             State::Open { .. } => {}
         }
