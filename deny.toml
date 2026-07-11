@@ -9,6 +9,11 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 version = 2
 yanked = "deny"
+ignore = [
+    # yaml-rust is unmaintained; transitive from rumqttd (dev-dep only).
+    # Not a security issue — revisit once rumqttd migrates to a maintained YAML crate.
+    "RUSTSEC-2024-0320",
+]
 
 [licenses]
 version = 2
