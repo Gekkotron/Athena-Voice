@@ -19,6 +19,29 @@ keep_alive_secs = 30
 # username = "athena"
 # password = "changeme"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Providers
+#
+# `fake` is the default — deterministic fakes for tests and initial bring-up.
+#
+# For real deployments, pick one of the concrete variants (uncomment):
+#
+#   [providers.llm.ollama]
+#   base_url = "http://localhost:11434"
+#   model    = "llama3.2:3b"
+#
+#   [providers.stt.mqtt_stt]
+#   name = "whisper"
+#
+#   [providers.tts.mqtt_tts]
+#   name = "piper"
+#
+# The MQTT-based providers each open their own connection to the broker and
+# subscribe to `athena/providers/{stt,tts}/<name>/response` — deploy a
+# language-agnostic worker (any language with an MQTT client) that subscribes
+# to `athena/providers/{stt,tts}/<name>/request` and publishes replies.
+# ─────────────────────────────────────────────────────────────────────────────
+
 [providers]
 stt = "fake"
 llm = "fake"
