@@ -1,12 +1,9 @@
 //! STT provider that speaks the generic MQTT request/reply protocol.
 //!
-//! Wire format:
-//! - Request  (published to `athena/providers/stt/<name>/request`):
-//!     `{ "session_id": <uuid>, "locale": "fr"|"en" }`  (audio arrives via a
-//!     companion binary topic outside the scope of Plan 3; a real deployment
-//!     buffers audio at the satellite adapter).
-//! - Response (received from `athena/providers/stt/<name>/response`):
-//!     `{ "session_id": <uuid>, "is_final": bool, "text": String }`
+//! Wire format: request `{session_id, locale}` on `athena/providers/stt/<name>/request`,
+//! streaming responses `{session_id, is_final, text}` on `.../response`.
+//! Audio delivery to the provider is out of scope for Plan 3 — a real deployment
+//! buffers audio at the satellite adapter and publishes it on a companion topic.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,9 +14,7 @@ use futures::stream::{self, StreamExt};
 use serde_json::json;
 
 use athena_voice_core::ids::{Locale, SessionId};
-use athena_voice_core::provider::{
-    AudioFrameStream, BoxError, Stt, TranscriptStream,
-};
+use athena_voice_core::provider::{AudioFrameStream, BoxError, Stt, TranscriptStream};
 use athena_voice_core::types::Transcript;
 
 use super::mqtt_client::MqttProviderClient;
@@ -48,7 +43,10 @@ impl MqttStt {
             Duration::from_secs(30),
         )
         .await;
-        Self { name: provider_name, client: Arc::new(client) }
+        Self {
+            name: provider_name,
+            client: Arc::new(client),
+        }
     }
 }
 
@@ -68,16 +66,19 @@ impl Stt for MqttStt {
         let rx = self.client.call_streaming(session, payload).await?;
 
         // Convert the mpsc<Publish> stream into a Stream<Item = Result<Transcript>>.
-        let transcript_stream = tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(
-            |publish| async move {
+        let transcript_stream =
+            tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(|publish| async move {
                 let v: serde_json::Value = serde_json::from_slice(&publish.payload).ok()?;
                 Some(Ok(Transcript {
                     text: v.get("text")?.as_str()?.to_string(),
                     is_final: v.get("is_final")?.as_bool().unwrap_or(false),
-                    confidence: v.get("confidence").and_then(serde_json::Value::as_f64).map(|c| c as f32),
+                    #[allow(clippy::cast_possible_truncation)]
+                    confidence: v
+                        .get("confidence")
+                        .and_then(serde_json::Value::as_f64)
+                        .map(|c| c as f32),
                 }))
-            },
-        );
+            });
         // Also stop after a final transcript.
         let ended = transcript_stream.chain(stream::empty());
         Ok(Box::pin(ended))

@@ -1,13 +1,9 @@
 //! TTS provider that speaks the generic MQTT request/reply protocol.
 //!
-//! Wire format:
-//! - Request  (published to `athena/providers/tts/<name>/request`):
-//!     `{ "session_id": <uuid>, "locale": "fr"|"en", "text": String }`
-//! - Response (received from `athena/providers/tts/<name>/response`):
-//!     binary Opus (with `session_id` in the JSON header of a companion
-//!     message OR encoded as JSON with base64 payload; Plan 3 uses the JSON
-//!     form for simplicity):
-//!     `{ "session_id": <uuid>, "chunk_b64": String, "done": bool }`
+//! Wire format: request `{session_id, locale, text}` on `athena/providers/tts/<name>/request`.
+//! Responses on `.../response` carry base64-encoded Opus chunks as
+//! `{session_id, chunk_b64, done}`. Plan 3 uses the JSON envelope for simplicity;
+//! a future revision can switch to a companion binary topic once bandwidth matters.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +41,10 @@ impl MqttTts {
             Duration::from_secs(30),
         )
         .await;
-        Self { name: provider_name, client: Arc::new(client) }
+        Self {
+            name: provider_name,
+            client: Arc::new(client),
+        }
     }
 }
 
@@ -65,14 +64,13 @@ impl Tts for MqttTts {
         let payload = Bytes::from(request.to_string().into_bytes());
         let rx = self.client.call_streaming(session, payload).await?;
 
-        let audio_stream = tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(
-            |publish| async move {
+        let audio_stream =
+            tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(|publish| async move {
                 let v: serde_json::Value = serde_json::from_slice(&publish.payload).ok()?;
                 let b64 = v.get("chunk_b64")?.as_str()?;
                 let bytes = STANDARD.decode(b64).ok()?;
                 Some(Ok::<Bytes, BoxError>(Bytes::from(bytes)))
-            },
-        );
+            });
         Ok(Box::pin(audio_stream))
     }
 

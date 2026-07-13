@@ -12,11 +12,18 @@ use athena_voice_runtime::mqtt::MqttConfig;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawn_and_shutdown_are_clean() {
-    let factory = Arc::new(ProviderFactory::new(&ProviderConfig {
-        stt: StageChoice::Fake,
-        llm: StageChoice::Fake,
-        tts: StageChoice::Fake,
-    }));
+    let factory = Arc::new(
+        ProviderFactory::build(
+            &ProviderConfig {
+                stt: StageChoice::Fake,
+                llm: StageChoice::Fake,
+                tts: StageChoice::Fake,
+            },
+            None,
+        )
+        .await
+        .unwrap(),
+    );
 
     let runtime = Runtime::spawn(
         MqttConfig {

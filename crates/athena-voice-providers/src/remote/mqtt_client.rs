@@ -70,18 +70,19 @@ impl MqttProviderClient {
         let (tx, rx) = mpsc::channel::<Publish>(32);
         self.routes.insert(session, tx);
         self.client
-            .publish(&self.request_topic, QoS::AtLeastOnce, false, payload.to_vec())
+            .publish(
+                &self.request_topic,
+                QoS::AtLeastOnce,
+                false,
+                payload.to_vec(),
+            )
             .await
             .map_err(|e| format!("mqtt publish: {e}"))?;
         Ok(rx)
     }
 
     /// Convenience: wait for exactly one response (or timeout).
-    pub async fn call_once(
-        &self,
-        session: SessionId,
-        payload: Bytes,
-    ) -> Result<Publish, String> {
+    pub async fn call_once(&self, session: SessionId, payload: Bytes) -> Result<Publish, String> {
         let mut rx = self.call_streaming(session, payload).await?;
         match tokio::time::timeout(self.request_timeout, rx.recv()).await {
             Ok(Some(p)) => Ok(p),

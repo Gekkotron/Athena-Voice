@@ -30,7 +30,15 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let factory = Arc::new(ProviderFactory::new(&cfg.providers));
+    let broker = athena_voice_providers::factory::MqttBrokerAddr {
+        host: cfg.mqtt.host.clone(),
+        port: cfg.mqtt.port,
+    };
+    let factory = Arc::new(
+        ProviderFactory::build(&cfg.providers, Some(&broker))
+            .await
+            .map_err(|e| anyhow::anyhow!("provider factory: {e}"))?,
+    );
     let runtime_mqtt = RuntimeMqttConfig {
         host: cfg.mqtt.host.clone(),
         port: cfg.mqtt.port,
