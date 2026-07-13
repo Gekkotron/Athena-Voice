@@ -12,7 +12,9 @@ use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 use athena_voice_core::types::{AudioFrame, Transcript};
 use athena_voice_providers::ProviderFactory;
 
+use crate::intent::{IntentMatcher, RuleIndex};
 use crate::mqtt::topics::{self, ParsedTopic};
+use crate::pipeline::router::RouterDeps;
 use crate::pipeline::{ingest, llm, router, sink, stt, tts, vad};
 use crate::session::SessionManager;
 
@@ -23,6 +25,10 @@ pub struct SatelliteDeps {
     pub factory: Arc<ProviderFactory>,
     pub session_manager: Arc<SessionManager>,
     pub event_bus: broadcast::Sender<Event>,
+    /// Pattern matcher — shared across all sessions.
+    pub matcher: Arc<IntentMatcher>,
+    /// Rule index aggregated from loaded skills. Empty until Plan 4 Task 6 ships.
+    pub rules: Arc<RuleIndex>,
     pub shutdown: CancellationToken,
 }
 
@@ -149,13 +155,15 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
         cancel.clone(),
     );
     // t_rx → router → llm_prompt_tx
-    router::spawn_router(
-        t_rx,
-        llm_prompt_tx,
-        deps.event_bus.clone(),
-        sid,
-        cancel.clone(),
-    );
+    let router_deps = RouterDeps {
+        llm_tx: llm_prompt_tx,
+        event_tx: deps.event_bus.clone(),
+        session: sid,
+        locale: locale.clone(),
+        matcher: deps.matcher.clone(),
+        rules: deps.rules.clone(),
+    };
+    router::spawn_router(t_rx, router_deps, cancel.clone());
     // llm_prompt_rx → llm → tok_tx
     llm::spawn_llm(
         sid,

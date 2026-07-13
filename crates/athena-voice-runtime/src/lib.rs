@@ -47,12 +47,18 @@ impl Runtime {
         let event_bus = Arc::new(EventBus::new(1024));
         let shutdown = CancellationToken::new();
 
+        // Empty rule index until Plan 4 Task 6 (SkillRegistry) populates it.
+        let matcher = Arc::new(intent::IntentMatcher::new());
+        let rules = Arc::new(intent::RuleIndex::new());
+
         let deps = SatelliteDeps {
             mqtt: client.tx.clone(),
             event_loop: client.event_loop.clone(),
             factory,
             session_manager: sessions.clone(),
             event_bus: event_bus.sender(),
+            matcher,
+            rules,
             shutdown: shutdown.clone(),
         };
         let satellite_task = spawn_satellite(deps);
