@@ -56,9 +56,9 @@ pub trait Tts: Send + Sync {
 mod tests {
     use super::*;
 
-    fn _assert_dyn_stt(_: &(dyn Stt)) {}
-    fn _assert_dyn_llm(_: &(dyn Llm)) {}
-    fn _assert_dyn_tts(_: &(dyn Tts)) {}
+    fn _assert_dyn_stt(_: &dyn Stt) {}
+    fn _assert_dyn_llm(_: &dyn Llm) {}
+    fn _assert_dyn_tts(_: &dyn Tts) {}
 
     #[test]
     fn traits_are_object_safe() {

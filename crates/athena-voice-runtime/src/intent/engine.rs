@@ -48,19 +48,19 @@ impl IntentMatcher {
         let mut best: Option<IntentMatch> = None;
         for (rule, skill) in rules {
             for phrase in &rule.phrases {
-                if let Some(candidate) = try_match_phrase(phrase, rule, text) {
-                    if candidate.confidence >= MATCH_THRESHOLD {
-                        let with_skill = IntentMatch {
-                            intent: candidate.intent,
-                            skill: skill.clone(),
-                            confidence: candidate.confidence,
-                        };
-                        if best
-                            .as_ref()
-                            .is_none_or(|b| with_skill.confidence > b.confidence)
-                        {
-                            best = Some(with_skill);
-                        }
+                if let Some(candidate) = try_match_phrase(phrase, rule, text)
+                    && candidate.confidence >= MATCH_THRESHOLD
+                {
+                    let with_skill = IntentMatch {
+                        intent: candidate.intent,
+                        skill: skill.clone(),
+                        confidence: candidate.confidence,
+                    };
+                    if best
+                        .as_ref()
+                        .is_none_or(|b| with_skill.confidence > b.confidence)
+                    {
+                        best = Some(with_skill);
                     }
                 }
             }

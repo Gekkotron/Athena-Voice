@@ -10,6 +10,7 @@ pub mod mqtt;
 pub mod pipeline;
 pub mod satellite;
 pub mod session;
+pub mod wasm;
 
 pub use error::RuntimeError;
 

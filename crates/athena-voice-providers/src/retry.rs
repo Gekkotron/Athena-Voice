@@ -184,10 +184,10 @@ impl Tts for RetryingTts {
                 Err(e) => {
                     self.circuit.record_failure();
                     last_err = Some(e);
-                    if attempt + 1 < self.config.max_attempts {
-                        if let Some(&delay) = self.config.backoff.get(attempt as usize) {
-                            tokio::time::sleep(delay).await;
-                        }
+                    if attempt + 1 < self.config.max_attempts
+                        && let Some(&delay) = self.config.backoff.get(attempt as usize)
+                    {
+                        tokio::time::sleep(delay).await;
                     }
                 }
             }
