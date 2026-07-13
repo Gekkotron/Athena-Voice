@@ -11,13 +11,17 @@ description = "STT / LLM / TTS provider adapters for Athena-Voice (Plan 2: fakes
 [dependencies]
 async-stream = "0.3"
 async-trait = { workspace = true }
+base64 = "0.22"
 bytes = { workspace = true }
+dashmap = { workspace = true }
 futures = { workspace = true }
 reqwest = { workspace = true }
+rumqttc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
 tracing = { workspace = true }
 
 athena-voice-core = { path = "../athena-voice-core", version = "0.1" }

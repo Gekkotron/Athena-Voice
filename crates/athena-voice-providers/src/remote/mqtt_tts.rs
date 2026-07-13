@@ -1,0 +1,82 @@
+//! TTS provider that speaks the generic MQTT request/reply protocol.
+//!
+//! Wire format:
+//! - Request  (published to `athena/providers/tts/<name>/request`):
+//!     `{ "session_id": <uuid>, "locale": "fr"|"en", "text": String }`
+//! - Response (received from `athena/providers/tts/<name>/response`):
+//!     binary Opus (with `session_id` in the JSON header of a companion
+//!     message OR encoded as JSON with base64 payload; Plan 3 uses the JSON
+//!     form for simplicity):
+//!     `{ "session_id": <uuid>, "chunk_b64": String, "done": bool }`
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use bytes::Bytes;
+use futures::stream::StreamExt;
+use serde_json::json;
+
+use athena_voice_core::ids::{Locale, SessionId};
+use athena_voice_core::provider::{AudioStream, BoxError, Tts};
+
+use super::mqtt_client::MqttProviderClient;
+
+pub struct MqttTts {
+    name: &'static str,
+    client: Arc<MqttProviderClient>,
+}
+
+impl MqttTts {
+    pub async fn connect(
+        broker_host: impl Into<String>,
+        broker_port: u16,
+        provider_name: &'static str,
+    ) -> Self {
+        let request_topic = format!("athena/providers/tts/{provider_name}/request");
+        let response_topic = format!("athena/providers/tts/{provider_name}/response");
+        let client = MqttProviderClient::connect(
+            broker_host,
+            broker_port,
+            format!("athena-voice-tts-{provider_name}"),
+            request_topic,
+            response_topic,
+            Duration::from_secs(30),
+        )
+        .await;
+        Self { name: provider_name, client: Arc::new(client) }
+    }
+}
+
+#[async_trait]
+impl Tts for MqttTts {
+    async fn synthesize(
+        &self,
+        session: SessionId,
+        locale: Locale,
+        text: String,
+    ) -> Result<AudioStream, BoxError> {
+        let request = json!({
+            "session_id": session.to_string(),
+            "locale": locale.as_str(),
+            "text": text,
+        });
+        let payload = Bytes::from(request.to_string().into_bytes());
+        let rx = self.client.call_streaming(session, payload).await?;
+
+        let audio_stream = tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(
+            |publish| async move {
+                let v: serde_json::Value = serde_json::from_slice(&publish.payload).ok()?;
+                let b64 = v.get("chunk_b64")?.as_str()?;
+                let bytes = STANDARD.decode(b64).ok()?;
+                Some(Ok::<Bytes, BoxError>(Bytes::from(bytes)))
+            },
+        );
+        Ok(Box::pin(audio_stream))
+    }
+
+    fn name(&self) -> &'static str {
+        self.name
+    }
+}
