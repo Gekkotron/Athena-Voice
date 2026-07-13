@@ -24,8 +24,11 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 toml = "0.8"
 
+strsim = { workspace = true }
+
 athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
 athena-voice-providers = { path = "../athena-voice-providers", version = "0.1" }
+athena-voice-skill-sdk = { path = "../athena-voice-skill-sdk", version = "0.1" }
 athena-voice-storage = { path = "../athena-voice-storage", version = "0.1" }
 
 [dev-dependencies]

@@ -52,8 +52,14 @@ mod tests {
     fn pattern_rule_serde_roundtrip() {
         let rule = PatternRule {
             intent: "weather.query".into(),
-            phrases: vec!["météo à {city}".into(), "quel temps fait-il à {city}".into()],
-            slots: vec![SlotSpec { name: "city".into(), kind: SlotKind::String }],
+            phrases: vec![
+                "météo à {city}".into(),
+                "quel temps fait-il à {city}".into(),
+            ],
+            slots: vec![SlotSpec {
+                name: "city".into(),
+                kind: SlotKind::String,
+            }],
         };
         let json = serde_json::to_string(&rule).unwrap();
         let back: PatternRule = serde_json::from_str(&json).unwrap();

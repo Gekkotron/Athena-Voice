@@ -48,6 +48,8 @@ impl HostCtx {
 
     /// Fetches JSON from an allowlisted URL.
     pub fn http_get_json(&self, _url: &str) -> Result<serde_json::Value, SkillError> {
-        Err(SkillError::HttpFailed("HostCtx::http_get_json not yet wired".into()))
+        Err(SkillError::HttpFailed(
+            "HostCtx::http_get_json not yet wired".into(),
+        ))
     }
 }

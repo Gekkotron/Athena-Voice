@@ -23,7 +23,9 @@ impl SkillResponse {
     }
     #[must_use]
     pub fn ask_llm(prompt: impl Into<String>) -> Self {
-        Self::AskLlm { prompt: prompt.into() }
+        Self::AskLlm {
+            prompt: prompt.into(),
+        }
     }
 }
 
@@ -69,6 +71,10 @@ mod tests {
 
     #[test]
     fn error_display() {
-        assert!(SkillError::HttpFailed("boom".into()).to_string().contains("boom"));
+        assert!(
+            SkillError::HttpFailed("boom".into())
+                .to_string()
+                .contains("boom")
+        );
     }
 }

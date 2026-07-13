@@ -4,6 +4,7 @@
 pub mod config;
 pub mod error;
 pub mod event_bus;
+pub mod intent;
 pub mod locale;
 pub mod mqtt;
 pub mod pipeline;
