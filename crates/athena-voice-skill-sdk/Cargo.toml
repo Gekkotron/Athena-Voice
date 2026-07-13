@@ -1,0 +1,17 @@
+[package]
+name = "athena-voice-skill-sdk"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Guest-side SDK for Athena-Voice WASM skills. Host uses the same types."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

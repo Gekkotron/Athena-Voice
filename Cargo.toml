@@ -6,6 +6,12 @@ members = [
     "crates/athena-voice-providers",
     "crates/athena-voice-runtime",
     "crates/athena-voice-cli",
+    "crates/athena-voice-skill-sdk",
+]
+exclude = [
+    # skills-smoke-test compiles to wasm32-wasip1 and can't share the workspace's
+    # native target. Built by CI via a dedicated cargo build --target invocation.
+    "skills-smoke-test",
 ]
 
 [workspace.package]
@@ -27,8 +33,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # runtime
 dashmap = "6"
 futures = "0.3"
+extism = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rumqttc = { version = "0.24", default-features = false, features = ["use-native-tls"] }
+strsim = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["rt"] }

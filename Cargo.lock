@@ -249,6 +249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "athena-voice-skill-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "athena-voice-storage"
 version = "0.1.0"
 dependencies = [
