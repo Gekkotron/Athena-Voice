@@ -8,8 +8,9 @@
 //! - `dispatcher` — `SkillDispatcher` actor that receives `(session_id, intent)`
 //!   and calls into a plugin via `spawn_blocking`.
 //!
-//! Task 4 registered the module tree; Tasks 5–7 fill in host functions, the
-//! rule index, and the skill registry.
+//! Task 4 registered the module tree; Tasks 5–7 filled in host functions, the
+//! rule index, and the skill registry; Task 8 adds the `SkillDispatcher`
+//! actor and wires the guest ABI in the skill SDK.
 
 pub mod dispatcher;
 pub mod error;

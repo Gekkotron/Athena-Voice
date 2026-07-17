@@ -13,5 +13,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# Guest-only: the Extism PDK is used to import the host functions declared in
+# `crates/athena-voice-runtime/src/wasm/host_fns.rs`. Skills targeting
+# `wasm32-wasip1` link against it; host-side consumers of the SDK never do.
+[target.'cfg(target_family = "wasm")'.dependencies]
+extism-pdk = "1"
+
 [lints]
 workspace = true

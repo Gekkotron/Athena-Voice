@@ -187,8 +187,9 @@ fn host_state_get(
     ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
     let key: String = plugin.memory_get_val(&inputs[0])?;
-    let (store, name, tokio) =
-        with_ctx(&ud, |ctx| (ctx.store.clone(), ctx.name.clone(), ctx.tokio.clone()))?;
+    let (store, name, tokio) = with_ctx(&ud, |ctx| {
+        (ctx.store.clone(), ctx.name.clone(), ctx.tokio.clone())
+    })?;
     let bytes = tokio
         .block_on(async move { store.skill_kv_get(&name, &key).await })
         .map_err(|e| extism::Error::msg(format!("skill_kv_get failed: {e}")))?
@@ -206,8 +207,9 @@ fn host_state_set(
 ) -> Result<(), extism::Error> {
     let key: String = plugin.memory_get_val(&inputs[0])?;
     let val: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
-    let (store, name, tokio) =
-        with_ctx(&ud, |ctx| (ctx.store.clone(), ctx.name.clone(), ctx.tokio.clone()))?;
+    let (store, name, tokio) = with_ctx(&ud, |ctx| {
+        (ctx.store.clone(), ctx.name.clone(), ctx.tokio.clone())
+    })?;
     tokio
         .block_on(async move { store.skill_kv_set(&name, &key, &val).await })
         .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
@@ -229,8 +231,9 @@ fn host_mqtt_publish(
 ) -> Result<(), extism::Error> {
     let topic: String = plugin.memory_get_val(&inputs[0])?;
     let payload: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
-    let (name, mqtt, tokio) =
-        with_ctx(&ud, |ctx| (ctx.name.clone(), ctx.mqtt.clone(), ctx.tokio.clone()))?;
+    let (name, mqtt, tokio) = with_ctx(&ud, |ctx| {
+        (ctx.name.clone(), ctx.mqtt.clone(), ctx.tokio.clone())
+    })?;
     if !mqtt_topic_allowed(&name, &topic) {
         tracing::warn!(
             skill = %name,
@@ -240,9 +243,8 @@ fn host_mqtt_publish(
         outputs[0] = Val::I32(MQTT_ERR_ACL);
         return Ok(());
     }
-    let publish = tokio.block_on(async move {
-        mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await
-    });
+    let publish =
+        tokio.block_on(async move { mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await });
     outputs[0] = match publish {
         Ok(()) => Val::I32(MQTT_OK),
         Err(e) => {
@@ -261,7 +263,11 @@ fn host_http_get_json(
 ) -> Result<(), extism::Error> {
     let url: String = plugin.memory_get_val(&inputs[0])?;
     let (allowlist, http, tokio) = with_ctx(&ud, |ctx| {
-        (ctx.http_allowlist.clone(), ctx.http.clone(), ctx.tokio.clone())
+        (
+            ctx.http_allowlist.clone(),
+            ctx.http.clone(),
+            ctx.tokio.clone(),
+        )
     })?;
     let response = match http_url_allowed(&allowlist, &url) {
         Ok(parsed) => tokio.block_on(async move {

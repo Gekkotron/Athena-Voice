@@ -10,11 +10,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-- [ ] Plan 4 Task 8 — WASM host + guest ABI
-      Wire Task 3's `HostCtx` methods through `extism_pdk::host_fn` bindings on the guest side; compile the SDK to `wasm32-wasip1` in a smoke build.
-      Host-side `SkillDispatcher` (`wasm/dispatcher.rs`) is a tokio actor that receives `(session_id, intent)` and calls `SkillRegistry::dispatch`, emitting `Event::SkillInvoked`/`Event::SkillPanicked`.
-      Extism invocation is CPU-bound and blocking — dispatcher uses `tokio::task::spawn_blocking`.
-      Success criteria: Task 8 in the Plan 4 doc satisfied; workspace tests + clippy green; guest SDK compiles to `wasm32-wasip1`.
 
 - [ ] Plan 4 Task 10 — `skills-smoke-test` WASM skill
       New `skills-smoke-test/` crate (excluded from workspace; targets `wasm32-wasip1` with `[lib] crate-type = ["cdylib"]`; depends on `athena-voice-skill-sdk`).
@@ -36,6 +31,12 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## In progress
 
 ## Done
+
+- [x] Plan 4 Task 8 — WASM host + guest ABI
+      Wire Task 3's `HostCtx` methods through `extism_pdk::host_fn` bindings on the guest side; compile the SDK to `wasm32-wasip1` in a smoke build.
+      Host-side `SkillDispatcher` (`wasm/dispatcher.rs`) is a tokio actor that receives `(session_id, intent)` and calls `SkillRegistry::dispatch`, emitting `Event::SkillInvoked`/`Event::SkillPanicked`.
+      Extism invocation is CPU-bound and blocking — dispatcher uses `tokio::task::spawn_blocking`.
+      Success criteria: Task 8 in the Plan 4 doc satisfied; workspace tests + clippy green; guest SDK compiles to `wasm32-wasip1`.
 
 - [x] Plan 4 Task 6 — Skill registry + loader in `wasm/registry.rs`
       Implement `SkillRegistry { plugins, patterns }` with `load_dir(dir, deps)` that iterates `*.wasm` files, loads each with Extism, calls the exported `pattern_rules` fn to populate the pattern index.

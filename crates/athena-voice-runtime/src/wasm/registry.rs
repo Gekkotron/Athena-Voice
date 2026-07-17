@@ -232,11 +232,7 @@ impl SkillRegistry {
     /// Dispatch `intent` to the named skill. Unknown-skill and mutex-poison
     /// conditions surface as `SkillError::Custom` so the caller can treat
     /// dispatch as a single unified fail-path.
-    pub fn dispatch(
-        &self,
-        skill: &str,
-        intent: Intent,
-    ) -> Result<SkillResponse, SkillError> {
+    pub fn dispatch(&self, skill: &str, intent: Intent) -> Result<SkillResponse, SkillError> {
         let plugin = self
             .plugins
             .get(skill)
@@ -272,7 +268,11 @@ mod tests {
 
     impl SkillPlugin for MockPlugin {
         fn pattern_rules(&mut self, locale: &str) -> Result<Vec<PatternRule>, extism::Error> {
-            Ok(self.rules_by_locale.get(locale).cloned().unwrap_or_default())
+            Ok(self
+                .rules_by_locale
+                .get(locale)
+                .cloned()
+                .unwrap_or_default())
         }
         fn handle(&mut self, intent: &Intent) -> Result<SkillResponse, SkillError> {
             self.handle_calls.fetch_add(1, Ordering::SeqCst);
@@ -305,7 +305,10 @@ mod tests {
         let mock = MockPlugin {
             rules_by_locale: HashMap::from([
                 ("fr".into(), vec![rule("hello", "bonjour")]),
-                ("en".into(), vec![rule("hello", "hello"), rule("bye", "bye")]),
+                (
+                    "en".into(),
+                    vec![rule("hello", "hello"), rule("bye", "bye")],
+                ),
             ]),
             response: Ok(SkillResponse::empty()),
             handle_calls: Arc::new(AtomicUsize::new(0)),
@@ -395,10 +398,8 @@ mod tests {
                     .unwrap(),
             )
         });
-        let (mqtt, _eventloop) = rumqttc::AsyncClient::new(
-            rumqttc::MqttOptions::new(client_id, "127.0.0.1", 1),
-            8,
-        );
+        let (mqtt, _eventloop) =
+            rumqttc::AsyncClient::new(rumqttc::MqttOptions::new(client_id, "127.0.0.1", 1), 8);
         SkillDeps {
             store,
             mqtt,
