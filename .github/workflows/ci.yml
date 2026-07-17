@@ -32,7 +32,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: wasm32-wasip1
+      # rust-toolchain.toml pins 1.91; the smoke-test crate builds with that
+      # toolchain, so the wasm target must be installed against it too.
+      - run: rustup target add --toolchain 1.91 wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
 
@@ -51,8 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
+      - run: rustup target add --toolchain 1.91 wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with: { tool: nextest }
@@ -66,7 +67,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-          targets: wasm32-wasip1
+      - run: rustup target add --toolchain 1.91 wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
