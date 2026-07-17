@@ -41,7 +41,15 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
     let target_dir = out_dir.join("smoke-target");
 
+    // Clear RUSTFLAGS-style env inherited from the parent so tools like
+    // `cargo llvm-cov` don't leak `-C instrument-coverage` into the wasm
+    // build — that flag pulls in `profiler_builtins`, which wasm32-wasip1
+    // has no target support for.
     let status = Command::new(env!("CARGO"))
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .arg("build")
         .arg("--release")
         .arg("--target")
