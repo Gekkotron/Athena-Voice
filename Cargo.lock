@@ -264,6 +264,7 @@ dependencies = [
  "extism",
  "futures",
  "portpicker",
+ "reqwest",
  "rumqttc",
  "rumqttd",
  "serde",

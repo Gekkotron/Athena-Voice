@@ -11,5 +11,6 @@
 //! Task 4 just registers the module tree.
 
 pub mod dispatcher;
+pub mod error;
 pub mod host_fns;
 pub mod registry;
