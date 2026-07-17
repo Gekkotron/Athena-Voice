@@ -98,8 +98,7 @@ async fn end_to_end_skill_dispatch() {
         .with_functions(host_functions(ctx))
         .build()
         .expect("build extism plugin");
-    let plugin: Arc<Mutex<dyn SkillPlugin>> =
-        Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
+    let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
 
     let mut registry = SkillRegistry::new();
     registry

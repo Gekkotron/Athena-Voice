@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use figment::providers::{Env, Format, Toml};
 use figment::{Error as FigmentError, Figment};
@@ -15,6 +16,31 @@ pub struct Config {
     pub storage: StorageConfig,
     pub mqtt: MqttConfig,
     pub providers: ProviderConfig,
+    #[serde(default)]
+    pub skills: SkillsConfig,
+}
+
+/// `[skills]` section: WASM skill loader configuration.
+///
+/// `dir` names the directory scanned for `*.wasm` skills at startup — empty
+/// (or a missing directory) yields Plan 3 behaviour with zero skills loaded.
+/// Per-skill entries live in the `per_skill` map, populated via TOML
+/// sub-tables `[skills.<name>]` (flattened here so `dir` and skill names sit
+/// side-by-side in the same section).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SkillsConfig {
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+    #[serde(flatten, default)]
+    pub per_skill: HashMap<String, PerSkillConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct PerSkillConfig {
+    #[serde(default)]
+    pub http_allowlist: Vec<String>,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -84,4 +110,65 @@ pub fn load(path: &Path) -> Result<Config, ConfigError> {
         return Err(ConfigError::Invalid("`locales` must not be empty".into()));
     }
     Ok(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_example_toml_with_skills_section() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let cfg = load(&repo_root.join("athena.example.toml")).expect("example config parses");
+        assert_eq!(
+            cfg.skills.dir.as_deref(),
+            Some(Path::new("/etc/athena-voice/skills"))
+        );
+        assert!(cfg.skills.per_skill.is_empty());
+    }
+
+    #[test]
+    fn parses_per_skill_subtables() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+locales = ["fr"]
+[server]
+host = "0.0.0.0"
+port = 8080
+[storage]
+database_url = "sqlite::memory:"
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "test"
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"
+[skills]
+dir = "/opt/skills"
+[skills.weather]
+http_allowlist = ["api.example.com"]
+config = { units = "metric" }
+"#,
+        )
+        .unwrap();
+        let cfg = load(tmp.path()).unwrap();
+        assert_eq!(cfg.skills.dir.as_deref(), Some(Path::new("/opt/skills")));
+        let weather = cfg
+            .skills
+            .per_skill
+            .get("weather")
+            .expect("weather entry present");
+        assert_eq!(weather.http_allowlist, vec!["api.example.com".to_string()]);
+        assert_eq!(
+            weather.config.get("units").map(String::as_str),
+            Some("metric")
+        );
+    }
 }

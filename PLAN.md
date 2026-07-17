@@ -13,16 +13,17 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-- [ ] Plan 4 Task 12 — Config + docs + CI
+
+## In progress
+
+## Done
+
+- [x] Plan 4 Task 12 — Config + docs + CI
       Add `[skills]` section to `athena.toml`: `dir = "/etc/athena-voice/skills"` (empty by default). Per-skill config: `[skills.<name>] http_allowlist = [ … ] config = { … }`.
       Update `athena.example.toml`, run `cargo fmt --all`, run `cargo clippy --workspace --all-features --all-targets -- -D warnings`.
       Update CI (GitHub Actions) to install the `wasm32-wasip1` target since the smoke-test crate is built there.
       Push + verify CI green.
       Success criteria: Task 12 in the Plan 4 doc satisfied; CI green on the resulting PR.
-
-## In progress
-
-## Done
 
 - [x] Plan 4 Task 11 — Integration test: end-to-end skill dispatch
       Add `crates/athena-voice-runtime/tests/skill_dispatch.rs`: spawn runtime with the smoke-test .wasm; simulate a final transcript matching the FR pattern; assert `Event::IntentMatched` + `Event::SkillInvoked` + a TTS chunk carrying the expected speech; assert no `Event::LlmFallback`.

@@ -46,3 +46,24 @@ keep_alive_secs = 30
 stt = "fake"
 llm = "fake"
 tts = "fake"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills (WASM)
+#
+# `dir` is scanned at startup for `*.wasm` skill plugins. With no directory
+# set — or an empty directory — the runtime behaves like Plan 3 (no skills
+# loaded, everything falls through to the LLM).
+#
+# Per-skill config sits under `[skills.<name>]`, where `<name>` matches the
+# skill's `.wasm` filename stem. Each skill gets its own HTTP allowlist and
+# an opaque `config` map surfaced via `host_config_get`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[skills]
+dir = "/etc/athena-voice/skills"
+
+# Example — uncomment and adapt once you drop a `weather.wasm` into `dir`:
+#
+#   [skills.weather]
+#   http_allowlist = ["api.open-meteo.com"]
+#   config = { units = "metric", default_city = "Paris" }
