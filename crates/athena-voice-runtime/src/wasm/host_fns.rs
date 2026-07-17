@@ -119,7 +119,7 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
         Function::new(
             "host_mqtt_publish",
             [PTR, PTR],
-            [ValType::I32],
+            [PTR],
             user_data.clone(),
             host_mqtt_publish,
         )
@@ -216,12 +216,14 @@ fn host_state_set(
     Ok(())
 }
 
-/// Result codes returned in the single `i32` output of `host_mqtt_publish`.
+/// Result codes returned in the single `i64` output of `host_mqtt_publish`.
 ///
-/// Guest-side (Task 8) turns non-zero codes into a `SkillError`.
-pub const MQTT_OK: i32 = 0;
-pub const MQTT_ERR_ACL: i32 = 1;
-pub const MQTT_ERR_CLIENT: i32 = 2;
+/// The wire type is `i64` because `extism-pdk`'s `host_fn!` widens every
+/// scalar return to `i64` on the guest side; the host must match. Guest-side
+/// (Task 8) turns non-zero codes into a `SkillError`.
+pub const MQTT_OK: i64 = 0;
+pub const MQTT_ERR_ACL: i64 = 1;
+pub const MQTT_ERR_CLIENT: i64 = 2;
 
 fn host_mqtt_publish(
     plugin: &mut CurrentPlugin,
@@ -234,24 +236,30 @@ fn host_mqtt_publish(
     let (name, mqtt, tokio) = with_ctx(&ud, |ctx| {
         (ctx.name.clone(), ctx.mqtt.clone(), ctx.tokio.clone())
     })?;
-    if !mqtt_topic_allowed(&name, &topic) {
+    let code: i64 = if mqtt_topic_allowed(&name, &topic) {
+        let publish = tokio
+            .block_on(async move { mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await });
+        match publish {
+            Ok(()) => MQTT_OK,
+            Err(e) => {
+                tracing::warn!(skill = %name, error = %e, "mqtt publish failed");
+                MQTT_ERR_CLIENT
+            }
+        }
+    } else {
         tracing::warn!(
             skill = %name,
             topic = %topic,
             "skill attempted to publish outside its ACL namespace"
         );
-        outputs[0] = Val::I32(MQTT_ERR_ACL);
-        return Ok(());
-    }
-    let publish =
-        tokio.block_on(async move { mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await });
-    outputs[0] = match publish {
-        Ok(()) => Val::I32(MQTT_OK),
-        Err(e) => {
-            tracing::warn!(skill = %name, error = %e, "mqtt publish failed");
-            Val::I32(MQTT_ERR_CLIENT)
-        }
+        MQTT_ERR_ACL
     };
+    // `extism-pdk` on the guest treats every non-void host-fn return as a
+    // memory-handle pointing to the little-endian bytes of the actual value
+    // (see `extism_convert::FromBytesOwned for i64`), so we can't return via
+    // `Val::I64` — we have to allocate memory and hand back its offset.
+    let handle = plugin.memory_new(code.to_le_bytes().as_slice())?;
+    outputs[0] = plugin.memory_to_val(handle);
     Ok(())
 }
 

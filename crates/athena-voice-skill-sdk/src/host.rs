@@ -75,9 +75,9 @@ mod guest {
 
     // Result codes mirror `MQTT_OK` / `MQTT_ERR_ACL` / `MQTT_ERR_CLIENT` in
     // `crates/athena-voice-runtime/src/wasm/host_fns.rs`.
-    const MQTT_OK: i32 = 0;
-    const MQTT_ERR_ACL: i32 = 1;
-    const MQTT_ERR_CLIENT: i32 = 2;
+    const MQTT_OK: i64 = 0;
+    const MQTT_ERR_ACL: i64 = 1;
+    const MQTT_ERR_CLIENT: i64 = 2;
 
     #[host_fn]
     unsafe extern "ExtismHost" {
@@ -85,7 +85,7 @@ mod guest {
         fn host_config_get(key: String) -> String;
         fn host_state_get(key: String) -> Vec<u8>;
         fn host_state_set(key: String, val: Vec<u8>);
-        fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i32;
+        fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i64;
         fn host_http_get_json(url: String) -> Vec<u8>;
     }
 

@@ -60,6 +60,7 @@ impl Runtime {
             event_bus: event_bus.sender(),
             matcher,
             rules,
+            dispatcher: None,
             shutdown: shutdown.clone(),
         };
         let satellite_task = spawn_satellite(deps);

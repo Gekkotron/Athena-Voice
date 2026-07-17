@@ -3,17 +3,22 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use athena_voice_core::event::Event;
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::types::Transcript;
+use athena_voice_skill_sdk::SkillResponse;
 
 use crate::intent::{IntentMatcher, RuleIndex};
+use crate::wasm::dispatcher::SkillDispatcherHandle;
 
 /// Dependencies handed to the router at spawn time.
 pub struct RouterDeps {
     pub llm_tx: mpsc::Sender<String>,
+    /// Direct-to-TTS token channel. When a skill returns `SkillResponse::Speak`,
+    /// the router feeds the speech text here, bypassing the LLM entirely.
+    pub tts_tok_tx: mpsc::Sender<String>,
     pub event_tx: broadcast::Sender<Event>,
     pub session: SessionId,
     pub locale: Locale,
@@ -21,13 +26,17 @@ pub struct RouterDeps {
     pub matcher: Arc<IntentMatcher>,
     /// Rule index aggregated from loaded skills. Empty if no skills are configured.
     pub rules: Arc<RuleIndex>,
+    /// When present, matched intents dispatch through this handle and skip the
+    /// LLM fallback path. When absent, matched intents still emit
+    /// `Event::SkillInvoked` and fall through to LLM (legacy behaviour used by
+    /// bootstraps that haven't loaded any skills yet).
+    pub dispatcher: Option<SkillDispatcherHandle>,
 }
 
 /// Router: on each final transcript, run the pattern matcher; if it matches an
-/// intent, emit `Event::IntentMatched` (skill dispatch will land with Plan 4
-/// Task 9's completion — for now, matched intents still fall through to LLM
-/// because there's no `SkillDispatcher` yet). If no match, always fall back to
-/// LLM as before.
+/// intent, emit `Event::IntentMatched` and — when a `SkillDispatcher` is wired —
+/// dispatch to the owning skill, forwarding the response speech to TTS and
+/// skipping the LLM fallback. If no match (or no dispatcher), fall back to LLM.
 pub fn spawn_router(
     mut rx: mpsc::Receiver<Transcript>,
     deps: RouterDeps,
@@ -52,21 +61,46 @@ pub fn spawn_router(
                                 session: deps.session,
                                 intent: core_intent,
                             });
+                            if let Some(dispatcher) = &deps.dispatcher {
+                                debug!(
+                                    skill = %m.skill,
+                                    intent = %m.intent.name,
+                                    confidence = m.confidence,
+                                    "dispatching matched intent to skill"
+                                );
+                                match dispatcher
+                                    .call(deps.session, m.skill.clone(), m.intent.clone())
+                                    .await
+                                {
+                                    Ok(SkillResponse::Speak { text }) => {
+                                        let text = ensure_sentence_boundary(text);
+                                        if deps.tts_tok_tx.send(text).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Ok(SkillResponse::AskLlm { prompt }) => {
+                                        let _ = deps
+                                            .event_tx
+                                            .send(Event::LlmFallback { session: deps.session });
+                                        if deps.llm_tx.send(prompt).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Ok(SkillResponse::Empty) => {}
+                                    Err(err) => {
+                                        warn!(skill = %m.skill, error = %err, "skill dispatch failed");
+                                    }
+                                }
+                                continue;
+                            }
+                            // No dispatcher wired: keep the legacy observable of
+                            // emitting SkillInvoked and falling through to LLM
+                            // so the router remains useful before skills load.
                             let _ = deps.event_tx.send(Event::SkillInvoked {
                                 session: deps.session,
                                 skill: m.skill.clone(),
                             });
-                            debug!(
-                                skill = %m.skill,
-                                intent = %m.intent.name,
-                                confidence = m.confidence,
-                                "matched intent (skill dispatch not yet wired; falling through to LLM)"
-                            );
-                            // TODO(Plan 4 Task 6+): dispatch to SkillRegistry here
-                            // instead of falling through.
                         }
-                        // Fall through to LLM whether or not we matched (Plan 4 Task 9 will
-                        // replace this branch once SkillDispatcher exists).
                         let _ = deps.event_tx.send(Event::LlmFallback { session: deps.session });
                         if deps.llm_tx.send(t.text).await.is_err() {
                             break;
@@ -78,6 +112,13 @@ pub fn spawn_router(
             }
         }
     })
+}
+
+fn ensure_sentence_boundary(mut text: String) -> String {
+    if !matches!(text.chars().last(), Some('.' | '!' | '?')) {
+        text.push('.');
+    }
+    text
 }
 
 #[cfg(test)]
@@ -92,13 +133,16 @@ mod tests {
         event_tx: broadcast::Sender<Event>,
         rules: Arc<RuleIndex>,
     ) -> RouterDeps {
+        let (tts_tok_tx, _tts_tok_rx) = mpsc::channel(4);
         RouterDeps {
             llm_tx,
+            tts_tok_tx,
             event_tx,
             session: SessionId::new_v4(),
             locale: Locale::new("fr").unwrap(),
             matcher: Arc::new(IntentMatcher::new()),
             rules,
+            dispatcher: None,
         }
     }
 

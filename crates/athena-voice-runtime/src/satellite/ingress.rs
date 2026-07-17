@@ -17,6 +17,7 @@ use crate::mqtt::topics::{self, ParsedTopic};
 use crate::pipeline::router::RouterDeps;
 use crate::pipeline::{ingest, llm, router, sink, stt, tts, vad};
 use crate::session::SessionManager;
+use crate::wasm::dispatcher::SkillDispatcherHandle;
 
 /// Dependencies for a running SatelliteAdapter.
 pub struct SatelliteDeps {
@@ -29,6 +30,9 @@ pub struct SatelliteDeps {
     pub matcher: Arc<IntentMatcher>,
     /// Rule index aggregated from loaded skills. Empty until Plan 4 Task 6 ships.
     pub rules: Arc<RuleIndex>,
+    /// Skill dispatcher — when present, matched intents route through the
+    /// skill instead of falling back to the LLM.
+    pub dispatcher: Option<SkillDispatcherHandle>,
     pub shutdown: CancellationToken,
 }
 
@@ -157,11 +161,13 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
     // t_rx → router → llm_prompt_tx
     let router_deps = RouterDeps {
         llm_tx: llm_prompt_tx,
+        tts_tok_tx: tok_tx.clone(),
         event_tx: deps.event_bus.clone(),
         session: sid,
         locale: locale.clone(),
         matcher: deps.matcher.clone(),
         rules: deps.rules.clone(),
+        dispatcher: deps.dispatcher.clone(),
     };
     router::spawn_router(t_rx, router_deps, cancel.clone());
     // llm_prompt_rx → llm → tok_tx

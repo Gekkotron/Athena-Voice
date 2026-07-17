@@ -12,7 +12,7 @@ use super::rule::HostPatternRule;
 /// routed to the right skill for dispatch.
 type RuleEntry = (HostPatternRule, String);
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RuleIndex {
     by_locale: HashMap<String, Vec<RuleEntry>>,
 }

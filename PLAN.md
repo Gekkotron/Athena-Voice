@@ -12,9 +12,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-- [ ] Plan 4 Task 11 — Integration test: end-to-end skill dispatch
-      Add `crates/athena-voice-runtime/tests/skill_dispatch.rs`: spawn runtime with the smoke-test .wasm; simulate a final transcript matching the FR pattern; assert `Event::IntentMatched` + `Event::SkillInvoked` + a TTS chunk carrying the expected speech; assert no `Event::LlmFallback`.
-      Success criteria: `cargo nextest run --workspace` green including the new integration test.
 
 - [ ] Plan 4 Task 12 — Config + docs + CI
       Add `[skills]` section to `athena.toml`: `dir = "/etc/athena-voice/skills"` (empty by default). Per-skill config: `[skills.<name>] http_allowlist = [ … ] config = { … }`.
@@ -26,6 +23,10 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## In progress
 
 ## Done
+
+- [x] Plan 4 Task 11 — Integration test: end-to-end skill dispatch
+      Add `crates/athena-voice-runtime/tests/skill_dispatch.rs`: spawn runtime with the smoke-test .wasm; simulate a final transcript matching the FR pattern; assert `Event::IntentMatched` + `Event::SkillInvoked` + a TTS chunk carrying the expected speech; assert no `Event::LlmFallback`.
+      Success criteria: `cargo nextest run --workspace` green including the new integration test.
 
 - [x] Plan 4 Task 10 — `skills-smoke-test` WASM skill
       New `skills-smoke-test/` crate (excluded from workspace; targets `wasm32-wasip1` with `[lib] crate-type = ["cdylib"]`; depends on `athena-voice-skill-sdk`).
