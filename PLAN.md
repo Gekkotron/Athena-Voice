@@ -11,11 +11,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-- [ ] Plan 4 Task 10 — `skills-smoke-test` WASM skill
-      New `skills-smoke-test/` crate (excluded from workspace; targets `wasm32-wasip1` with `[lib] crate-type = ["cdylib"]`; depends on `athena-voice-skill-sdk`).
-      `src/lib.rs`: implements `Skill`, returns one FR pattern `"quelle heure est-il"` → intent `time.query`. `handle` calls every host function (log, config_get, state_set/get, mqtt_publish, http_get_json with a mocked-in-test allowed host), then returns `SkillResponse::Speak("il est … heure")`.
-      Build: `cargo build --target wasm32-wasip1 --manifest-path skills-smoke-test/Cargo.toml`. Rebuild in a `build.rs` and load from `CARGO_TARGET_DIR` (preferred over committing the .wasm).
-      Success criteria: Task 10 in the Plan 4 doc satisfied.
 
 - [ ] Plan 4 Task 11 — Integration test: end-to-end skill dispatch
       Add `crates/athena-voice-runtime/tests/skill_dispatch.rs`: spawn runtime with the smoke-test .wasm; simulate a final transcript matching the FR pattern; assert `Event::IntentMatched` + `Event::SkillInvoked` + a TTS chunk carrying the expected speech; assert no `Event::LlmFallback`.
@@ -31,6 +26,12 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## In progress
 
 ## Done
+
+- [x] Plan 4 Task 10 — `skills-smoke-test` WASM skill
+      New `skills-smoke-test/` crate (excluded from workspace; targets `wasm32-wasip1` with `[lib] crate-type = ["cdylib"]`; depends on `athena-voice-skill-sdk`).
+      `src/lib.rs`: implements `Skill`, returns one FR pattern `"quelle heure est-il"` → intent `time.query`. `handle` calls every host function (log, config_get, state_set/get, mqtt_publish, http_get_json with a mocked-in-test allowed host), then returns `SkillResponse::Speak("il est … heure")`.
+      Build: `cargo build --target wasm32-wasip1 --manifest-path skills-smoke-test/Cargo.toml`. Rebuild in a `build.rs` and load from `CARGO_TARGET_DIR` (preferred over committing the .wasm).
+      Success criteria: Task 10 in the Plan 4 doc satisfied.
 
 - [x] Plan 4 Task 8 — WASM host + guest ABI
       Wire Task 3's `HostCtx` methods through `extism_pdk::host_fn` bindings on the guest side; compile the SDK to `wasm32-wasip1` in a smoke build.
