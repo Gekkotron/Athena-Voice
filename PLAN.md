@@ -9,11 +9,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## Backlog
 
 
-- [ ] Plan 4 Task 6 — Skill registry + loader in `wasm/registry.rs`
-      Implement `SkillRegistry { plugins, patterns }` with `load_dir(dir, deps)` that iterates `*.wasm` files, loads each with Extism, calls the exported `pattern_rules` fn to populate the pattern index.
-      Add `SkillRegistry::dispatch(skill, intent) -> Result<SkillResponse, SkillError>`.
-      Tests: fixture wasm file OR mocked plugin.
-      Success criteria: Task 6 in the Plan 4 doc satisfied; workspace tests + clippy green.
 
 - [ ] Plan 4 Task 8 — WASM host + guest ABI
       Wire Task 3's `HostCtx` methods through `extism_pdk::host_fn` bindings on the guest side; compile the SDK to `wasm32-wasip1` in a smoke build.
@@ -41,6 +36,12 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## In progress
 
 ## Done
+
+- [x] Plan 4 Task 6 — Skill registry + loader in `wasm/registry.rs`
+      Implement `SkillRegistry { plugins, patterns }` with `load_dir(dir, deps)` that iterates `*.wasm` files, loads each with Extism, calls the exported `pattern_rules` fn to populate the pattern index.
+      Add `SkillRegistry::dispatch(skill, intent) -> Result<SkillResponse, SkillError>`.
+      Tests: fixture wasm file OR mocked plugin.
+      Success criteria: Task 6 in the Plan 4 doc satisfied; workspace tests + clippy green.
 
 - [x] Plan 4 Task 5 — Host functions in `wasm/host_fns.rs`
       Register Extism host functions for `host_log`, `host_config_get`,

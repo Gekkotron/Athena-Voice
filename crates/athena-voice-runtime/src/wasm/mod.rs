@@ -8,7 +8,8 @@
 //! - `dispatcher` — `SkillDispatcher` actor that receives `(session_id, intent)`
 //!   and calls into a plugin via `spawn_blocking`.
 //!
-//! Task 4 just registers the module tree.
+//! Task 4 registered the module tree; Tasks 5–7 fill in host functions, the
+//! rule index, and the skill registry.
 
 pub mod dispatcher;
 pub mod error;
