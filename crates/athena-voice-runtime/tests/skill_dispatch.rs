@@ -100,11 +100,11 @@ async fn end_to_end_skill_dispatch() {
         .expect("build extism plugin");
     let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
 
-    let mut registry = SkillRegistry::new();
+    let registry = SkillRegistry::new();
     registry
         .install(SKILL_NAME, plugin, &["fr".into()])
         .expect("install smoke skill");
-    let rules = Arc::new(registry.patterns().clone());
+    let rules = registry.patterns_handle();
     let registry = Arc::new(registry);
 
     // ---------- Actor DAG ----------

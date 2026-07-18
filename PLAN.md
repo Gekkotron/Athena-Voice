@@ -9,16 +9,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 ## Backlog
 
 
-- [ ] Task B — Skill hot-reload (dev mode)
-      Add `[skills].hot_reload = false` (default false) to `athena.example.toml` and the config loader. When true, the runtime spawns a filesystem watcher on `[skills].dir`.
-      New `wasm/watcher.rs`: uses the `notify` crate via `notify-debouncer-full` (~250 ms debounce) on the skills dir; emits `WatchEvent { path, kind: Added | Modified | Removed }` via internal `mpsc`. Add `notify` + `notify-debouncer-full` to workspace deps.
-      Refactor `SkillRegistry` to hold `patterns: Arc<ArcSwap<RuleIndex>>` and `plugins: Arc<RwLock<HashMap<String, Arc<Mutex<dyn SkillPlugin>>>>>`. Add `arc-swap` to workspace deps. `RouterDeps.rules` and `SkillDispatcherHandle`'s lookup path become `Arc<ArcSwap<RuleIndex>>` / RwLock-guarded so a swap under a name is visible to the next dispatch without router restart.
-      `SkillRegistry::reload_path(path, deps)`: rebuilds a plugin for a single file and re-runs `install`. On failure, log at `warn` and keep the previous plugin (never a half-loaded state). Emit `Event::SkillReloaded { name }` on success; `Event::SkillReloadFailed { name, reason }` on error. Add both variants to `athena-voice-core/src/event.rs`.
-      `SkillRegistry::remove(name)`: drops the plugin and rebuilds the aggregate `RuleIndex` from what remains, then `patterns.store(Arc::new(new_index))`.
-      New tokio task `spawn_hot_reload_task(watcher_rx, registry, deps)` in `wasm/mod.rs`. `Runtime::spawn` conditionally starts it when the flag is on.
-      Tests (`wasm/registry.rs` + new `wasm/watcher.rs`): (1) `install → remove` clears both the plugin map and the rule index for that name; (2) `install → install` (same name) replaces the plugin and re-populates its rules only; (3) `reload_path` on a broken plugin returns error, emits `SkillReloadFailed`, leaves prior plugin intact; (4) tempdir watcher test — creating, modifying, removing a fixture `.wasm` yields exactly one Added / one Modified / one Removed event within 500 ms.
-      Deferred: signature verification on reload (lands with the future signed-WASM task).
-      Success criteria: `cargo nextest run --workspace` green including the 4 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean; `athena.example.toml` documents `hot_reload`.
 
 - [ ] Task C — Timer / reminder skill + host scheduler
       New storage migration `0002_scheduled_events.sql`: `scheduled_events(id INTEGER PRIMARY KEY, skill TEXT NOT NULL, fires_at_ms INTEGER NOT NULL, mqtt_topic TEXT NOT NULL, payload BLOB NOT NULL, created_at_ms INTEGER NOT NULL)`, index on `(fires_at_ms)`.
@@ -59,8 +49,18 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 ## In progress
 
-
 ## Done
+
+- [x] Task B — Skill hot-reload (dev mode)
+      Add `[skills].hot_reload = false` (default false) to `athena.example.toml` and the config loader. When true, the runtime spawns a filesystem watcher on `[skills].dir`.
+      New `wasm/watcher.rs`: uses the `notify` crate via `notify-debouncer-full` (~250 ms debounce) on the skills dir; emits `WatchEvent { path, kind: Added | Modified | Removed }` via internal `mpsc`. Add `notify` + `notify-debouncer-full` to workspace deps.
+      Refactor `SkillRegistry` to hold `patterns: Arc<ArcSwap<RuleIndex>>` and `plugins: Arc<RwLock<HashMap<String, Arc<Mutex<dyn SkillPlugin>>>>>`. Add `arc-swap` to workspace deps. `RouterDeps.rules` and `SkillDispatcherHandle`'s lookup path become `Arc<ArcSwap<RuleIndex>>` / RwLock-guarded so a swap under a name is visible to the next dispatch without router restart.
+      `SkillRegistry::reload_path(path, deps)`: rebuilds a plugin for a single file and re-runs `install`. On failure, log at `warn` and keep the previous plugin (never a half-loaded state). Emit `Event::SkillReloaded { name }` on success; `Event::SkillReloadFailed { name, reason }` on error. Add both variants to `athena-voice-core/src/event.rs`.
+      `SkillRegistry::remove(name)`: drops the plugin and rebuilds the aggregate `RuleIndex` from what remains, then `patterns.store(Arc::new(new_index))`.
+      New tokio task `spawn_hot_reload_task(watcher_rx, registry, deps)` in `wasm/mod.rs`. `Runtime::spawn` conditionally starts it when the flag is on.
+      Tests (`wasm/registry.rs` + new `wasm/watcher.rs`): (1) `install → remove` clears both the plugin map and the rule index for that name; (2) `install → install` (same name) replaces the plugin and re-populates its rules only; (3) `reload_path` on a broken plugin returns error, emits `SkillReloadFailed`, leaves prior plugin intact; (4) tempdir watcher test — creating, modifying, removing a fixture `.wasm` yields exactly one Added / one Modified / one Removed event within 500 ms.
+      Deferred: signature verification on reload (lands with the future signed-WASM task).
+      Success criteria: `cargo nextest run --workspace` green including the 4 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean; `athena.example.toml` documents `hot_reload`.
 
 - [x] Task A — Barge-in on new final transcript
       Add `Event::BargeIn { session, reason: BargeInReason }` (`NewFinalTranscript`, `VadSpeechStart` reserved) and `Event::SkillCancelled { session, skill }` to `athena-voice-core/src/event.rs`.

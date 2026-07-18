@@ -75,6 +75,16 @@ pub enum Event {
         session: SessionId,
         skill: String,
     },
+    /// A skill was (re)loaded from disk by the hot-reload watcher.
+    SkillReloaded {
+        name: String,
+    },
+    /// The hot-reload watcher failed to (re)build the plugin for a file; the
+    /// previously-loaded plugin (if any) remains in effect.
+    SkillReloadFailed {
+        name: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

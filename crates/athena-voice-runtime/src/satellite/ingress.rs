@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use rumqttc::{AsyncClient, EventLoop, QoS};
 use serde_json::json;
 use tokio::sync::{Mutex, broadcast, mpsc};
@@ -29,7 +30,7 @@ pub struct SatelliteDeps {
     /// Pattern matcher — shared across all sessions.
     pub matcher: Arc<IntentMatcher>,
     /// Rule index aggregated from loaded skills. Empty until Plan 4 Task 6 ships.
-    pub rules: Arc<RuleIndex>,
+    pub rules: Arc<ArcSwap<RuleIndex>>,
     /// Skill dispatcher — when present, matched intents route through the
     /// skill instead of falling back to the LLM.
     pub dispatcher: Option<SkillDispatcherHandle>,

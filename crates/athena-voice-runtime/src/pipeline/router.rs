@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -24,8 +25,12 @@ pub struct RouterDeps {
     pub locale: Locale,
     /// The pattern matcher — always present now that Plan 4 Task 7 shipped.
     pub matcher: Arc<IntentMatcher>,
-    /// Rule index aggregated from loaded skills. Empty if no skills are configured.
-    pub rules: Arc<RuleIndex>,
+    /// Rule index aggregated from loaded skills. The `ArcSwap` lets the
+    /// hot-reload watcher swap in a new index atomically; each dispatch
+    /// loads the current pointer and re-runs the matcher against it, so a
+    /// reload is visible to the next final transcript without router
+    /// restart. Empty if no skills are configured.
+    pub rules: Arc<ArcSwap<RuleIndex>>,
     /// When present, matched intents dispatch through this handle and skip the
     /// LLM fallback path. When absent, matched intents still emit
     /// `Event::SkillInvoked` and fall through to LLM (legacy behaviour used by
@@ -61,6 +66,7 @@ struct PendingDispatch {
 /// `Event::BargeIn { reason: NewFinalTranscript }` and cancels the awaiting
 /// side of the pending dispatch. Any late-arriving dispatch response whose
 /// epoch has moved on is dropped and reported via `Event::SkillCancelled`.
+#[allow(clippy::too_many_lines)]
 pub fn spawn_router(
     mut rx: mpsc::Receiver<Transcript>,
     deps: RouterDeps,
@@ -107,9 +113,11 @@ pub fn spawn_router(
                             prior_work_in_flight = false;
                         }
 
-                        let matched = deps
-                            .matcher
-                            .find_match(&t.text, deps.locale.as_str(), &deps.rules);
+                        let matched = deps.matcher.find_match(
+                            &t.text,
+                            deps.locale.as_str(),
+                            &deps.rules.load_full(),
+                        );
                         if let Some(m) = matched {
                             let core_intent = athena_voice_core::types::Intent {
                                 name: m.intent.name.clone(),
@@ -262,7 +270,7 @@ mod tests {
     fn build_deps(
         llm_tx: mpsc::Sender<String>,
         event_tx: broadcast::Sender<Event>,
-        rules: Arc<RuleIndex>,
+        rules: Arc<ArcSwap<RuleIndex>>,
     ) -> RouterDeps {
         let (tts_tok_tx, _tts_tok_rx) = mpsc::channel(4);
         RouterDeps {
@@ -282,7 +290,11 @@ mod tests {
         let (t_tx, t_rx) = mpsc::channel(4);
         let (llm_tx, mut llm_rx) = mpsc::channel(4);
         let (ev_tx, mut ev_rx) = broadcast::channel(16);
-        let deps = build_deps(llm_tx, ev_tx, Arc::new(RuleIndex::new()));
+        let deps = build_deps(
+            llm_tx,
+            ev_tx,
+            Arc::new(ArcSwap::from_pointee(RuleIndex::new())),
+        );
 
         let handle = spawn_router(t_rx, deps, CancellationToken::new());
 
@@ -324,7 +336,7 @@ mod tests {
             }),
             "clock".into(),
         );
-        let deps = build_deps(llm_tx, ev_tx, Arc::new(index));
+        let deps = build_deps(llm_tx, ev_tx, Arc::new(ArcSwap::from_pointee(index)));
 
         let handle = spawn_router(t_rx, deps, CancellationToken::new());
 
@@ -365,7 +377,11 @@ mod tests {
         let (t_tx, t_rx) = mpsc::channel(4);
         let (llm_tx, mut llm_rx) = mpsc::channel(4);
         let (ev_tx, _ev_rx) = broadcast::channel(16);
-        let deps = build_deps(llm_tx, ev_tx, Arc::new(RuleIndex::new()));
+        let deps = build_deps(
+            llm_tx,
+            ev_tx,
+            Arc::new(ArcSwap::from_pointee(RuleIndex::new())),
+        );
 
         spawn_router(t_rx, deps, CancellationToken::new());
 
@@ -421,7 +437,7 @@ mod tests {
         llm_tx: mpsc::Sender<String>,
         tts_tok_tx: mpsc::Sender<String>,
         event_tx: broadcast::Sender<Event>,
-        rules: Arc<RuleIndex>,
+        rules: Arc<ArcSwap<RuleIndex>>,
         dispatcher: SkillDispatcherHandle,
     ) -> RouterDeps {
         RouterDeps {
@@ -461,7 +477,7 @@ mod tests {
                 }
             },
         }));
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         reg.install("clock", plugin, &[]).unwrap();
         let reg = Arc::new(reg);
 
@@ -477,7 +493,7 @@ mod tests {
             llm_tx,
             tts_tok_tx,
             ev_tx.clone(),
-            Arc::new(index),
+            Arc::new(ArcSwap::from_pointee(index)),
             dispatcher.clone(),
         );
 
@@ -552,7 +568,7 @@ mod tests {
         let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(StallPlugin {
             handle: |_intent: &SkillIntent| Ok(SkillResponse::speak("il est huit heures")),
         }));
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         reg.install("clock", plugin, &[]).unwrap();
         let reg = Arc::new(reg);
 
@@ -568,7 +584,7 @@ mod tests {
             llm_tx,
             tts_tok_tx,
             ev_tx.clone(),
-            Arc::new(index),
+            Arc::new(ArcSwap::from_pointee(index)),
             dispatcher.clone(),
         );
 

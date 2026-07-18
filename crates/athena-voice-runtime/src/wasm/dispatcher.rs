@@ -215,7 +215,7 @@ mod tests {
     where
         F: FnMut(&Intent) -> Result<SkillResponse, SkillError> + Send + 'static,
     {
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         let plugin: Arc<Mutex<dyn SkillPlugin>> =
             Arc::new(Mutex::new(MockPlugin { handle: handler }));
         reg.install(name, plugin, &[]).unwrap();

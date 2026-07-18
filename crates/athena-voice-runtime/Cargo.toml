@@ -9,8 +9,11 @@ repository.workspace = true
 description = "Actor DAG, MQTT client, satellite adapter, and event bus for Athena-Voice."
 
 [dependencies]
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
 extism = { workspace = true }

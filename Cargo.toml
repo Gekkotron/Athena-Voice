@@ -31,7 +31,10 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # runtime
+arc-swap = "1"
 dashmap = "6"
+notify = "8"
+notify-debouncer-full = "0.5"
 futures = "0.3"
 extism = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }

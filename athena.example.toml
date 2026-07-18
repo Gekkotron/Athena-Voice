@@ -61,6 +61,11 @@ tts = "fake"
 
 [skills]
 dir = "/etc/athena-voice/skills"
+# Watch `dir` for `*.wasm` changes and hot-reload plugins in place. Leave
+# `false` in production — dev-only convenience. Adds a debounced filesystem
+# watcher (~250 ms) that emits `Event::SkillReloaded` / `SkillReloadFailed`
+# on change; a failed rebuild keeps the previous plugin loaded.
+hot_reload = false
 
 # Example — uncomment and adapt once you drop a `weather.wasm` into `dir`:
 #

@@ -31,6 +31,11 @@ pub struct Config {
 pub struct SkillsConfig {
     #[serde(default)]
     pub dir: Option<PathBuf>,
+    /// When true, the runtime spawns a filesystem watcher on `dir` and
+    /// live-reloads individual `*.wasm` files as they change. Defaults to
+    /// false so production keeps a stable, snapshot-at-startup skill set.
+    #[serde(default)]
+    pub hot_reload: bool,
     #[serde(flatten, default)]
     pub per_skill: HashMap<String, PerSkillConfig>,
 }
@@ -128,6 +133,10 @@ mod tests {
             Some(Path::new("/etc/athena-voice/skills"))
         );
         assert!(cfg.skills.per_skill.is_empty());
+        assert!(
+            !cfg.skills.hot_reload,
+            "hot_reload must default off in the shipped example"
+        );
     }
 
     #[test]

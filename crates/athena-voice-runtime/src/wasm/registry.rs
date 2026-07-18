@@ -5,6 +5,10 @@
 //! plugins keyed by skill name (filename stem) plus a `RuleIndex` populated
 //! by calling each skill's exported `pattern_rules(locale)` function.
 //!
+//! Task B (hot-reload) rewired the internals for live edits: the plugin map
+//! is behind an `RwLock` and the pattern index sits inside an `ArcSwap` so
+//! the router picks up a swap on the next dispatch without any restart.
+//!
 //! The plugin surface is abstracted behind [`SkillPlugin`] so tests can
 //! substitute a pure-Rust mock in place of a real Extism plugin — the plan
 //! calls for "fixture wasm file OR mocked plugin", and mocking keeps the
@@ -13,12 +17,16 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
+use arc_swap::ArcSwap;
 use extism::{Manifest, Plugin, PluginBuilder, Wasm};
 use thiserror::Error;
 use tokio::runtime::Handle;
+use tokio::sync::broadcast;
+use tracing::warn;
 
+use athena_voice_core::event::Event;
 use athena_voice_skill_sdk::{Intent, PatternRule, SkillError, SkillResponse};
 use athena_voice_storage::Store;
 
@@ -47,6 +55,10 @@ pub struct SkillDeps {
     /// Per-skill config, keyed by skill name (filename stem). Missing entries
     /// default to an empty allowlist and empty config map.
     pub per_skill: HashMap<String, SkillConfig>,
+    /// Event bus for `SkillReloaded` / `SkillReloadFailed`. `None` means
+    /// hot-reload observability is disabled — the registry falls back to
+    /// tracing only.
+    pub event_tx: Option<broadcast::Sender<Event>>,
 }
 
 #[derive(Debug, Error)]
@@ -114,42 +126,62 @@ impl SkillPlugin for ExtismSkillPlugin {
     }
 }
 
+/// Rules a single plugin contributed to the aggregate index, keyed by
+/// locale. Kept alongside the `plugins` map so `remove` / `reload_path` can
+/// rebuild the aggregate `RuleIndex` without re-querying every remaining
+/// plugin.
+type PluginRules = HashMap<String, Vec<HostPatternRule>>;
+type PluginHandle = Arc<Mutex<dyn SkillPlugin>>;
+type PluginMap = HashMap<String, PluginHandle>;
+
 pub struct SkillRegistry {
-    plugins: HashMap<String, Arc<Mutex<dyn SkillPlugin>>>,
-    patterns: RuleIndex,
+    plugins: Arc<RwLock<PluginMap>>,
+    /// Cache of the rules each plugin contributed, so the aggregate index
+    /// can be rebuilt cheaply when one plugin is removed or replaced.
+    plugin_rules: Mutex<HashMap<String, PluginRules>>,
+    patterns: Arc<ArcSwap<RuleIndex>>,
 }
 
 impl SkillRegistry {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            plugins: HashMap::new(),
-            patterns: RuleIndex::new(),
+            plugins: Arc::new(RwLock::new(HashMap::new())),
+            plugin_rules: Mutex::new(HashMap::new()),
+            patterns: Arc::new(ArcSwap::from_pointee(RuleIndex::new())),
         }
     }
 
+    /// A cloneable handle to the aggregate pattern index. Consumers (router,
+    /// tests) read via `handle.load()` — every dispatch sees the latest swap
+    /// with no lock contention.
     #[must_use]
-    pub fn patterns(&self) -> &RuleIndex {
-        &self.patterns
+    pub fn patterns_handle(&self) -> Arc<ArcSwap<RuleIndex>> {
+        self.patterns.clone()
     }
 
-    /// Consume the registry and return only its pattern index — useful when
-    /// handing the index off to the intent matcher.
+    /// Snapshot of the current pattern index. Prefer `patterns_handle` for
+    /// long-lived readers so they see reloads.
     #[must_use]
-    pub fn into_patterns(self) -> RuleIndex {
-        self.patterns
+    pub fn patterns_snapshot(&self) -> Arc<RuleIndex> {
+        self.patterns.load_full()
     }
 
     #[must_use]
     pub fn skill_names(&self) -> Vec<String> {
-        self.plugins.keys().cloned().collect()
+        self.plugins
+            .read()
+            .expect("skills map lock poisoned")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// Iterate `dir` for `*.wasm` files and load each with Extism, wiring in
     /// the host functions from [`crate::wasm::host_fns`] and populating the
     /// pattern index from every skill's `pattern_rules(locale)` export.
     pub fn load_dir(dir: &Path, deps: &SkillDeps) -> Result<Self, RegistryError> {
-        let mut registry = Self::new();
+        let registry = Self::new();
         let read = fs::read_dir(dir).map_err(|source| RegistryError::Io {
             dir: dir.display().to_string(),
             source,
@@ -163,47 +195,23 @@ impl SkillRegistry {
             if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
                 continue;
             }
-            let name = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| RegistryError::NoStem {
-                    path: path.display().to_string(),
-                })?
-                .to_string();
-            let cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
-            let ctx = SkillCtx {
-                name: name.clone(),
-                store: deps.store.clone(),
-                mqtt: deps.mqtt.clone(),
-                http_allowlist: cfg.http_allowlist,
-                config: cfg.config,
-                tokio: deps.tokio.clone(),
-                http: deps.http.clone(),
-            };
-            let manifest = Manifest::new([Wasm::file(&path)]);
-            let plugin = PluginBuilder::new(manifest)
-                .with_wasi(true)
-                .with_functions(host_functions(ctx))
-                .build()
-                .map_err(|source| RegistryError::Build {
-                    skill: name.clone(),
-                    source,
-                })?;
-            let boxed: Arc<Mutex<dyn SkillPlugin>> =
-                Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
-            registry.install(&name, boxed, &deps.locales)?;
+            let (name, plugin) = build_plugin_from_file(&path, deps)?;
+            registry.install(&name, plugin, &deps.locales)?;
         }
         Ok(registry)
     }
 
     /// Register a plugin (real or mock) and populate the pattern index by
-    /// calling its `pattern_rules(locale)` export for every locale.
+    /// calling its `pattern_rules(locale)` export for every locale. If the
+    /// name is already present, its previous plugin is replaced and only its
+    /// rules are re-populated in the aggregate index.
     pub fn install(
-        &mut self,
+        &self,
         name: &str,
         plugin: Arc<Mutex<dyn SkillPlugin>>,
         locales: &[String],
     ) -> Result<(), RegistryError> {
+        let mut this_rules: PluginRules = HashMap::new();
         for locale in locales {
             let rules = {
                 let mut guard = plugin
@@ -217,31 +225,156 @@ impl SkillRegistry {
                         source,
                     })?
             };
-            for rule in rules {
-                self.patterns.insert(
-                    locale.clone(),
-                    HostPatternRule::from(rule),
-                    name.to_string(),
-                );
+            let converted: Vec<HostPatternRule> =
+                rules.into_iter().map(HostPatternRule::from).collect();
+            this_rules.insert(locale.clone(), converted);
+        }
+
+        // Update the plugin map + per-plugin rule cache, then rebuild the
+        // aggregate index atomically. The map lock is held only for the
+        // insert; the ArcSwap store is what matters for observers.
+        {
+            let mut plugins = self.plugins.write().expect("skills map lock poisoned");
+            plugins.insert(name.to_string(), plugin);
+        }
+        {
+            let mut rules_map = self
+                .plugin_rules
+                .lock()
+                .expect("plugin_rules lock poisoned");
+            rules_map.insert(name.to_string(), this_rules);
+        }
+        self.rebuild_index();
+        Ok(())
+    }
+
+    /// Drop the plugin under `name` and rebuild the aggregate `RuleIndex` so
+    /// the router stops matching its rules on the next dispatch. Idempotent
+    /// — removing a name that isn't loaded is a no-op.
+    pub fn remove(&self, name: &str) -> bool {
+        let existed = {
+            let mut plugins = self.plugins.write().expect("skills map lock poisoned");
+            plugins.remove(name).is_some()
+        };
+        {
+            let mut rules_map = self
+                .plugin_rules
+                .lock()
+                .expect("plugin_rules lock poisoned");
+            rules_map.remove(name);
+        }
+        if existed {
+            self.rebuild_index();
+        }
+        existed
+    }
+
+    /// Rebuild one plugin from a single file path and re-run [`install`].
+    ///
+    /// The `name` is derived from the file stem. On failure the previous
+    /// plugin (if any) is left untouched — the registry is never in a
+    /// half-loaded state. Success emits `Event::SkillReloaded { name }` on
+    /// the deps bus, failure emits `Event::SkillReloadFailed`.
+    pub fn reload_path(&self, path: &Path, deps: &SkillDeps) -> Result<String, RegistryError> {
+        let outcome = (|| -> Result<String, RegistryError> {
+            let (name, plugin) = build_plugin_from_file(path, deps)?;
+            self.install(&name, plugin, &deps.locales)?;
+            Ok(name)
+        })();
+
+        match &outcome {
+            Ok(name) => {
+                if let Some(tx) = deps.event_tx.as_ref() {
+                    let _ = tx.send(Event::SkillReloaded { name: name.clone() });
+                }
+            }
+            Err(err) => {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("<unknown>")
+                    .to_string();
+                let reason = err.to_string();
+                warn!(skill = %name, error = %reason, "skill reload failed");
+                if let Some(tx) = deps.event_tx.as_ref() {
+                    let _ = tx.send(Event::SkillReloadFailed { name, reason });
+                }
             }
         }
-        self.plugins.insert(name.to_string(), plugin);
-        Ok(())
+        outcome
     }
 
     /// Dispatch `intent` to the named skill. Unknown-skill and mutex-poison
     /// conditions surface as `SkillError::Custom` so the caller can treat
     /// dispatch as a single unified fail-path.
     pub fn dispatch(&self, skill: &str, intent: Intent) -> Result<SkillResponse, SkillError> {
-        let plugin = self
-            .plugins
-            .get(skill)
-            .ok_or_else(|| SkillError::Custom(format!("unknown skill: {skill}")))?;
+        let plugin = {
+            let plugins = self
+                .plugins
+                .read()
+                .map_err(|_| SkillError::Custom("skills map lock poisoned".into()))?;
+            plugins
+                .get(skill)
+                .cloned()
+                .ok_or_else(|| SkillError::Custom(format!("unknown skill: {skill}")))?
+        };
         let mut guard = plugin
             .lock()
             .map_err(|_| SkillError::Custom("skill plugin mutex poisoned".into()))?;
         guard.handle(&intent)
     }
+
+    fn rebuild_index(&self) {
+        let rules_map = self
+            .plugin_rules
+            .lock()
+            .expect("plugin_rules lock poisoned");
+        let mut fresh = RuleIndex::new();
+        for (skill, per_locale) in rules_map.iter() {
+            for (locale, rules) in per_locale {
+                for rule in rules {
+                    fresh.insert(locale.clone(), rule.clone(), skill.clone());
+                }
+            }
+        }
+        self.patterns.store(Arc::new(fresh));
+    }
+}
+
+/// Build one plugin instance from a wasm file on disk. Returns the derived
+/// skill name (file stem) alongside the wrapped plugin.
+fn build_plugin_from_file(
+    path: &Path,
+    deps: &SkillDeps,
+) -> Result<(String, Arc<Mutex<dyn SkillPlugin>>), RegistryError> {
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| RegistryError::NoStem {
+            path: path.display().to_string(),
+        })?
+        .to_string();
+    let cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
+    let ctx = SkillCtx {
+        name: name.clone(),
+        store: deps.store.clone(),
+        mqtt: deps.mqtt.clone(),
+        http_allowlist: cfg.http_allowlist,
+        config: cfg.config,
+        tokio: deps.tokio.clone(),
+        http: deps.http.clone(),
+    };
+    let manifest = Manifest::new([Wasm::file(path)]);
+    let plugin = PluginBuilder::new(manifest)
+        .with_wasi(true)
+        .with_functions(host_functions(ctx))
+        .build()
+        .map_err(|source| RegistryError::Build {
+            skill: name.clone(),
+            source,
+        })?;
+    let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
+    Ok((name, plugin))
 }
 
 impl Default for SkillRegistry {
@@ -299,9 +432,22 @@ mod tests {
         Arc::new(Mutex::new(mock))
     }
 
+    fn simple_mock(locale_rules: &[(&str, Vec<PatternRule>)]) -> Arc<Mutex<dyn SkillPlugin>> {
+        let rules_by_locale = locale_rules
+            .iter()
+            .map(|(l, r)| ((*l).to_string(), r.clone()))
+            .collect();
+        arc_mock(MockPlugin {
+            rules_by_locale,
+            response: Ok(SkillResponse::empty()),
+            handle_calls: Arc::new(AtomicUsize::new(0)),
+            last_intent: Arc::new(Mutex::new(None)),
+        })
+    }
+
     #[test]
     fn install_populates_patterns_per_locale() {
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         let mock = MockPlugin {
             rules_by_locale: HashMap::from([
                 ("fr".into(), vec![rule("hello", "bonjour")]),
@@ -321,15 +467,16 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(reg.patterns().locale_count(), 2);
-        assert_eq!(reg.patterns().for_locale("fr").unwrap().len(), 1);
-        assert_eq!(reg.patterns().for_locale("en").unwrap().len(), 2);
+        let idx = reg.patterns_snapshot();
+        assert_eq!(idx.locale_count(), 2);
+        assert_eq!(idx.for_locale("fr").unwrap().len(), 1);
+        assert_eq!(idx.for_locale("en").unwrap().len(), 2);
         assert_eq!(reg.skill_names(), vec!["greeter".to_string()]);
     }
 
     #[test]
     fn dispatch_calls_plugin_and_returns_response() {
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         let handle_calls = Arc::new(AtomicUsize::new(0));
         let last_intent = Arc::new(Mutex::new(None));
         let mock = MockPlugin {
@@ -355,7 +502,7 @@ mod tests {
 
     #[test]
     fn dispatch_propagates_skill_error() {
-        let mut reg = SkillRegistry::new();
+        let reg = SkillRegistry::new();
         let mock = MockPlugin {
             rules_by_locale: HashMap::new(),
             response: Err(SkillError::HttpFailed("boom".into())),
@@ -390,6 +537,107 @@ mod tests {
         assert!(matches!(err, SkillError::Custom(ref m) if m.contains("unknown skill")));
     }
 
+    #[test]
+    fn install_then_remove_clears_plugin_and_rules() {
+        let reg = SkillRegistry::new();
+        let mock = simple_mock(&[("fr", vec![rule("hello", "bonjour")])]);
+        reg.install("greeter", mock, &["fr".to_string()]).unwrap();
+        assert_eq!(reg.patterns_snapshot().for_locale("fr").unwrap().len(), 1);
+        assert!(reg.skill_names().contains(&"greeter".to_string()));
+
+        assert!(reg.remove("greeter"));
+        assert!(reg.skill_names().is_empty());
+        let idx = reg.patterns_snapshot();
+        assert!(idx.for_locale("fr").is_none() || idx.for_locale("fr").unwrap().is_empty());
+        // Second remove is a no-op.
+        assert!(!reg.remove("greeter"));
+    }
+
+    #[test]
+    fn install_twice_same_name_replaces_only_that_skills_rules() {
+        let reg = SkillRegistry::new();
+        // Skill A contributes rules under both fr and en.
+        let a1 = simple_mock(&[
+            ("fr", vec![rule("hello", "bonjour")]),
+            ("en", vec![rule("hello", "hello")]),
+        ]);
+        reg.install("a", a1, &["fr".into(), "en".into()]).unwrap();
+
+        // Second skill "b" contributes an fr rule — should survive re-install of "a".
+        let b = simple_mock(&[("fr", vec![rule("bye", "au revoir")])]);
+        reg.install("b", b, &["fr".into(), "en".into()]).unwrap();
+
+        assert_eq!(reg.patterns_snapshot().for_locale("fr").unwrap().len(), 2);
+
+        // Replace "a" with a new plugin exposing different rules.
+        let a2 = simple_mock(&[
+            ("fr", vec![rule("hello", "salut"), rule("cheer", "santé")]),
+            ("en", vec![]),
+        ]);
+        reg.install("a", a2, &["fr".into(), "en".into()]).unwrap();
+
+        let idx = reg.patterns_snapshot();
+        // fr now has 2 (a) + 1 (b) = 3 rules; en has 0 (a's new rules were empty).
+        assert_eq!(idx.for_locale("fr").unwrap().len(), 3);
+        assert!(idx.for_locale("en").is_none() || idx.for_locale("en").unwrap().is_empty());
+        // Both skills still registered.
+        let mut names = reg.skill_names();
+        names.sort();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn reload_path_on_broken_wasm_leaves_prior_plugin_and_emits_failed_event() {
+        let reg = SkillRegistry::new();
+        // Prior good mock installed manually as "brokentest".
+        let good = simple_mock(&[("fr", vec![rule("hello", "bonjour")])]);
+        reg.install("brokentest", good, &["fr".into()]).unwrap();
+        let rules_before = reg.patterns_snapshot().for_locale("fr").unwrap().len();
+        assert_eq!(rules_before, 1);
+
+        // Broken .wasm at a real path so `reload_path` walks the failure path.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("brokentest.wasm");
+        std::fs::write(&path, b"not really wasm").unwrap();
+
+        let (tx, mut rx) = broadcast::channel(4);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store: Arc<dyn Store> = rt.block_on(async {
+            Arc::new(
+                athena_voice_storage::SqliteStore::open("sqlite::memory:")
+                    .await
+                    .unwrap(),
+            )
+        });
+        let (mqtt, _eventloop) =
+            rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("reload-fail", "127.0.0.1", 1), 8);
+        let deps = SkillDeps {
+            store,
+            mqtt,
+            tokio: rt.handle().clone(),
+            http: reqwest::Client::new(),
+            locales: vec!["fr".into()],
+            per_skill: HashMap::new(),
+            event_tx: Some(tx),
+        };
+
+        let err = reg.reload_path(&path, &deps).unwrap_err();
+        assert!(
+            matches!(err, RegistryError::Build { ref skill, .. } if skill == "brokentest"),
+            "unexpected reload error variant"
+        );
+
+        // Prior plugin still installed and its rules survive.
+        assert!(reg.skill_names().contains(&"brokentest".to_string()));
+        assert_eq!(reg.patterns_snapshot().for_locale("fr").unwrap().len(), 1);
+
+        let ev = rx.try_recv().expect("expected an event");
+        match ev {
+            Event::SkillReloadFailed { name, .. } => assert_eq!(name, "brokentest"),
+            other => panic!("expected SkillReloadFailed, got {other:?}"),
+        }
+    }
+
     fn make_deps(rt: &tokio::runtime::Runtime, client_id: &str) -> SkillDeps {
         let store: Arc<dyn Store> = rt.block_on(async {
             Arc::new(
@@ -407,6 +655,7 @@ mod tests {
             http: reqwest::Client::new(),
             locales: vec!["fr".into()],
             per_skill: HashMap::new(),
+            event_tx: None,
         }
     }
 
@@ -420,7 +669,7 @@ mod tests {
         let deps = make_deps(&rt, "registry-test");
         let reg = SkillRegistry::load_dir(dir.path(), &deps).unwrap();
         assert!(reg.skill_names().is_empty());
-        assert_eq!(reg.patterns().locale_count(), 0);
+        assert_eq!(reg.patterns_snapshot().locale_count(), 0);
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub use error::RuntimeError;
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -50,7 +51,7 @@ impl Runtime {
 
         // Empty rule index until Plan 4 Task 6 (SkillRegistry) populates it.
         let matcher = Arc::new(intent::IntentMatcher::new());
-        let rules = Arc::new(intent::RuleIndex::new());
+        let rules = Arc::new(ArcSwap::from_pointee(intent::RuleIndex::new()));
 
         let deps = SatelliteDeps {
             mqtt: client.tx.clone(),
