@@ -82,8 +82,8 @@ hot_reload = false
 # Example — uncomment and adapt once you drop a `weather.wasm` into `dir`:
 #
 #   [skills.weather]
-#   http_allowlist = ["api.open-meteo.com"]
-#   config = { units = "metric", default_city = "Paris" }
+#   http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+#   config = { default_city = "Paris", units = "celsius" }
 #
 # Example — home automation skill publishing to a Zigbee2MQTT-style broker:
 #

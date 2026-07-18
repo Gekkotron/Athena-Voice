@@ -12,7 +12,13 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-- [ ] Task E — Weather skill (Open-Meteo)
+
+
+## In progress
+
+## Done
+
+- [x] Task E — Weather skill (Open-Meteo)
       New crate at repo root `skills-weather/` (same layout as `skills-home/`/`skills-timer/`: `crate-type = ["cdylib"]`, edition 2024, Gekkotron author, NOT in workspace, release LTO/opt-z/strip).
       Provider: Open-Meteo — no API key required. Two endpoints: geocoding `https://geocoding-api.open-meteo.com/v1/search?name={city}&language=fr&count=1`; forecast `https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto`.
       Per-skill config in `[skills.weather]`: `http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]`; `config = { default_city = "Paris", units = "celsius" }`. Add a commented `[skills.weather]` example to `athena.example.toml`.
@@ -21,11 +27,6 @@ criterion in one line so it can pick up without further prompting. Tasks
       Error paths: geocoding returns empty results → `SkillResponse::Speak("désolé, je ne trouve pas <city>")` and NO forecast call; HTTP error → `SkillResponse::Speak("désolé, le service météo est indisponible")`; JSON parse error → same message + `log("error", ...)`.
       Integration test `crates/athena-voice-runtime/tests/weather_end_to_end.rs`: add `wiremock` to workspace dev-deps; spin up two mock endpoints on deterministic ports; per-skill `http_allowlist = ["127.0.0.1"]`; skill reads a `base_url` from `config_get` (default = the real endpoints) so tests can override to the wiremock host. Cases: (1) `"quel temps fait-il à Lyon"` — geocoding returns `Lyon (45.75, 4.85)`, forecast returns `temp=18.0, weather_code=1` → TTS contains `"il fait 18 degrés à Lyon, quelques nuages"`. (2) `"quel temps fera-t-il demain"` (default_city=Paris) — geocoding returns Paris, forecast daily returns `min=8, max=15, weather_code=61` → TTS contains `"demain à Paris, il fera entre 8 et 15 degrés avec de la pluie"`. (3) `"quel temps fait-il à Zzzz"` — geocoding returns empty results → TTS `"désolé, je ne trouve pas Zzzz"` AND wiremock forecast endpoint `.expect(0)` (never called).
       Success criteria: `cargo nextest run --workspace` green including all weather_code unit tests + 3 integration cases; smoke-test/timer/home integration tests still green (regression pin); clippy + fmt clean; `skills-weather.wasm` builds via `cargo build --target wasm32-wasip1 --manifest-path skills-weather/Cargo.toml`; `athena.example.toml` shows `[skills.weather]` example.
-
-
-## In progress
-
-## Done
 
 - [x] Task D — Home automation (MQTT) skill
       Extend `SkillConfig` in `wasm/registry.rs` with `pub mqtt_publish_allowlist: Vec<String>` (glob-style MQTT prefixes: `home/salon/light/set`, `home/+/light/set`, `home/#`). Default empty. Plumb through `SkillCtx` into `host_fns.rs`.

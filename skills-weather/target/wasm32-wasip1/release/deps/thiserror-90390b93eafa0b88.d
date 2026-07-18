@@ -1,0 +1,12 @@
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/thiserror-90390b93eafa0b88.d: /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/build/thiserror-f48d6e0020a0db48/out/private.rs
+
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/libthiserror-90390b93eafa0b88.rmeta: /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/build/thiserror-f48d6e0020a0db48/out/private.rs
+
+/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/build/thiserror-f48d6e0020a0db48/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/build/thiserror-f48d6e0020a0db48/out

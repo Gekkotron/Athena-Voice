@@ -1,0 +1,10 @@
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/athena_voice_skill_sdk-838f06e4299575b2.d: /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/lib.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/host.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/response.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/skill.rs
+
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/libathena_voice_skill_sdk-838f06e4299575b2.rlib: /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/lib.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/host.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/response.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/skill.rs
+
+/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/libathena_voice_skill_sdk-838f06e4299575b2.rmeta: /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/lib.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/host.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/response.rs /Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/skill.rs
+
+/Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/lib.rs:
+/Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/host.rs:
+/Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/response.rs:
+/Users/julienhuguel/superconductor/projects/Athena-Voice/crates/athena-voice-skill-sdk/src/skill.rs:

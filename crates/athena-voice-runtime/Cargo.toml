@@ -42,6 +42,7 @@ rumqttd = { version = "0.19", default-features = false }
 tempfile = "3"
 portpicker = "0.1"
 tracing-subscriber = { workspace = true }
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

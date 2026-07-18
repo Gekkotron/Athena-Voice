@@ -15,6 +15,7 @@ exclude = [
     "skills-smoke-test",
     "skills-timer",
     "skills-home",
+    "skills-weather",
 ]
 
 [workspace.package]
@@ -64,6 +65,7 @@ anyhow = "1"
 assert_cmd = "2"
 insta = { version = "1", features = ["json"] }
 predicates = "3"
+wiremock = "0.6"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
