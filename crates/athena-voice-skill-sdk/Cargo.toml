@@ -11,6 +11,7 @@ description = "Guest-side SDK for Athena-Voice WASM skills. Host uses the same t
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+strsim = { workspace = true }
 thiserror = { workspace = true }
 
 # Guest-only: the Extism PDK is used to import the host functions declared in

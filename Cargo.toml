@@ -14,6 +14,7 @@ exclude = [
     # cargo build --target invocation.
     "skills-smoke-test",
     "skills-timer",
+    "skills-home",
 ]
 
 [workspace.package]

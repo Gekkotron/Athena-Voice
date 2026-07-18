@@ -36,7 +36,7 @@ use athena_voice_runtime::mqtt::{MqttClient, MqttConfig};
 use athena_voice_runtime::pipeline::router::{RouterDeps, spawn_router};
 use athena_voice_runtime::pipeline::tts::spawn_tts;
 use athena_voice_runtime::wasm::dispatcher::SkillDispatcher;
-use athena_voice_runtime::wasm::host_fns::{SkillCtx, host_functions};
+use athena_voice_runtime::wasm::host_fns::{AsyncClientPublisher, SkillCtx, host_functions};
 use athena_voice_runtime::wasm::registry::{ExtismSkillPlugin, SkillPlugin, SkillRegistry};
 use athena_voice_storage::{SqliteStore, Store};
 
@@ -81,12 +81,13 @@ async fn end_to_end_skill_dispatch() {
     let ctx = SkillCtx {
         name: SKILL_NAME.into(),
         store: store.clone(),
-        mqtt: mqtt.tx.clone(),
+        mqtt: Arc::new(AsyncClientPublisher(mqtt.tx.clone())),
         // Allowlist matches the URL the smoke skill hits; the call itself
         // fails at DNS (smoke.local doesn't resolve), but the skill discards
         // the result with `let _ = ...`, so ACL passes and the plugin
         // completes normally.
         http_allowlist: vec!["smoke.local".into()],
+        mqtt_publish_allowlist: Vec::new(),
         config,
         tokio: tokio::runtime::Handle::current(),
         http,

@@ -41,6 +41,15 @@ fn main() {
         "TIMER_TEST_WASM",
         "TIMER_TEST_WASM_SKIP",
     );
+    build_skill_wasm(
+        project_root,
+        &out_dir,
+        "skills-home",
+        "skills_home",
+        "home-target",
+        "HOME_TEST_WASM",
+        "HOME_TEST_WASM_SKIP",
+    );
 }
 
 /// Builds `<project_root>/<crate_dir>` to `wasm32-wasip1` and exposes the

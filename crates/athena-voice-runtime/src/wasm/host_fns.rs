@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use extism::{CurrentPlugin, Function, PTR, UserData, Val, ValType};
 use reqwest::Url;
 use rumqttc::{AsyncClient, QoS};
@@ -18,6 +19,30 @@ use tokio::runtime::Handle;
 use athena_voice_storage::Store;
 
 use crate::wasm::error::HostFnError;
+
+/// Publish-side of the MQTT client visible to skills. Introduced so tests can
+/// swap in an in-memory capture backend without spinning up a real broker.
+///
+/// The single method mirrors [`AsyncClient::publish`] but strips the QoS /
+/// retain knobs the host doesn't expose to guests today — everything is
+/// published at QoS 1 with `retain = false`.
+#[async_trait]
+pub trait MqttPublisher: Send + Sync {
+    async fn publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String>;
+}
+
+/// Thin adapter turning a real `rumqttc::AsyncClient` into a `MqttPublisher`.
+pub struct AsyncClientPublisher(pub AsyncClient);
+
+#[async_trait]
+impl MqttPublisher for AsyncClientPublisher {
+    async fn publish(&self, topic: String, payload: Vec<u8>) -> Result<(), String> {
+        self.0
+            .publish(topic, QoS::AtLeastOnce, false, payload)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
 
 /// Per-skill context that every host function receives via `UserData`.
 ///
@@ -33,10 +58,14 @@ pub struct SkillCtx {
     /// Storage backend, scoped by `Store::skill_kv_{get,set}(&name, …)`.
     pub store: Arc<dyn Store>,
     /// MQTT client shared with the rest of the runtime.
-    pub mqtt: AsyncClient,
+    pub mqtt: Arc<dyn MqttPublisher>,
     /// Allowlisted hosts (bare host names, no scheme) the skill may reach via
     /// `host_http_get_json`.
     pub http_allowlist: Vec<String>,
+    /// Extra MQTT publish prefixes/patterns the skill may target beyond its
+    /// built-in `athena/skills/<name>/*` namespace. Supports the same wildcard
+    /// grammar as MQTT subscriptions (`+` = one level, `#` = tail).
+    pub mqtt_publish_allowlist: Vec<String>,
     /// Config map exposed via `host_config_get`.
     pub config: HashMap<String, String>,
     /// Tokio runtime handle used to bridge async runtime APIs (Store, MQTT,
@@ -53,10 +82,59 @@ pub fn mqtt_topic_prefix(skill: &str) -> String {
     format!("athena/skills/{skill}/")
 }
 
-/// Returns `true` iff `topic` is inside the skill's ACL namespace.
+/// Returns `true` iff `topic` is inside the skill's built-in ACL namespace
+/// (`athena/skills/<skill>/*`). Used by `host_schedule_mqtt` — scheduling is
+/// intentionally NOT broadened by per-skill `mqtt_publish_allowlist` because
+/// scheduled events fire from the runtime, not the skill sandbox, so we keep
+/// their reach narrow.
 #[must_use]
 pub fn mqtt_topic_allowed(skill: &str, topic: &str) -> bool {
     topic.starts_with(&mqtt_topic_prefix(skill))
+}
+
+/// Publish-side ACL: a skill may publish to `topic` iff it sits under the
+/// built-in `athena/skills/<skill>/*` prefix OR any pattern in
+/// `publish_allowlist` matches. Patterns follow MQTT topic-filter grammar.
+#[must_use]
+pub fn mqtt_publish_allowed(skill: &str, topic: &str, publish_allowlist: &[String]) -> bool {
+    if mqtt_topic_allowed(skill, topic) {
+        return true;
+    }
+    publish_allowlist
+        .iter()
+        .any(|pattern| mqtt_topic_matches(pattern, topic))
+}
+
+/// Real MQTT topic-filter matcher.
+///
+/// - `+` matches exactly one level (must sit alone between `/`s).
+/// - `#` matches the entire remaining tail; must be the last level.
+/// - Any other level is compared byte-for-byte.
+///
+/// Standard MQTT edge cases: `#` alone matches every topic; `foo/#` matches
+/// `foo` (its parent) as well as `foo/…` — this matcher follows the spec.
+#[must_use]
+pub fn mqtt_topic_matches(pattern: &str, topic: &str) -> bool {
+    let pat_levels: Vec<&str> = pattern.split('/').collect();
+    let topic_levels: Vec<&str> = topic.split('/').collect();
+
+    for (i, p) in pat_levels.iter().enumerate() {
+        if *p == "#" {
+            // `#` must be the terminal level; anything past it is malformed.
+            return i + 1 == pat_levels.len();
+        }
+        let Some(t) = topic_levels.get(i) else {
+            return false;
+        };
+        if *p == "+" {
+            continue;
+        }
+        if p != t {
+            return false;
+        }
+    }
+    // Non-wildcard prefix consumed the pattern; topic must be exactly as long.
+    pat_levels.len() == topic_levels.len()
 }
 
 /// Parses `url` and returns it iff its host is on `allowlist` and its scheme
@@ -241,12 +319,16 @@ fn host_mqtt_publish(
 ) -> Result<(), extism::Error> {
     let topic: String = plugin.memory_get_val(&inputs[0])?;
     let payload: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
-    let (name, mqtt, tokio) = with_ctx(&ud, |ctx| {
-        (ctx.name.clone(), ctx.mqtt.clone(), ctx.tokio.clone())
+    let (name, mqtt, allowlist, tokio) = with_ctx(&ud, |ctx| {
+        (
+            ctx.name.clone(),
+            ctx.mqtt.clone(),
+            ctx.mqtt_publish_allowlist.clone(),
+            ctx.tokio.clone(),
+        )
     })?;
-    let code: i64 = if mqtt_topic_allowed(&name, &topic) {
-        let publish = tokio
-            .block_on(async move { mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await });
+    let code: i64 = if mqtt_publish_allowed(&name, &topic, &allowlist) {
+        let publish = tokio.block_on(async move { mqtt.publish(topic, payload).await });
         match publish {
             Ok(()) => MQTT_OK,
             Err(e) => {
@@ -372,10 +454,10 @@ mod tests {
     use athena_voice_storage::SqliteStore;
     use rumqttc::MqttOptions;
 
-    fn dummy_mqtt() -> AsyncClient {
+    fn dummy_mqtt() -> Arc<dyn MqttPublisher> {
         let (client, _eventloop) =
             AsyncClient::new(MqttOptions::new("test-client", "127.0.0.1", 1), 8);
-        client
+        Arc::new(AsyncClientPublisher(client))
     }
 
     async fn make_ctx(name: &str) -> SkillCtx {
@@ -385,10 +467,65 @@ mod tests {
             store,
             mqtt: dummy_mqtt(),
             http_allowlist: vec!["api.example.com".into()],
+            mqtt_publish_allowlist: Vec::new(),
             config: HashMap::from([("greeting".into(), "bonjour".into())]),
             tokio: Handle::current(),
             http: reqwest::Client::new(),
         }
+    }
+
+    #[test]
+    fn topic_matches_plus_wildcard_matches_one_level_only() {
+        assert!(mqtt_topic_matches(
+            "home/+/light/set",
+            "home/salon/light/set"
+        ));
+        assert!(!mqtt_topic_matches(
+            "home/+/light/set",
+            "home/salon/kitchen/light/set"
+        ));
+        assert!(!mqtt_topic_matches("home/+/light/set", "home/salon/light"));
+    }
+
+    #[test]
+    fn topic_matches_hash_wildcard_matches_tail() {
+        assert!(mqtt_topic_matches("home/#", "home/salon"));
+        assert!(mqtt_topic_matches("home/#", "home/salon/light/set"));
+        assert!(mqtt_topic_matches("#", "anything/goes/here"));
+        assert!(!mqtt_topic_matches("home/#", "away/salon"));
+    }
+
+    #[test]
+    fn publish_allowed_falls_back_to_default_acl_when_allowlist_empty() {
+        // Regression pin for the smoke-test: an empty `mqtt_publish_allowlist`
+        // must leave the built-in `athena/skills/<name>/*` ACL untouched — a
+        // skill without an explicit home-broker grant cannot suddenly reach
+        // `home/#` just because the ACL surface grew MQTT-wildcard semantics.
+        assert!(mqtt_publish_allowed(
+            "smoke",
+            "athena/skills/smoke/tick",
+            &[]
+        ));
+        assert!(!mqtt_publish_allowed("smoke", "home/salon/light/set", &[]));
+        assert!(!mqtt_publish_allowed("smoke", "home/anything", &[]));
+        assert!(!mqtt_publish_allowed("smoke", "home", &[]));
+    }
+
+    #[test]
+    fn publish_allowed_honors_wildcard_allowlist() {
+        let allow = vec!["home/+/light/set".to_string()];
+        assert!(mqtt_publish_allowed("home", "home/salon/light/set", &allow));
+        assert!(!mqtt_publish_allowed(
+            "home",
+            "home/salon/kitchen/light/set",
+            &allow
+        ));
+        // Built-in namespace still works alongside a custom allowlist.
+        assert!(mqtt_publish_allowed(
+            "home",
+            "athena/skills/home/anything",
+            &allow
+        ));
     }
 
     #[test]

@@ -40,12 +40,16 @@ use athena_voice_skill_sdk::{Intent, PatternRule, SkillError, SkillResponse};
 use athena_voice_storage::Store;
 
 use crate::intent::{HostPatternRule, RuleIndex};
-use crate::wasm::host_fns::{SkillCtx, host_functions};
+use crate::wasm::host_fns::{AsyncClientPublisher, SkillCtx, host_functions};
 
 /// Per-skill configuration merged into a `SkillCtx` at load time.
 #[derive(Debug, Clone, Default)]
 pub struct SkillConfig {
     pub http_allowlist: Vec<String>,
+    /// Extra MQTT publish patterns (MQTT topic-filter grammar with `+`/`#`)
+    /// this skill may target on top of its default `athena/skills/<name>/*`
+    /// namespace. Empty leaves the default ACL untouched.
+    pub mqtt_publish_allowlist: Vec<String>,
     pub config: HashMap<String, String>,
 }
 
@@ -367,8 +371,9 @@ fn build_plugin_from_file(
     let ctx = SkillCtx {
         name: name.clone(),
         store: deps.store.clone(),
-        mqtt: deps.mqtt.clone(),
+        mqtt: Arc::new(AsyncClientPublisher(deps.mqtt.clone())),
         http_allowlist: cfg.http_allowlist,
+        mqtt_publish_allowlist: cfg.mqtt_publish_allowlist,
         config: cfg.config,
         tokio: deps.tokio.clone(),
         http: deps.http.clone(),

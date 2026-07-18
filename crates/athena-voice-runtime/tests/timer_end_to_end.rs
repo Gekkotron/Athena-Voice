@@ -41,7 +41,7 @@ use athena_voice_runtime::mqtt::{MqttClient, MqttConfig};
 use athena_voice_runtime::pipeline::router::{RouterDeps, spawn_router};
 use athena_voice_runtime::pipeline::tts::spawn_tts;
 use athena_voice_runtime::wasm::dispatcher::SkillDispatcher;
-use athena_voice_runtime::wasm::host_fns::{SkillCtx, host_functions};
+use athena_voice_runtime::wasm::host_fns::{AsyncClientPublisher, SkillCtx, host_functions};
 use athena_voice_runtime::wasm::registry::{ExtismSkillPlugin, SkillPlugin, SkillRegistry};
 use athena_voice_runtime::wasm::scheduler::{SchedulerTask, spawn_skill_notify_forwarder};
 use athena_voice_storage::{SqliteStore, Store};
@@ -81,8 +81,9 @@ async fn timer_set_then_expires() {
     let ctx = SkillCtx {
         name: SKILL_NAME.into(),
         store: store.clone(),
-        mqtt: mqtt.tx.clone(),
+        mqtt: Arc::new(AsyncClientPublisher(mqtt.tx.clone())),
         http_allowlist: Vec::new(),
+        mqtt_publish_allowlist: Vec::new(),
         config: HashMap::new(),
         tokio: tokio::runtime::Handle::current(),
         http,

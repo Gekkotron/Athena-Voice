@@ -67,8 +67,26 @@ dir = "/etc/athena-voice/skills"
 # on change; a failed rebuild keeps the previous plugin loaded.
 hot_reload = false
 
+# Per-skill sub-tables carry three optional knobs:
+#
+#   * `http_allowlist`         — bare host names the skill may reach via
+#                                `host_http_get_json`.
+#   * `mqtt_publish_allowlist` — extra MQTT topic filters (with `+` / `#`
+#                                wildcards) the skill may publish to on top of
+#                                its default `athena/skills/<name>/*`
+#                                namespace. Empty (or missing) keeps the
+#                                default ACL untouched.
+#   * `config`                 — opaque string map surfaced to the guest via
+#                                `host_config_get`.
+#
 # Example — uncomment and adapt once you drop a `weather.wasm` into `dir`:
 #
 #   [skills.weather]
 #   http_allowlist = ["api.open-meteo.com"]
 #   config = { units = "metric", default_city = "Paris" }
+#
+# Example — home automation skill publishing to a Zigbee2MQTT-style broker:
+#
+#   [skills.home]
+#   mqtt_publish_allowlist = ["home/+/light/set", "home/+/switch/set"]
+#   config = { entities = '[{"name":"lumière du salon","room":"salon","kind":"light","set_topic":"home/salon/light/set","on_payload":"ON","off_payload":"OFF"}]' }

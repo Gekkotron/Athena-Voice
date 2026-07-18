@@ -44,6 +44,12 @@ pub struct SkillsConfig {
 pub struct PerSkillConfig {
     #[serde(default)]
     pub http_allowlist: Vec<String>,
+    /// Extra MQTT topic filters (MQTT topic-filter grammar with `+` / `#`)
+    /// the skill may publish to on top of its default
+    /// `athena/skills/<name>/*` namespace. Empty leaves the default ACL
+    /// untouched.
+    #[serde(default)]
+    pub mqtt_publish_allowlist: Vec<String>,
     #[serde(default)]
     pub config: HashMap<String, String>,
 }
