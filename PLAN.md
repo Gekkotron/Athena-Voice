@@ -8,15 +8,6 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 ## Backlog
 
-- [ ] Task A — Barge-in on new final transcript
-      Add `Event::BargeIn { session, reason: BargeInReason }` (`NewFinalTranscript`, `VadSpeechStart` reserved) and `Event::SkillCancelled { session, skill }` to `athena-voice-core/src/event.rs`.
-      In `pipeline/router.rs`, keep a per-session `utterance_epoch: u64`; bump on every final transcript. Snapshot the epoch before awaiting `dispatcher.call(...)`; if it has moved on when the call resolves, emit `Event::SkillCancelled` and drop the `SkillResponse::Speak/AskLlm` instead of forwarding to TTS/LLM.
-      Emit `Event::BargeIn { reason: NewFinalTranscript }` whenever a final transcript arrives while a prior utterance's dispatch or TTS is still in flight (epoch > 0 with pending work).
-      `pipeline/tts.rs` (and `sink.rs` if it buffers) subscribe to `Event::BargeIn` and flush queued/streaming speech tokens so the previous response stops playing.
-      Add a `CancellationToken` per dispatch so the awaiting side of `SkillDispatcherHandle::call` can bail out immediately; the `spawn_blocking` WASM task finishes naturally and its result is dropped (Extism can't be interrupted mid-call).
-      Tests in `pipeline/router.rs`: (1) two rapid final transcripts — first dispatch's speech is dropped, only second reaches `tts_tok_tx`, `Event::SkillCancelled` + `Event::BargeIn` observed; (2) single final transcript — no `BargeIn`/`SkillCancelled` (regression); (3) a mock TTS observing `Event::BargeIn` flushes its buffer.
-      Deferred (do NOT scope here): VAD-driven barge-in on `VadSpeechStart`. That requires a real VAD upgrade and lands in a separate task.
-      Success criteria: `cargo nextest run --workspace` green including the 3 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean.
 
 - [ ] Task B — Skill hot-reload (dev mode)
       Add `[skills].hot_reload = false` (default false) to `athena.example.toml` and the config loader. When true, the runtime spawns a filesystem watcher on `[skills].dir`.
@@ -29,9 +20,31 @@ criterion in one line so it can pick up without further prompting. Tasks
       Deferred: signature verification on reload (lands with the future signed-WASM task).
       Success criteria: `cargo nextest run --workspace` green including the 4 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean; `athena.example.toml` documents `hot_reload`.
 
+- [ ] Task C — Timer / reminder skill + host scheduler
+      New storage migration `0002_scheduled_events.sql`: `scheduled_events(id INTEGER PRIMARY KEY, skill TEXT NOT NULL, fires_at_ms INTEGER NOT NULL, mqtt_topic TEXT NOT NULL, payload BLOB NOT NULL, created_at_ms INTEGER NOT NULL)`, index on `(fires_at_ms)`.
+      Extend `Store` with `schedule_event(skill, fires_at_ms, topic, payload) -> i64`, `pop_due_events(now_ms) -> Vec<ScheduledEvent>` (transactional SELECT + DELETE by id), `delete_scheduled(id)`. Full test coverage (empty, single-due, multiple-due, delete-by-id).
+      New host function `host_schedule_mqtt(fires_at_ms: i64, topic: String, payload: Vec<u8>) -> Result<i64, SkillError>`. Same ACL as `host_mqtt_publish` (topic must start with `athena/skills/<skill_name>/`). Add `HostCtx::schedule_mqtt` in the guest SDK (Extism binding + `for_testing` stub). Extend the ABI header comment in `wasm/registry.rs`.
+      Add `Event::ScheduledFired { skill, id }` to `athena-voice-core/src/event.rs`.
+      New `wasm/scheduler.rs`: `SchedulerTask` — tokio task that ticks every 1 s, calls `pop_due_events(Utc::now().timestamp_millis())`, publishes each event via the MQTT client, emits `Event::ScheduledFired`. `Runtime::spawn` starts it once per runtime.
+      New crate at repo root `skills-timer/` (mirrors `skills-smoke-test/`: `crate-type = ["cdylib"]`, edition 2024, Gekkotron author, NOT in workspace, `[profile.release] lto = true, opt-level = "z", strip = "symbols"`).
+      FR patterns (EN deferred): `"mets un minuteur de {duration}"`, `"minuteur {duration}"`, `"réveille-moi dans {duration}"`. Slot `duration: SlotKind::String`. Guest-side `parse_fr_duration` (in `skills-timer/src/duration.rs`, unit-tested) handles seconds/minutes/hours + `un/une/deux/trois/quatre/cinq/six/sept/huit/neuf/dix`. Reject > 24 h with `SkillResponse::Speak("désolé, je ne gère que les minuteurs de moins de vingt-quatre heures")`.
+      `handle`: compute `fires_at_ms = now_ms + parsed_ms`; call `ctx.schedule_mqtt(fires_at_ms, "athena/skills/timer/expired", <compact-JSON {seconds}>)`; `state_set("timer/{returned_id}", <duration_seconds_le_bytes>)`; respond `SkillResponse::Speak("d'accord, minuteur de <duration> lancé")`.
+      Runtime wiring for the expired-notification: worker inspects the existing MQTT stack under `pipeline/mqtt/` (or `providers`) and picks the least-invasive path. Preferred: `wasm/scheduler.rs` also subscribes to `athena/skills/+/expired` and emits `Event::SkillNotify { skill, text }` which the router forwards to TTS. Body must document the actual choice in the commit message.
+      Integration test `crates/athena-voice-runtime/tests/timer_end_to_end.rs`: `tokio::time::start_paused = true`; in-memory `SqliteStore` + `skills-timer.wasm` + fake MQTT client that captures publishes; feed `"mets un minuteur de deux secondes"` as a final transcript; assert `Event::IntentMatched(timer.set)` + `SkillInvoked` + a TTS chunk containing `"d'accord, minuteur"`; `tokio::time::advance(Duration::from_secs(3)).await`; assert a scheduled MQTT publish on `athena/skills/timer/expired` AND a follow-up TTS chunk with the expiration announce.
+      Success criteria: `cargo nextest run --workspace` green including migration test + new store tests + integration test; existing smoke-test integration test still green (regression pin); clippy + fmt clean; `skills-timer.wasm` builds via `cargo build --target wasm32-wasip1 --manifest-path skills-timer/Cargo.toml`.
+
 
 ## In progress
 
+- [ ] Task A — Barge-in on new final transcript     <!-- session: conv:claude:claude-178437142601124 -->
+      Add `Event::BargeIn { session, reason: BargeInReason }` (`NewFinalTranscript`, `VadSpeechStart` reserved) and `Event::SkillCancelled { session, skill }` to `athena-voice-core/src/event.rs`.
+      In `pipeline/router.rs`, keep a per-session `utterance_epoch: u64`; bump on every final transcript. Snapshot the epoch before awaiting `dispatcher.call(...)`; if it has moved on when the call resolves, emit `Event::SkillCancelled` and drop the `SkillResponse::Speak/AskLlm` instead of forwarding to TTS/LLM.
+      Emit `Event::BargeIn { reason: NewFinalTranscript }` whenever a final transcript arrives while a prior utterance's dispatch or TTS is still in flight (epoch > 0 with pending work).
+      `pipeline/tts.rs` (and `sink.rs` if it buffers) subscribe to `Event::BargeIn` and flush queued/streaming speech tokens so the previous response stops playing.
+      Add a `CancellationToken` per dispatch so the awaiting side of `SkillDispatcherHandle::call` can bail out immediately; the `spawn_blocking` WASM task finishes naturally and its result is dropped (Extism can't be interrupted mid-call).
+      Tests in `pipeline/router.rs`: (1) two rapid final transcripts — first dispatch's speech is dropped, only second reaches `tts_tok_tx`, `Event::SkillCancelled` + `Event::BargeIn` observed; (2) single final transcript — no `BargeIn`/`SkillCancelled` (regression); (3) a mock TTS observing `Event::BargeIn` flushes its buffer.
+      Deferred (do NOT scope here): VAD-driven barge-in on `VadSpeechStart`. That requires a real VAD upgrade and lands in a separate task.
+      Success criteria: `cargo nextest run --workspace` green including the 3 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean.
 ## Done
 
 - [x] Plan 4 Task 12 — Config + docs + CI
