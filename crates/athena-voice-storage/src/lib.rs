@@ -7,5 +7,6 @@ pub mod sqlite;
 pub mod store;
 
 pub use error::StoreError;
+pub use models::ScheduledEvent;
 pub use sqlite::SqliteStore;
 pub use store::Store;

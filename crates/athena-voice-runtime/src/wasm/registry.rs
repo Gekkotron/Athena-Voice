@@ -13,6 +13,15 @@
 //! substitute a pure-Rust mock in place of a real Extism plugin — the plan
 //! calls for "fixture wasm file OR mocked plugin", and mocking keeps the
 //! test suite free of a build-time wasm dependency.
+//!
+//! Guest ABI (host functions every skill links against, all under the
+//! `extism:host/user` namespace): `host_log`, `host_config_get`,
+//! `host_state_get`/`host_state_set`, `host_mqtt_publish`,
+//! `host_http_get_json`, and `host_schedule_mqtt(fires_at_ms, topic,
+//! payload) -> i64` — schedules a future MQTT publish under the skill's own
+//! namespace and returns the row id (negative on ACL/store error). See
+//! `wasm/host_fns.rs` for the full signatures and `wasm/scheduler.rs` for the
+//! task that later drains and publishes those scheduled events.
 
 use std::collections::HashMap;
 use std::fs;

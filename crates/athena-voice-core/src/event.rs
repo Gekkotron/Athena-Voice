@@ -85,6 +85,21 @@ pub enum Event {
         name: String,
         reason: String,
     },
+    /// A previously-scheduled MQTT event fired: the scheduler task published
+    /// it and removed it from the store.
+    ScheduledFired {
+        skill: String,
+        id: i64,
+    },
+    /// Runtime-emitted "skill wants to speak" notification. The scheduler
+    /// task uses this to inject skill-triggered TTS (e.g. timer expiration)
+    /// into the router's TTS pipeline without going through the intent
+    /// matcher.
+    SkillNotify {
+        session: SessionId,
+        skill: String,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

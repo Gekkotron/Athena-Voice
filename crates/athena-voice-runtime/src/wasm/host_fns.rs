@@ -77,9 +77,9 @@ pub fn http_url_allowed(allowlist: &[String], url: &str) -> Result<Url, HostFnEr
     }
 }
 
-/// Returns the six `Function`s that make up the skill host ABI, all bound to
-/// the same `SkillCtx`. Names are stable — the guest ABI (Task 8) imports by
-/// name from the `extism:host/user` namespace.
+/// Returns the seven `Function`s that make up the skill host ABI, all bound
+/// to the same `SkillCtx`. Names are stable — the guest ABI (Task 8) imports
+/// by name from the `extism:host/user` namespace.
 #[must_use]
 pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
     let user_data = UserData::new(ctx);
@@ -128,8 +128,16 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
             "host_http_get_json",
             [PTR],
             [PTR],
-            user_data,
+            user_data.clone(),
             host_http_get_json,
+        )
+        .with_namespace("extism:host/user"),
+        Function::new(
+            "host_schedule_mqtt",
+            [PTR, PTR, PTR],
+            [PTR],
+            user_data,
+            host_schedule_mqtt,
         )
         .with_namespace("extism:host/user"),
     ]
@@ -304,6 +312,59 @@ fn host_http_get_json(
     Ok(())
 }
 
+/// Result codes returned in the single `i64` output of `host_schedule_mqtt`.
+///
+/// A non-negative value is the scheduled event's row id; negative values are
+/// error codes, mirroring the `MQTT_*` convention above.
+pub const SCHED_ERR_ACL: i64 = -1;
+pub const SCHED_ERR_STORE: i64 = -2;
+
+fn host_schedule_mqtt(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    outputs: &mut [Val],
+    ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let fires_at_bytes: Vec<u8> = plugin.memory_get_val(&inputs[0])?;
+    let fires_at_ms = i64::from_le_bytes(
+        fires_at_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| extism::Error::msg("fires_at_ms must be 8 bytes"))?,
+    );
+    let topic: String = plugin.memory_get_val(&inputs[1])?;
+    let payload: Vec<u8> = plugin.memory_get_val(&inputs[2])?;
+    let (name, store, tokio) = with_ctx(&ud, |ctx| {
+        (ctx.name.clone(), ctx.store.clone(), ctx.tokio.clone())
+    })?;
+
+    let code: i64 = if mqtt_topic_allowed(&name, &topic) {
+        let result = tokio.block_on(async move {
+            store
+                .schedule_event(&name, fires_at_ms, &topic, &payload)
+                .await
+        });
+        match result {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "schedule_event failed");
+                SCHED_ERR_STORE
+            }
+        }
+    } else {
+        tracing::warn!(
+            skill = %name,
+            topic = %topic,
+            "skill attempted to schedule outside its ACL namespace"
+        );
+        SCHED_ERR_ACL
+    };
+
+    let handle = plugin.memory_new(code.to_le_bytes().as_slice())?;
+    outputs[0] = plugin.memory_to_val(handle);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +441,7 @@ mod tests {
                 "host_state_set",
                 "host_mqtt_publish",
                 "host_http_get_json",
+                "host_schedule_mqtt",
             ]
         );
         for f in &fns {
@@ -408,6 +470,20 @@ mod tests {
         assert_eq!(got.as_deref(), Some(&b"42"[..]));
         let miss = ctx.store.skill_kv_get("other", "last_tick").await.unwrap();
         assert!(miss.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn schedule_event_roundtrip_through_store() {
+        let ctx = make_ctx("timer").await;
+        let id = ctx
+            .store
+            .schedule_event("timer", 1_000, "athena/skills/timer/expired", b"payload")
+            .await
+            .unwrap();
+        let due = ctx.store.pop_due_events(1_000).await.unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, id);
+        assert_eq!(due[0].mqtt_topic, "athena/skills/timer/expired");
     }
 
     #[tokio::test(flavor = "multi_thread")]

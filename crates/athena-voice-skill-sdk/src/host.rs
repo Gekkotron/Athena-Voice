@@ -61,6 +61,17 @@ impl HostCtx {
             "HostCtx::http_get_json only wired on wasm guest".into(),
         ))
     }
+
+    /// Schedules a future MQTT publish under the skill's own namespace,
+    /// returning the row id of the scheduled event.
+    pub fn schedule_mqtt(
+        &self,
+        _fires_at_ms: i64,
+        _topic: &str,
+        _payload: &[u8],
+    ) -> Result<i64, SkillError> {
+        Ok(0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +90,12 @@ mod guest {
     const MQTT_ERR_ACL: i64 = 1;
     const MQTT_ERR_CLIENT: i64 = 2;
 
+    // Mirrors `SCHED_ERR_ACL` / `SCHED_ERR_STORE` in
+    // `crates/athena-voice-runtime/src/wasm/host_fns.rs`. A non-negative
+    // return is the scheduled event's row id.
+    const SCHED_ERR_ACL: i64 = -1;
+    const SCHED_ERR_STORE: i64 = -2;
+
     #[host_fn]
     unsafe extern "ExtismHost" {
         fn host_log(level: String, msg: String);
@@ -87,6 +104,7 @@ mod guest {
         fn host_state_set(key: String, val: Vec<u8>);
         fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i64;
         fn host_http_get_json(url: String) -> Vec<u8>;
+        fn host_schedule_mqtt(fires_at_ms: Vec<u8>, topic: String, payload: Vec<u8>) -> Vec<u8>;
     }
 
     pub(super) fn log(level: &str, msg: &str) {
@@ -131,6 +149,37 @@ mod guest {
         }
     }
 
+    pub(super) fn schedule_mqtt(
+        fires_at_ms: i64,
+        topic: &str,
+        payload: &[u8],
+    ) -> Result<i64, SkillError> {
+        let bytes = unsafe {
+            host_schedule_mqtt(
+                fires_at_ms.to_le_bytes().to_vec(),
+                topic.to_string(),
+                payload.to_vec(),
+            )
+        }
+        .map_err(|e| SkillError::MqttFailed(e.to_string()))?;
+        let code = i64::from_le_bytes(
+            bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| SkillError::MqttFailed("malformed schedule_mqtt reply".into()))?,
+        );
+        match code {
+            SCHED_ERR_ACL => Err(SkillError::MqttFailed(format!(
+                "topic {topic} outside skill ACL namespace"
+            ))),
+            SCHED_ERR_STORE => Err(SkillError::MqttFailed("scheduler store error".into())),
+            id if id >= 0 => Ok(id),
+            other => Err(SkillError::MqttFailed(format!(
+                "unknown schedule_mqtt result code {other}"
+            ))),
+        }
+    }
+
     pub(super) fn http_get_json(url: &str) -> Result<Value, SkillError> {
         let bytes = unsafe { host_http_get_json(url.to_string()) }
             .map_err(|e| SkillError::HttpFailed(e.to_string()))?;
@@ -170,5 +219,14 @@ impl HostCtx {
 
     pub fn http_get_json(&self, url: &str) -> Result<serde_json::Value, SkillError> {
         guest::http_get_json(url)
+    }
+
+    pub fn schedule_mqtt(
+        &self,
+        fires_at_ms: i64,
+        topic: &str,
+        payload: &[u8],
+    ) -> Result<i64, SkillError> {
+        guest::schedule_mqtt(fires_at_ms, topic, payload)
     }
 }

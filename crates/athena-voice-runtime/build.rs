@@ -1,17 +1,17 @@
-//! Build script: (re)builds the `skills-smoke-test` crate to
-//! `wasm32-wasip1` and exposes the resulting `.wasm` path to the runtime's
-//! tests via the `SMOKE_TEST_WASM` env var.
+//! Build script: (re)builds the `skills-smoke-test` and `skills-timer`
+//! crates to `wasm32-wasip1` and exposes the resulting `.wasm` paths to the
+//! runtime's tests via the `SMOKE_TEST_WASM` / `TIMER_TEST_WASM` env vars.
 //!
-//! `skills-smoke-test` lives outside the cargo workspace (its target is
-//! `wasm32-wasip1`), so we invoke cargo on its manifest directly. Building
-//! here — rather than committing a prebuilt `.wasm` — keeps the guest ABI
-//! honest: if a change to the SDK breaks the smoke skill, the runtime's own
+//! Both crates live outside the cargo workspace (their target is
+//! `wasm32-wasip1`), so we invoke cargo on their manifests directly.
+//! Building here — rather than committing a prebuilt `.wasm` — keeps the
+//! guest ABI honest: if a change to the SDK breaks a skill, the runtime's own
 //! build fails, not just CI.
 //!
 //! The `wasm32-wasip1` target must be installed (see CI setup). If missing,
 //! the child `cargo build` will surface its own actionable error.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -21,25 +21,58 @@ fn main() {
         .parent()
         .and_then(|p| p.parent())
         .expect("runtime crate lives at <root>/crates/athena-voice-runtime");
-    let smoke_manifest = project_root.join("skills-smoke-test").join("Cargo.toml");
-    let smoke_src = project_root.join("skills-smoke-test").join("src");
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
 
-    // Re-run when the smoke skill's source or manifest changes.
-    println!("cargo:rerun-if-changed={}", smoke_manifest.display());
-    println!("cargo:rerun-if-changed={}", smoke_src.display());
-    println!("cargo:rerun-if-env-changed=SMOKE_TEST_WASM_SKIP");
+    build_skill_wasm(
+        project_root,
+        &out_dir,
+        "skills-smoke-test",
+        "skills_smoke_test",
+        "smoke-target",
+        "SMOKE_TEST_WASM",
+        "SMOKE_TEST_WASM_SKIP",
+    );
+    build_skill_wasm(
+        project_root,
+        &out_dir,
+        "skills-timer",
+        "skills_timer",
+        "timer-target",
+        "TIMER_TEST_WASM",
+        "TIMER_TEST_WASM_SKIP",
+    );
+}
 
-    // Escape hatch: setting SMOKE_TEST_WASM_SKIP=1 skips the wasm rebuild.
-    // Handy for machines without the wasm32-wasip1 target during local dev
-    // where the smoke skill isn't being exercised.
-    if std::env::var_os("SMOKE_TEST_WASM_SKIP").is_some() {
+/// Builds `<project_root>/<crate_dir>` to `wasm32-wasip1` and exposes the
+/// resulting `.wasm` path via `cargo:rustc-env=<env_var>=<path>`.
+///
+/// `skip_env` is an escape hatch: setting it skips the wasm rebuild — handy
+/// for machines without the `wasm32-wasip1` target during local dev where
+/// the skill isn't being exercised.
+#[allow(clippy::too_many_arguments)]
+fn build_skill_wasm(
+    project_root: &Path,
+    out_dir: &Path,
+    crate_dir: &str,
+    lib_name: &str,
+    target_subdir: &str,
+    env_var: &str,
+    skip_env: &str,
+) {
+    let manifest = project_root.join(crate_dir).join("Cargo.toml");
+    let src = project_root.join(crate_dir).join("src");
+
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rerun-if-changed={}", src.display());
+    println!("cargo:rerun-if-env-changed={skip_env}");
+
+    if std::env::var_os(skip_env).is_some() {
         return;
     }
 
     // Build into a dedicated target dir under OUT_DIR so we do not clobber
     // the workspace's target/, and so `cargo clean` on the runtime tidies up.
-    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
-    let target_dir = out_dir.join("smoke-target");
+    let target_dir = out_dir.join(target_subdir);
 
     // Clear RUSTFLAGS-style env inherited from the parent so tools like
     // `cargo llvm-cov` don't leak `-C instrument-coverage` into the wasm
@@ -55,21 +88,21 @@ fn main() {
         .arg("--target")
         .arg("wasm32-wasip1")
         .arg("--manifest-path")
-        .arg(&smoke_manifest)
+        .arg(&manifest)
         .arg("--target-dir")
         .arg(&target_dir)
         .status()
-        .expect("failed to invoke cargo for skills-smoke-test");
-    assert!(status.success(), "building skills-smoke-test wasm failed");
+        .unwrap_or_else(|e| panic!("failed to invoke cargo for {crate_dir}: {e}"));
+    assert!(status.success(), "building {crate_dir} wasm failed");
 
     let wasm_path = target_dir
         .join("wasm32-wasip1")
         .join("release")
-        .join("skills_smoke_test.wasm");
+        .join(format!("{lib_name}.wasm"));
     assert!(
         wasm_path.exists(),
-        "expected smoke-test wasm at {}",
+        "expected {crate_dir} wasm at {}",
         wasm_path.display()
     );
-    println!("cargo:rustc-env=SMOKE_TEST_WASM={}", wasm_path.display());
+    println!("cargo:rustc-env={env_var}={}", wasm_path.display());
 }

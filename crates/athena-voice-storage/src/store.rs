@@ -4,7 +4,7 @@ use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 
 use crate::error::StoreError;
-use crate::models::{EventRow, SatelliteRow, SessionRow};
+use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
 
 #[async_trait]
 pub trait Store: Send + Sync + 'static {
@@ -50,4 +50,21 @@ pub trait Store: Send + Sync + 'static {
     ) -> Result<(), StoreError>;
 
     async fn find_satellite(&self, id: &SatelliteId) -> Result<Option<SatelliteRow>, StoreError>;
+
+    /// Schedules a future MQTT publish for `skill`. Returns the row id, which
+    /// callers use to correlate later state (e.g. `skill_kv_set`).
+    async fn schedule_event(
+        &self,
+        skill: &str,
+        fires_at_ms: i64,
+        topic: &str,
+        payload: &[u8],
+    ) -> Result<i64, StoreError>;
+
+    /// Atomically selects and removes every scheduled event whose
+    /// `fires_at_ms <= now_ms`, ordered by `fires_at_ms` ascending.
+    async fn pop_due_events(&self, now_ms: i64) -> Result<Vec<ScheduledEvent>, StoreError>;
+
+    /// Deletes a scheduled event by id. Returns `true` iff a row was removed.
+    async fn delete_scheduled(&self, id: i64) -> Result<bool, StoreError>;
 }

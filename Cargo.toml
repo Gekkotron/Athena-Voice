@@ -9,9 +9,11 @@ members = [
     "crates/athena-voice-skill-sdk",
 ]
 exclude = [
-    # skills-smoke-test compiles to wasm32-wasip1 and can't share the workspace's
-    # native target. Built by CI via a dedicated cargo build --target invocation.
+    # skills-smoke-test and skills-timer compile to wasm32-wasip1 and can't
+    # share the workspace's native target. Built by CI via a dedicated
+    # cargo build --target invocation.
     "skills-smoke-test",
+    "skills-timer",
 ]
 
 [workspace.package]

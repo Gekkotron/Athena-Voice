@@ -1,6 +1,7 @@
 # Rust
 /target
 /skills-smoke-test/target
+/skills-timer/target
 Cargo.lock.bak
 **/*.rs.bk
 

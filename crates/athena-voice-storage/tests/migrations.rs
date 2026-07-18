@@ -44,6 +44,7 @@ async fn migrations_create_expected_tables() {
             "errors".to_string(),
             "events".to_string(),
             "satellites".to_string(),
+            "scheduled_events".to_string(),
             "sessions".to_string(),
             "skill_kv".to_string(),
         ]

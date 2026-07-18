@@ -9,11 +9,15 @@
 //!   and calls into a plugin via `spawn_blocking`.
 //! - `watcher`    — Task B: debounced filesystem watcher on the skills dir.
 //! - [`spawn_hot_reload_task`] — bridges watcher events into the registry.
+//! - `scheduler`  — Task C: `SchedulerTask` drains due `scheduled_events` rows
+//!   and publishes them via MQTT; `spawn_skill_notify_forwarder` routes
+//!   `Event::SkillNotify` speech into the TTS pipeline.
 
 pub mod dispatcher;
 pub mod error;
 pub mod host_fns;
 pub mod registry;
+pub mod scheduler;
 pub mod watcher;
 
 use std::sync::Arc;

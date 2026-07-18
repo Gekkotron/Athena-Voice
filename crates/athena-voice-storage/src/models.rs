@@ -40,3 +40,13 @@ pub struct SatelliteRow {
     pub created_at: DateTime<Utc>,
     pub last_seen: Option<DateTime<Utc>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScheduledEvent {
+    pub id: i64,
+    pub skill: String,
+    pub fires_at_ms: i64,
+    pub mqtt_topic: String,
+    pub payload: Vec<u8>,
+    pub created_at_ms: i64,
+}

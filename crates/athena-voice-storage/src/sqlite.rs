@@ -9,7 +9,7 @@ use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 
 use crate::error::StoreError;
-use crate::models::{EventRow, SatelliteRow, SessionRow};
+use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
 use crate::store::Store;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
@@ -126,6 +126,72 @@ impl Store for SqliteStore {
                 .map(|s| serde_json::from_value::<Outcome>(serde_json::Value::String(s)))
                 .transpose()?,
         }))
+    }
+
+    async fn schedule_event(
+        &self,
+        skill: &str,
+        fires_at_ms: i64,
+        topic: &str,
+        payload: &[u8],
+    ) -> Result<i64, StoreError> {
+        let created_at_ms = Utc::now().timestamp_millis();
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO scheduled_events (skill, fires_at_ms, mqtt_topic, payload, created_at_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id",
+        )
+        .bind(skill)
+        .bind(fires_at_ms)
+        .bind(topic)
+        .bind(payload)
+        .bind(created_at_ms)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    async fn pop_due_events(&self, now_ms: i64) -> Result<Vec<ScheduledEvent>, StoreError> {
+        let mut tx: sqlx::Transaction<'_, sqlx::Sqlite> = self.pool.begin().await?;
+
+        let rows: Vec<(i64, String, i64, String, Vec<u8>, i64)> = sqlx::query_as(
+            "SELECT id, skill, fires_at_ms, mqtt_topic, payload, created_at_ms \
+             FROM scheduled_events WHERE fires_at_ms <= ?1 ORDER BY fires_at_ms ASC",
+        )
+        .bind(now_ms)
+        .fetch_all(&mut *tx)
+        .await?;
+
+        for (id, ..) in &rows {
+            sqlx::query("DELETE FROM scheduled_events WHERE id = ?1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, skill, fires_at_ms, mqtt_topic, payload, created_at_ms)| ScheduledEvent {
+                    id,
+                    skill,
+                    fires_at_ms,
+                    mqtt_topic,
+                    payload,
+                    created_at_ms,
+                },
+            )
+            .collect())
+    }
+
+    async fn delete_scheduled(&self, id: i64) -> Result<bool, StoreError> {
+        let n = sqlx::query("DELETE FROM scheduled_events WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        Ok(n > 0)
     }
 
     async fn append_event(&self, event: &Event) -> Result<(), StoreError> {
@@ -292,5 +358,72 @@ mod tests {
             res.is_err(),
             "expected error opening under a missing parent dir"
         );
+    }
+
+    #[tokio::test]
+    async fn pop_due_events_empty_when_nothing_scheduled() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        let due = store.pop_due_events(i64::MAX).await.unwrap();
+        assert!(due.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pop_due_events_returns_single_due_event() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        let id = store
+            .schedule_event("timer", 1_000, "athena/skills/timer/expired", b"payload")
+            .await
+            .unwrap();
+
+        let due = store.pop_due_events(1_000).await.unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, id);
+        assert_eq!(due[0].skill, "timer");
+        assert_eq!(due[0].fires_at_ms, 1_000);
+        assert_eq!(due[0].mqtt_topic, "athena/skills/timer/expired");
+        assert_eq!(due[0].payload, b"payload");
+
+        // Consumed: a second pop finds nothing.
+        assert!(store.pop_due_events(1_000).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pop_due_events_orders_by_fires_at_and_deletes_only_due() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        let id_late = store
+            .schedule_event("timer", 3_000, "athena/skills/timer/expired", b"late")
+            .await
+            .unwrap();
+        let id_early = store
+            .schedule_event("timer", 1_000, "athena/skills/timer/expired", b"early")
+            .await
+            .unwrap();
+        let id_future = store
+            .schedule_event("timer", 9_000, "athena/skills/timer/expired", b"future")
+            .await
+            .unwrap();
+
+        let due = store.pop_due_events(3_000).await.unwrap();
+        assert_eq!(due.len(), 2);
+        assert_eq!(due[0].id, id_early);
+        assert_eq!(due[1].id, id_late);
+
+        // The future event is still scheduled.
+        let still_due = store.pop_due_events(9_000).await.unwrap();
+        assert_eq!(still_due.len(), 1);
+        assert_eq!(still_due[0].id, id_future);
+    }
+
+    #[tokio::test]
+    async fn delete_scheduled_removes_row_and_is_idempotent() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        let id = store
+            .schedule_event("timer", 5_000, "athena/skills/timer/expired", b"x")
+            .await
+            .unwrap();
+
+        assert!(store.delete_scheduled(id).await.unwrap());
+        assert!(!store.delete_scheduled(id).await.unwrap());
+        assert!(store.pop_due_events(5_000).await.unwrap().is_empty());
     }
 }
