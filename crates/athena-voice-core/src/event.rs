@@ -61,6 +61,31 @@ pub enum Event {
         stage: Stage,
         provider: String,
     },
+    /// A new user utterance interrupted work still in flight for the previous
+    /// one. Downstream stages (TTS, sink) use this to flush queued speech so
+    /// the previous response stops playing.
+    BargeIn {
+        session: SessionId,
+        reason: BargeInReason,
+    },
+    /// A skill dispatch resolved after its utterance was superseded by a newer
+    /// final transcript. The response is dropped rather than forwarded to
+    /// TTS/LLM.
+    SkillCancelled {
+        session: SessionId,
+        skill: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BargeInReason {
+    /// Barge-in triggered by a newer final transcript arriving while a prior
+    /// utterance's dispatch or TTS was still in flight.
+    NewFinalTranscript,
+    /// Reserved: barge-in triggered by VAD detecting speech onset. Not wired
+    /// yet — requires a real VAD upgrade.
+    VadSpeechStart,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
