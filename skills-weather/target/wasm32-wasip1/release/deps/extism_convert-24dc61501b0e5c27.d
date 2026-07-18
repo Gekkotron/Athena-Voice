@@ -1,9 +1,0 @@
-/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/extism_convert-24dc61501b0e5c27.d: /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/lib.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/encoding.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/from_bytes.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/memory_handle.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/to_bytes.rs
-
-/Users/julienhuguel/superconductor/projects/Athena-Voice/skills-weather/target/wasm32-wasip1/release/deps/libextism_convert-24dc61501b0e5c27.rmeta: /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/lib.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/encoding.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/from_bytes.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/memory_handle.rs /Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/to_bytes.rs
-
-/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/lib.rs:
-/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/encoding.rs:
-/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/from_bytes.rs:
-/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/memory_handle.rs:
-/Users/julienhuguel/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/extism-convert-1.30.0/src/to_bytes.rs:
