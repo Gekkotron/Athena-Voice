@@ -74,6 +74,8 @@ pub struct SkillCtx {
  /// Optional TTL in seconds for state keys set by this skill.
  /// Keys older than this are deleted automatically by `host_state_set`.
  pub retention_gc_after_sec: Option<u64>,
+ /// Event bus for skill-driven audio playback.
+ pub event_bus: tokio::sync::broadcast::Sender<Event>,
     /// HTTP client used by `host_http_get_json` — cloning is cheap (internal
     /// `Arc`), so we keep one instance per skill.
     pub http: reqwest::Client,
@@ -437,16 +439,30 @@ fn host_play_pcm(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
     _outputs: &mut [Val],
-    _ud: UserData<SkillCtx>,
+    ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
-    let sample_rate: u64 = plugin.memory_get_val(&inputs[0])?;
+    let sample_rate: u32 = plugin.memory_get_val(&inputs[0])?;
     let samples_ptr: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
     // Deserialize samples (4 bytes per f32)
+    let len = samples_ptr.len() / 4;
     let samples = samples_ptr
         .chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+        .take(len)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap_or_default()))
         .collect::<Vec<_>>();
-    tracing::info!(sample_rate, num_samples = samples.len(), "play_pcm request");
+    let (tokio, event_bus) = with_ctx(&ud, |ctx| (
+        ctx.tokio.clone(),
+        ctx.event_bus.clone(),
+    ))?;
+    if event_bus.receiver_count() > 0 {
+        tokio.block_on(async move {
+            let _ = event_bus.send(Event::AudioChunk {
+                session: uuid::Uuid::new_v4().into(), // FIXME: Use real session
+                format: AudioFormat::F32le,
+                payload: samples.into_iter().flat_map(|f| f.to_le_bytes().to_vec()).collect(),
+            });
+        });
+    }
     Ok(())
 }
 
@@ -454,10 +470,22 @@ fn host_play_opus(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
     _outputs: &mut [Val],
-    _ud: UserData<SkillCtx>,
+    ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
     let frames: Vec<u8> = plugin.memory_get_val(&inputs[0])?;
-    tracing::info!(num_bytes = frames.len(), "play_opus request");
+    let (tokio, event_bus) = with_ctx(&ud, |ctx| (
+        ctx.tokio.clone(),
+        ctx.event_bus.clone(),
+    ))?;
+    if event_bus.receiver_count() > 0 {
+        tokio.block_on(async move {
+            let _ = event_bus.send(Event::AudioChunk {
+                session: uuid::Uuid::new_v4().into(), // FIXME: Use real session
+                format: AudioFormat::Opus,
+                payload: frames,
+            });
+        });
+    }
     Ok(())
 }
 
@@ -520,19 +548,21 @@ mod tests {
         Arc::new(AsyncClientPublisher(client))
     }
 
-    async fn make_ctx(name: &str) -> SkillCtx {
-        let store = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
-        SkillCtx {
-            name: name.into(),
-            store,
-            mqtt: dummy_mqtt(),
-            http_allowlist: vec!["api.example.com".into()],
-            mqtt_publish_allowlist: Vec::new(),
-            config: HashMap::from([("greeting".into(), "bonjour".into())]),
-            tokio: Handle::current(),
-            http: reqwest::Client::new(),
-        }
+async fn make_ctx(name: &str) -> SkillCtx {
+    let store = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
+    SkillCtx {
+        name: name.into(),
+        store,
+        mqtt: dummy_mqtt(),
+        http_allowlist: vec!["api.example.com".into()],
+        mqtt_publish_allowlist: Vec::new(),
+        config: HashMap::from([("greeting".into(), "bonjour".into())]),
+        tokio: Handle::current(),
+        http: reqwest::Client::new(),
+        retention_gc_after_sec: None,
+        event_bus: tokio::sync::broadcast::channel(32).0,
     }
+}
 
     #[test]
     fn topic_matches_plus_wildcard_matches_one_level_only() {

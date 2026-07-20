@@ -75,6 +75,8 @@ pub struct SkillDeps {
     /// hot-reload observability is disabled — the registry falls back to
     /// tracing only.
     pub event_tx: Option<broadcast::Sender<Event>>,
+    /// Event bus for skill-driven audio playback.
+    pub audio_event_tx: broadcast::Sender<Event>,
 }
 
 #[derive(Debug, Error)]
@@ -420,15 +422,16 @@ fn build_plugin_from_file(
     let cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
     let retention_gc_after_sec = cfg.retention_gc_after_sec;
 let ctx = SkillCtx {
- name: name.clone(),
- store: deps.store.clone(),
- mqtt: Arc::new(AsyncClientPublisher(deps.mqtt.clone())),
- http_allowlist: cfg.http_allowlist,
- mqtt_publish_allowlist: cfg.mqtt_publish_allowlist,
- config: cfg.config,
- tokio: deps.tokio.clone(),
- http: deps.http.clone(),
- retention_gc_after_sec: cfg.retention_gc_after_sec,
+    name: name.clone(),
+    store: deps.store.clone(),
+    mqtt: Arc::new(AsyncClientPublisher(deps.mqtt.clone())),
+    http_allowlist: cfg.http_allowlist,
+    mqtt_publish_allowlist: cfg.mqtt_publish_allowlist,
+    config: cfg.config,
+    tokio: deps.tokio.clone(),
+    http: deps.http.clone(),
+    retention_gc_after_sec: cfg.retention_gc_after_sec,
+    event_bus: deps.audio_event_tx.clone(),
 };
 let manifest = Manifest::new([Wasm::file(path)]);
 let mut builder = PluginBuilder::new(manifest)

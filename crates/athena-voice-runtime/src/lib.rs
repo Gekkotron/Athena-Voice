@@ -4,6 +4,7 @@
 pub mod config;
 pub mod error;
 pub mod event_bus;
+pub mod audio;
 pub mod intent;
 pub mod locale;
 pub mod mqtt;
@@ -49,43 +50,69 @@ impl Runtime {
         let event_bus = Arc::new(EventBus::new(1024));
         let shutdown = CancellationToken::new();
 
-        // Empty rule index until Plan 4 Task 6 (SkillRegistry) populates it.
-        let matcher = Arc::new(intent::IntentMatcher::new());
-        let rules = Arc::new(ArcSwap::from_pointee(intent::RuleIndex::new()));
+// Empty rule index until Plan 4 Task 6 (SkillRegistry) populates it.
+    let matcher = Arc::new(intent::IntentMatcher::new());
+    let rules = Arc::new(ArcSwap::from_pointee(intent::RuleIndex::new()));
 
-        let deps = SatelliteDeps {
-            mqtt: client.tx.clone(),
-            event_loop: client.event_loop.clone(),
-            factory,
-            session_manager: sessions.clone(),
-            event_bus: event_bus.sender(),
-            matcher,
-            rules,
-            dispatcher: None,
-            shutdown: shutdown.clone(),
-        };
+    // Create audio event bus (bounded, drops old events)
+    let audio_event_tx = broadcast::channel(32).0;
+
+    // Create SkillDeps for the registry
+    let skill_deps = crate::wasm::SkillDeps {
+        store: Arc::new(athena_voice_storage::SqliteStore::open(
+            "/tmp/athena-voice.db",
+        ).await?),
+        mqtt: client.tx.clone(),
+        tokio: Handle::current(),
+        http: reqwest::Client::new(),
+        locales: vec!["fr".into()],
+        per_skill: Default::default(),
+        event_tx: None, // No hot-reload observability yet
+        audio_event_tx: audio_event_tx.clone(),
+    };
+
+    let deps = SatelliteDeps {
+        mqtt: client.tx.clone(),
+        event_loop: client.event_loop.clone(),
+        factory,
+        session_manager: sessions.clone(),
+        event_bus: event_bus.sender(),
+        matcher,
+        rules,
+        dispatcher: Some(crate::wasm::SkillDispatcher::new(skill_deps)?),
+        shutdown: shutdown.clone(),
+    };
         let satellite_task = spawn_satellite(deps);
 
-        // Also start the MQTT event mirror task so athena/events/* is populated.
-        let mirror = event_bus::spawn_mqtt_mirror(event_bus.sender(), client.tx);
+    // Also start the MQTT event mirror task so athena/events/* is populated.
+    let mirror = event_bus::spawn_mqtt_mirror(event_bus.sender(), client.tx);
 
-        Ok(Self {
-            shutdown,
-            sessions,
-            event_bus,
-            satellite_task,
-            mqtt_pump_task: Some(mirror),
-        })
-    }
-
-    /// Cleanly shuts the runtime down: cancels the shutdown token and awaits
-    /// the satellite adapter's join handle.
-    pub async fn shutdown(mut self) {
-        self.shutdown.cancel();
-        self.sessions.cancel_all();
-        let _ = self.satellite_task.await;
-        if let Some(h) = self.mqtt_pump_task.take() {
-            h.abort();
+    // Start audio sink with access to the event bus.
+    let event_bus_clone = event_bus.clone();
+    let audio_task = tokio::spawn(async move {
+        if let Err(e) = audio::AudioSink::new(event_bus_clone.subscribe()).run().await {
+            tracing::error!("audio sink failed: {e}");
         }
+    });
+
+    Ok(Self {
+        shutdown,
+        sessions,
+        event_bus,
+        satellite_task,
+        mqtt_pump_task: Some(mirror),
+    })
     }
+
+/// Cleanly shuts the runtime down: cancels the shutdown token and awaits
+/// the satellite adapter's join handle.
+pub async fn shutdown(mut self) {
+    self.shutdown.cancel();
+    self.sessions.cancel_all();
+    let _ = self.satellite_task.await;
+    if let Some(h) = self.mqtt_pump_task.take() {
+        h.abort();
+    }
+    // Audio sink task runs until events end or failure.
+}
 }
