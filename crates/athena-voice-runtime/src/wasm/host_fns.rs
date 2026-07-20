@@ -217,8 +217,24 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
             "host_schedule_mqtt",
             [PTR, PTR, PTR],
             [PTR],
-            user_data,
+            user_data.clone(),
             host_schedule_mqtt,
+        )
+        .with_namespace("extism:host/user"),
+        Function::new(
+            "host_play_pcm",
+            [ValType::I32, ValType::I64],
+            [],
+            user_data.clone(),
+            host_play_pcm,
+        )
+        .with_namespace("extism:host/user"),
+        Function::new(
+            "host_play_opus",
+            [ValType::I64],
+            [],
+            user_data,
+            host_play_opus,
         )
         .with_namespace("extism:host/user"),
     ]
@@ -417,6 +433,34 @@ fn host_http_get_json(
 pub const SCHED_ERR_ACL: i64 = -1;
 pub const SCHED_ERR_STORE: i64 = -2;
 
+fn host_play_pcm(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    _outputs: &mut [Val],
+    _ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let sample_rate: u64 = plugin.memory_get_val(&inputs[0])?;
+    let samples_ptr: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
+    // Deserialize samples (4 bytes per f32)
+    let samples = samples_ptr
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    tracing::info!(sample_rate, num_samples = samples.len(), "play_pcm request");
+    Ok(())
+}
+
+fn host_play_opus(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    _outputs: &mut [Val],
+    _ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let frames: Vec<u8> = plugin.memory_get_val(&inputs[0])?;
+    tracing::info!(num_bytes = frames.len(), "play_opus request");
+    Ok(())
+}
+
 fn host_schedule_mqtt(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
@@ -584,19 +628,21 @@ mod tests {
     async fn host_functions_expose_expected_names() {
         let ctx = make_ctx("clock").await;
         let fns = host_functions(ctx);
-        let names: Vec<&str> = fns.iter().map(Function::name).collect();
-        assert_eq!(
-            names,
-            vec![
-                "host_log",
-                "host_config_get",
-                "host_state_get",
-                "host_state_set",
-                "host_mqtt_publish",
-                "host_http_get_json",
-                "host_schedule_mqtt",
-            ]
-        );
+    let names: Vec<&str> = fns.iter().map(Function::name).collect();
+    assert_eq!(
+        names,
+        vec![
+            "host_log",
+            "host_config_get",
+            "host_state_get",
+            "host_state_set",
+            "host_mqtt_publish",
+            "host_http_get_json",
+            "host_schedule_mqtt",
+            "host_play_pcm",
+            "host_play_opus",
+        ]
+    );
         for f in &fns {
             assert_eq!(f.namespace(), Some("extism:host/user"));
         }

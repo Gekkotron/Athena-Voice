@@ -105,6 +105,8 @@ mod guest {
         fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i64;
         fn host_http_get_json(url: String) -> Vec<u8>;
         fn host_schedule_mqtt(fires_at_ms: Vec<u8>, topic: String, payload: Vec<u8>) -> Vec<u8>;
+        fn host_play_pcm(sample_rate: u32, samples: Vec<u8>);
+        fn host_play_opus(frames: Vec<u8>);
     }
 
     pub(super) fn log(level: &str, msg: &str) {
@@ -234,5 +236,19 @@ impl HostCtx {
         payload: &[u8],
     ) -> Result<i64, SkillError> {
         guest::schedule_mqtt(fires_at_ms, topic, payload)
+    }
+
+    pub fn play_pcm(&self, sample_rate: u32, samples: &[f32]) -> Result<(), SkillError> {
+        let bytes = 
+            samples.iter()
+            .flat_map(|&f| f.to_le_bytes().to_vec())
+            .collect::<Vec<_>>();
+        unsafe { host_play_pcm(sample_rate, bytes) };
+        Ok(())
+    }
+
+    pub fn play_opus(&self, frames: &[u8]) -> Result<(), SkillError> {
+        unsafe { host_play_opus(frames.to_vec()) };
+        Ok(())
     }
 }
