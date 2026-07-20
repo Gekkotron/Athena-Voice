@@ -3,6 +3,17 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{Locale, SatelliteId, SessionId};
 use crate::types::Intent;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioFormat {
+    /// Raw 16-bit signed PCM, little-endian.
+    S16le,
+    /// Opus frames.
+    Opus,
+    /// 32-bit float PCM, little-endian.
+    F32le,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
@@ -95,15 +106,22 @@ pub enum Event {
         skill: String,
         id: i64,
     },
-    /// Runtime-emitted "skill wants to speak" notification. The scheduler
-    /// task uses this to inject skill-triggered TTS (e.g. timer expiration)
-    /// into the router's TTS pipeline without going through the intent
-    /// matcher.
-    SkillNotify {
-        session: SessionId,
-        skill: String,
-        text: String,
-    },
+/// Runtime-emitted "skill wants to speak" notification. The scheduler
+/// task uses this to inject skill-triggered TTS (e.g. timer expiration)
+/// into the router's TTS pipeline without going through the intent
+/// matcher.
+SkillNotify {
+    session: SessionId,
+    skill: String,
+    text: String,
+},
+/// Audio chunk emitted by a skill for immediate playback. The runtime
+/// forwards this to the audio sink via the event bus.
+AudioChunk {
+    session: SessionId,
+    format: AudioFormat,
+    payload: Vec<u8>,
+},
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,16 +209,23 @@ mod tests {
         assert!(json.contains("\"error\":\"timeout\""));
     }
 
-    #[test]
-    fn outcome_variants_snake_case() {
-        assert_eq!(serde_json::to_string(&Outcome::Ok).unwrap(), "\"ok\"");
-        assert_eq!(
-            serde_json::to_string(&Outcome::Overloaded).unwrap(),
-            "\"overloaded\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Outcome::Orphaned).unwrap(),
-            "\"orphaned\""
-        );
-    }
+#[test]
+fn outcome_variants_snake_case() {
+    assert_eq!(serde_json::to_string(&Outcome::Ok).unwrap(), "\"ok\"");
+    assert_eq!(
+        serde_json::to_string(&Outcome::Overloaded).unwrap(),
+        "\"overloaded\""
+    );
+    assert_eq!(
+        serde_json::to_string(&Outcome::Orphaned).unwrap(),
+        "\"orphaned\""
+    );
+}
+
+#[test]
+fn audio_format_snake_case() {
+    assert_eq!(serde_json::to_string(&AudioFormat::S16le).unwrap(), "\"s16le\"");
+    assert_eq!(serde_json::to_string(&AudioFormat::Opus).unwrap(), "\"opus\"");
+    assert_eq!(serde_json::to_string(&AudioFormat::F32le).unwrap(), "\"f32le\"");
+}
 }
