@@ -38,6 +38,10 @@ pub enum Event {
     },
     LlmFallback {
         session: SessionId,
+        #[serde(default)]
+        reason: LlmFallbackReason,
+        #[serde(default)]
+        slots: Vec<String>,
     },
     TtsChunk {
         session: SessionId,
@@ -111,6 +115,16 @@ pub enum BargeInReason {
     /// Reserved: barge-in triggered by VAD detecting speech onset. Not wired
     /// yet — requires a real VAD upgrade.
     VadSpeechStart,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmFallbackReason {
+    /// No skill matched the transcript (below confidence threshold).
+    #[default]
+    NoMatch,
+    /// A skill matched, but one or more slots could not be extracted.
+    MissingSlots,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

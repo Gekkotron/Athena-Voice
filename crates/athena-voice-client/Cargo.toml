@@ -1,0 +1,21 @@
+[package]
+name = "athena-voice-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+athena-voice-core = { workspace = true }
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap.workspace = true
+cpal = { version = "0.15" }
+anyhow = "1.0"
+bytes = "1.0"
+serde.workspace = true

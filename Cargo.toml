@@ -1,12 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/athena-voice-core",
-    "crates/athena-voice-storage",
-    "crates/athena-voice-providers",
-    "crates/athena-voice-runtime",
-    "crates/athena-voice-cli",
-    "crates/athena-voice-skill-sdk",
+"crates/athena-voice-core",
+"crates/athena-voice-storage",
+"crates/athena-voice-providers",
+"crates/athena-voice-runtime",
+"crates/athena-voice-cli",
+"crates/athena-voice-skill-sdk",
+"crates/athena-voice-server",
+"crates/athena-voice-client",
 ]
 exclude = [
     # skills-smoke-test and skills-timer compile to wasm32-wasip1 and can't
@@ -20,7 +22,7 @@ exclude = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.95"
 license = "MIT"
 authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
 repository = "https://github.com/Gekkotron/Athena-Voice"
@@ -33,6 +35,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+athena-voice-core = { path = "crates/athena-voice-core" }
+athena-voice-storage = { path = "crates/athena-voice-storage" }
+athena-voice-providers = { path = "crates/athena-voice-providers" }
+athena-voice-runtime = { path = "crates/athena-voice-runtime" }
 
 # runtime
 arc-swap = "1"
@@ -63,7 +69,6 @@ anyhow = "1"
 
 # dev only
 assert_cmd = "2"
-insta = { version = "1", features = ["json"] }
 predicates = "3"
 wiremock = "0.6"
 

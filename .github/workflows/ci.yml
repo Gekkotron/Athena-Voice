@@ -58,6 +58,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with: { tool: nextest }
       - run: cargo nextest run --workspace --profile ci
+    - run: cargo build --package athena-voice-server --package athena-voice-client
 
   coverage:
     name: llvm-cov

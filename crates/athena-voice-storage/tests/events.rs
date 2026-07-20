@@ -1,4 +1,4 @@
-use athena_voice_core::event::{Event, Outcome};
+use athena_voice_core::event::{Event, Outcome, LlmFallbackReason};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 use athena_voice_storage::{SqliteStore, Store};
 
@@ -48,9 +48,13 @@ async fn list_respects_limit() {
     let s = store().await;
     let sid = SessionId::new_v4();
     for _ in 0..5 {
-        s.append_event(&Event::LlmFallback { session: sid })
-            .await
-            .unwrap();
+    s.append_event(&Event::LlmFallback {
+        session: sid,
+        reason: LlmFallbackReason::NoMatch,
+        slots: Vec::new(),
+    })
+    .await
+    .unwrap();
     }
     let rows = s.list_events_by_session(sid, 3).await.unwrap();
     assert_eq!(rows.len(), 3);
@@ -61,15 +65,27 @@ async fn list_only_returns_session_events() {
     let s = store().await;
     let a = SessionId::new_v4();
     let b = SessionId::new_v4();
-    s.append_event(&Event::LlmFallback { session: a })
-        .await
-        .unwrap();
-    s.append_event(&Event::LlmFallback { session: b })
-        .await
-        .unwrap();
-    s.append_event(&Event::LlmFallback { session: a })
-        .await
-        .unwrap();
+    s.append_event(&Event::LlmFallback {
+        session: a,
+        reason: LlmFallbackReason::NoMatch,
+        slots: Vec::new(),
+    })
+    .await
+    .unwrap();
+    s.append_event(&Event::LlmFallback {
+        session: b,
+        reason: LlmFallbackReason::NoMatch,
+        slots: Vec::new(),
+    })
+    .await
+    .unwrap();
+    s.append_event(&Event::LlmFallback {
+        session: a,
+        reason: LlmFallbackReason::NoMatch,
+        slots: Vec::new(),
+    })
+    .await
+    .unwrap();
 
     let rows = s.list_events_by_session(a, 100).await.unwrap();
     assert_eq!(rows.len(), 2);

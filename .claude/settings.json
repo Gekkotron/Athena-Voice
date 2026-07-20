@@ -26,7 +26,20 @@
       "Bash(sc chat close *)",
       "Bash(sc chat send *)",
       "Bash(sc chat list*)",
-      "Bash(sc agents list*)"
+      "Bash(sc agents list*)",
+      "Bash(curl *)",
+      "Bash(tar *)",
+      "Bash(unzip *)",
+      "Bash(gunzip *)",
+      "Bash(xz *)",
+      "Bash(file *)",
+      "Bash(du *)",
+      "Bash(readlink *)",
+      "Bash(basename *)",
+      "Bash(dirname *)",
+      "Bash(env)",
+      "Bash(env *)",
+      "Bash(export *)"
     ],
     "deny": [
       "Bash(rm -rf /*)",

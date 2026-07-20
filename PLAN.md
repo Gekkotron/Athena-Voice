@@ -14,7 +14,31 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 
 
-## In progress
+## Done
+
+- [x] Plan 5 — Socket-compatible runner for VAD → hotword → ASR → intent → TTS cycle
+Split `athena-voice` binary into:
+  1. Socket server (`athena-voice-server`) — accepts byte streams on `unix://athena/audio.sock` (VAD → ASR), emits `Event::FinalTranscript` to `unix://athena/events.sock` and `Event::AudioChunk` back to the socket.
+  2. CLI client (`athena-voice-client`) — replays .wav files or real mic → socket; displays ASR transcript real-time + TTS playback.
+VAD: use WebRTC `webrtcvad` crate (safe wrapper over C++); configurable aggressiveness.
+Hotword: implement `"Athéna"` (Whisper small FR tuned) via a tiny secondary ASR on raw audio chunks (always active, no VAD).
+ASR: Whisper.cpp via `tract-onnx` binding (FR-optimized `ggml-small`); runs in a scope thread; STATELESS — no per-session model instance.
+TTS: Piper FR (`bl lightspeed`) via `tract-onnx`; configured voice/model via `[tts] config = { voice = "bl_lightspeed", sample_rate = 22050 }`; emissions sent socket → client for playback.
+Socket protocol (all lengths BE `u16`): `[header=0xAE, op=Audio, payload_len, audio_bytes]` / `[header=0xAE, op=Transcript, payload_len, utf8_json { "session": "<uuid>", "text": "…", "final": bool }]` / `[header=0xAE, op=Audio, payload_len, s16le_pcm]`.
+Hermetic packaging:
+- Downloaded models live in `/var/lib/athena/models/` (ghost cache, SQLite indexed).
+- Models fetched via `Downloader` trait implementing IPFS + HTTP fallback.
+- SHA-256 pinned in `[models] <name> = { url = "…", sha256 = "…", exact_size = … }`.
+- Progress printed on stderr.
+- Single-file model packs (`tar.zst`) for easy manual drop-in.
+Integration test (`crates/athena-voice-server/tests/soak.rs`):
+- For 24 h:
+  - start server (test tempdir).
+  - use `cpal` to record 48 kHz stereo float → separate thread that VAD chunks → socket.
+  - assert `transcript == expected` for each utterance.
+  - assert TTS audio → CLI TTS `[op=Audio]` arrives within 300 ms after `SkillResponse::Speak`.
+- Test hotword: feed a clip containing `"Athéna"` → assert `Event::HotwordDetected` emitted.
+Success criteria: `athena-voice-server` and `athena-voice-client` crates split; 24 h soak test green; Model downloads work; CLI replays mic .wav files; Integration with existing skills (weather/timer/home) via the socket event loop.
 
 ## Done
 

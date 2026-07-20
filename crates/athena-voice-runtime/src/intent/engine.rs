@@ -83,7 +83,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     let mut cursor = 0usize;
     let mut slots: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     let mut filled_phrase = String::new();
-
+    let mut slots_filled = 0;
     for (i, seg) in segments.iter().enumerate() {
         match seg {
             Segment::Literal(lit) => {
@@ -102,17 +102,23 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
                     }
                     _ => normalised_input.len(),
                 };
-                let raw = input.get(cursor..end)?.trim();
-                if raw.is_empty() {
+                let raw = input.get(cursor..end).map(|s| s.trim());
+                if let Some(raw) = raw {
+                    if !raw.is_empty() && slot_matches_kind(raw, rule, name) {
+                        slots.insert(name.clone(), json!(raw));
+                        filled_phrase.push_str(raw);
+                        cursor = end;
+                        slots_filled += 1;
+                    } else {
+                        slots.insert(name.clone(), serde_json::Value::Null);
+                    }
+                } else {
+                    slots.insert(name.clone(), serde_json::Value::Null);
+                }
+                if slots_filled == 0 {
                     return None;
                 }
-                if !slot_matches_kind(raw, rule, name) {
-                    return None;
-                }
-                slots.insert(name.clone(), json!(raw));
-                filled_phrase.push_str(raw);
-                cursor = end;
-            }
+        }
         }
     }
 
