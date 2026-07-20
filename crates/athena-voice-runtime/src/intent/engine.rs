@@ -102,7 +102,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
                     }
                     _ => normalised_input.len(),
                 };
-                let raw = input.get(cursor..end).map(|s| s.trim());
+                let raw = input.get(cursor..end).map(str::trim);
                 if let Some(raw) = raw {
                     if !raw.is_empty() && slot_matches_kind(raw, rule, name) {
                         slots.insert(name.clone(), json!(raw));
@@ -118,7 +118,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
                 if slots_filled == 0 {
                     return None;
                 }
-        }
+            }
         }
     }
 

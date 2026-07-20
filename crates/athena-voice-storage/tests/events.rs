@@ -1,4 +1,4 @@
-use athena_voice_core::event::{Event, Outcome, LlmFallbackReason};
+use athena_voice_core::event::{Event, LlmFallbackReason, Outcome};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 use athena_voice_storage::{SqliteStore, Store};
 
@@ -48,13 +48,13 @@ async fn list_respects_limit() {
     let s = store().await;
     let sid = SessionId::new_v4();
     for _ in 0..5 {
-    s.append_event(&Event::LlmFallback {
-        session: sid,
-        reason: LlmFallbackReason::NoMatch,
-        slots: Vec::new(),
-    })
-    .await
-    .unwrap();
+        s.append_event(&Event::LlmFallback {
+            session: sid,
+            reason: LlmFallbackReason::NoMatch,
+            slots: Vec::new(),
+        })
+        .await
+        .unwrap();
     }
     let rows = s.list_events_by_session(sid, 3).await.unwrap();
     assert_eq!(rows.len(), 3);

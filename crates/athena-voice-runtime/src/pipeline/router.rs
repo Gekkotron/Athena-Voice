@@ -91,136 +91,136 @@ pub fn spawn_router(
                 break;
             }
             tokio::select! {
-                () = cancel.cancelled() => break,
-                Some(outcome) = outcome_rx.recv() => {
-                    handle_outcome(&deps, outcome, epoch, &mut pending_dispatch, &mut prior_work_in_flight).await;
-                }
-                maybe = rx.recv(), if !rx_closed => match maybe {
-                    Some(t) if t.is_final => {
-                        epoch = epoch.saturating_add(1);
-                        // Detect barge-in: anything from the previous utterance
-                        // still outstanding? A pending dispatch counts; so does
-                        // speech we've already forwarded to TTS/LLM.
-                        let has_prior_work = pending_dispatch.is_some() || prior_work_in_flight;
-                        if has_prior_work {
-                            let _ = deps.event_tx.send(Event::BargeIn {
-                                session: deps.session,
-                                reason: BargeInReason::NewFinalTranscript,
-                            });
-                            if let Some(p) = pending_dispatch.take() {
-                                p.cancel.cancel();
+                    () = cancel.cancelled() => break,
+                    Some(outcome) = outcome_rx.recv() => {
+                        handle_outcome(&deps, outcome, epoch, &mut pending_dispatch, &mut prior_work_in_flight).await;
+                    }
+                    maybe = rx.recv(), if !rx_closed => match maybe {
+                        Some(t) if t.is_final => {
+                            epoch = epoch.saturating_add(1);
+                            // Detect barge-in: anything from the previous utterance
+                            // still outstanding? A pending dispatch counts; so does
+                            // speech we've already forwarded to TTS/LLM.
+                            let has_prior_work = pending_dispatch.is_some() || prior_work_in_flight;
+                            if has_prior_work {
+                                let _ = deps.event_tx.send(Event::BargeIn {
+                                    session: deps.session,
+                                    reason: BargeInReason::NewFinalTranscript,
+                                });
+                                if let Some(p) = pending_dispatch.take() {
+                                    p.cancel.cancel();
+                                }
+                                prior_work_in_flight = false;
                             }
-                            prior_work_in_flight = false;
-                        }
 
-                        let matched = deps.matcher.find_match(
-                            &t.text,
-                            deps.locale.as_str(),
-                            &deps.rules.load_full(),
-                        );
-                        if let Some(m) = matched {
-                            let core_intent = athena_voice_core::types::Intent {
-                                name: m.intent.name.clone(),
-                                slots: m.intent.slots.clone(),
-                                confidence: m.confidence,
-                            };
-                            let _ = deps.event_tx.send(Event::IntentMatched {
-                                session: deps.session,
-                                intent: core_intent,
-                            });
+                            let matched = deps.matcher.find_match(
+                                &t.text,
+                                deps.locale.as_str(),
+                                &deps.rules.load_full(),
+                            );
+                            if let Some(m) = matched {
+                                let core_intent = athena_voice_core::types::Intent {
+                                    name: m.intent.name.clone(),
+                                    slots: m.intent.slots.clone(),
+                                    confidence: m.confidence,
+                                };
+                                let _ = deps.event_tx.send(Event::IntentMatched {
+                                    session: deps.session,
+                                    intent: core_intent,
+                                });
 
-                            if let Some(dispatcher) = &deps.dispatcher {
-                                debug!(
-                                    skill = %m.skill,
-                                    intent = %m.intent.name,
-                                    confidence = m.confidence,
-                                    "dispatching matched intent to skill"
-                                );
+                                if let Some(dispatcher) = &deps.dispatcher {
+                                    debug!(
+                                        skill = %m.skill,
+                                        intent = %m.intent.name,
+                                        confidence = m.confidence,
+                                        "dispatching matched intent to skill"
+                                    );
 
-                                // Check for missing slots
-                                let missing_slots = m.intent.slots.iter()
-                                    .filter(|(_, v)| v.is_null())
-                                    .map(|(k, _)| k.clone())
-                                    .collect::<Vec<_>>();
+                                    // Check for missing slots
+                                    let missing_slots = m.intent.slots.iter()
+                                        .filter(|(_, v)| v.is_null())
+                                        .map(|(k, _)| k.clone())
+                                        .collect::<Vec<_>>();
 
-                                if !missing_slots.is_empty() {
-                                    // Emit LLM fallback event
-                                    let _ = deps.event_tx.send(Event::LlmFallback {
+                                    if !missing_slots.is_empty() {
+                                        // Emit LLM fallback event
+                                        let _ = deps.event_tx.send(Event::LlmFallback {
+                                            session: deps.session,
+                                            reason: LlmFallbackReason::MissingSlots,
+                                            slots: missing_slots,
+                                        });
+                                    }
+
+                                    // Dispatch to skill (handles missing slots gracefully)
+                                    let dispatcher = dispatcher.clone();
+                                    let outcome_tx = outcome_tx.clone();
+                                    let dispatch_cancel = CancellationToken::new();
+                                    let dispatch_cancel_child = dispatch_cancel.clone();
+                                    let session = deps.session;
+                                    let skill = m.skill.clone();
+                                    let intent = m.intent.clone();
+                                    let this_epoch = epoch;
+
+                                    let _ = deps.event_tx.send(Event::SkillInvoked {
                                         session: deps.session,
-                                        reason: LlmFallbackReason::MissingSlots,
-                                        slots: missing_slots,
+                                        skill: skill.clone(),
                                     });
+
+                                    tokio::spawn(async move {
+                                        let result = tokio::select! {
+                                            r = dispatcher.call(session, skill.clone(), intent) => Some(r),
+                                            () = dispatch_cancel_child.cancelled() => None,
+                                        };
+                                        // On cancel the blocking WASM task keeps
+                                        // running to completion and its result is
+                                        // dropped. Report cancellation via a stub
+                                        // outcome so the router emits the observable.
+                                        let result = result.unwrap_or_else(|| {
+                                            Err(
+                                                athena_voice_skill_sdk::SkillError::Custom(
+                                                    "dispatch cancelled by barge-in".into(),
+                                                ),
+                                            )
+                                        });
+                                        let _ = outcome_tx
+                                            .send(DispatchOutcome {
+                                                epoch: this_epoch,
+                                                skill,
+                                                result,
+                                            })
+                                            .await;
+                                    });
+                                    pending_dispatch = Some(PendingDispatch {
+                                        epoch,
+                                        skill: m.skill.clone(),
+                                        cancel: dispatch_cancel,
+                                    });
+                                    continue;
                                 }
 
-                                // Dispatch to skill (handles missing slots gracefully)
-                                let dispatcher = dispatcher.clone();
-                                let outcome_tx = outcome_tx.clone();
-                                let dispatch_cancel = CancellationToken::new();
-                                let dispatch_cancel_child = dispatch_cancel.clone();
-                                let session = deps.session;
-                                let skill = m.skill.clone();
-                                let intent = m.intent.clone();
-                                let this_epoch = epoch;
-
+                                // No dispatcher wired: keep the legacy observable of
+                                // emitting SkillInvoked and falling through to LLM
+                                // so the router remains useful before skills load.
                                 let _ = deps.event_tx.send(Event::SkillInvoked {
                                     session: deps.session,
-                                    skill: skill.clone(),
-                                });
-
-                                tokio::spawn(async move {
-                                    let result = tokio::select! {
-                                        r = dispatcher.call(session, skill.clone(), intent) => Some(r),
-                                        () = dispatch_cancel_child.cancelled() => None,
-                                    };
-                                    // On cancel the blocking WASM task keeps
-                                    // running to completion and its result is
-                                    // dropped. Report cancellation via a stub
-                                    // outcome so the router emits the observable.
-                                    let result = result.unwrap_or_else(|| {
-                                        Err(
-                                            athena_voice_skill_sdk::SkillError::Custom(
-                                                "dispatch cancelled by barge-in".into(),
-                                            ),
-                                        )
-                                    });
-                                    let _ = outcome_tx
-                                        .send(DispatchOutcome {
-                                            epoch: this_epoch,
-                                            skill,
-                                            result,
-                                        })
-                                        .await;
-                                });
-                                pending_dispatch = Some(PendingDispatch {
-                                    epoch,
                                     skill: m.skill.clone(),
-                                    cancel: dispatch_cancel,
                                 });
-                                continue;
                             }
-
-                            // No dispatcher wired: keep the legacy observable of
-                            // emitting SkillInvoked and falling through to LLM
-                            // so the router remains useful before skills load.
-                            let _ = deps.event_tx.send(Event::SkillInvoked {
-                                session: deps.session,
-                                skill: m.skill.clone(),
-                            });
+                            let _ = deps.event_tx.send(Event::LlmFallback {
+                session: deps.session,
+                reason: LlmFallbackReason::NoMatch,
+                slots: Vec::new(),
+            });
+                            if deps.llm_tx.send(t.text).await.is_err() {
+                                break;
+                            }
+                            prior_work_in_flight = true;
                         }
-                        let _ = deps.event_tx.send(Event::LlmFallback {
-            session: deps.session,
-            reason: LlmFallbackReason::NoMatch,
-            slots: Vec::new(),
-        });
-                        if deps.llm_tx.send(t.text).await.is_err() {
-                            break;
-                        }
-                        prior_work_in_flight = true;
-                    }
-                    Some(_) => {} // partials dropped
-                    None => { rx_closed = true; }
-                },
-            }
+                        Some(_) => {} // partials dropped
+                        None => { rx_closed = true; }
+                    },
+                }
         }
     })
 }
@@ -514,7 +514,7 @@ mod tests {
         let reg = Arc::new(reg);
 
         let (ev_tx, mut ev_rx) = broadcast::channel(64);
-        let (dispatcher, dispatcher_task) = 
+        let (dispatcher, dispatcher_task) =
             SkillDispatcher::spawn(reg, ev_tx.clone(), CancellationToken::new());
 
         let (t_tx, t_rx) = mpsc::channel(4);
@@ -605,7 +605,7 @@ mod tests {
         let reg = Arc::new(reg);
 
         let (ev_tx, mut ev_rx) = broadcast::channel(64);
-        let (dispatcher, dispatcher_task) = 
+        let (dispatcher, dispatcher_task) =
             SkillDispatcher::spawn(reg, ev_tx.clone(), CancellationToken::new());
 
         let (t_tx, t_rx) = mpsc::channel(4);

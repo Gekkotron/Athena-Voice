@@ -16,5 +16,7 @@ impl HotwordDetector {
     }
 
     /// Sample rate (stub).
-    pub fn sample_rate(&self) -> u32 { 16000 }
+    pub fn sample_rate(&self) -> u32 {
+        16000
+    }
 }

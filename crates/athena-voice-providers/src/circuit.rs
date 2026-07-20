@@ -50,7 +50,14 @@ impl CircuitBreaker {
                 *st = State::HalfOpen { last_probe: now };
                 Ok(())
             }
-            State::HalfOpen { last_probe } => Err(self.half_open_probe_gap - (now - last_probe)),
+            State::HalfOpen { last_probe } => {
+            let elapsed = now - last_probe;
+            if elapsed >= self.half_open_probe_gap {
+                Ok(())
+            } else {
+                Err(self.half_open_probe_gap.checked_sub(elapsed).unwrap_or_default())
+            }
+        }
         }
     }
 

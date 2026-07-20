@@ -3,21 +3,21 @@
 mod config;
 pub mod runtime;
 pub use config::Config;
-pub use runtime::Runtime;
 pub use metrics::Metrics;
+pub use runtime::Runtime;
 
 use std::sync::Arc;
 
 use athena_voice_core::event::Event;
 use athena_voice_storage::Store;
 
-mod socket;
-mod vad;
-mod hotword;
 mod asr;
-mod tts;
+mod hotword;
 mod metrics;
 mod resample;
+mod socket;
+mod tts;
+mod vad;
 
 impl Runtime {
     /// Start the server.

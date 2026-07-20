@@ -1,8 +1,8 @@
 //! Socket protocol and Unix domain socket server.
 
 use std::convert::TryFrom;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::StreamExt;
@@ -156,30 +156,31 @@ async fn handle_audio_stream(stream: UnixStream, runtime: Arc<Runtime>) -> anyho
             Ok((Op::Audio, payload)) => {
                 let segments = split_voice_segments(&runtime.vad, payload);
 
-        for segment in segments {
-            let start_hotword = std::time::Instant::now();
-            let samples: Vec<i16> = segment.chunks_exact(2)
-                .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
-                .collect();
-            if runtime.hotword.detect(&samples) {
-                tracing::info!("Hotword detected");
-                record_hotword(start_hotword, true);
-                let start_asr = std::time::Instant::now();
-                if let Ok(transcript) = runtime.asr.transcribe(&samples) {
-                    record_asr(start_asr, true);
-                    let transcript_json = serde_json::json!({
-                        "session": uuid::Uuid::new_v4().to_string(),
-                        "text": transcript,
-                        "final": true,
-                    });
-                    // TODO: Send transcript to event socket.
-                } else {
-                    record_asr(start_asr, false);
+                for segment in segments {
+                    let start_hotword = std::time::Instant::now();
+                    let samples: Vec<i16> = segment
+                        .chunks_exact(2)
+                        .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+                        .collect();
+                    if runtime.hotword.detect(&samples) {
+                        tracing::info!("Hotword detected");
+                        record_hotword(start_hotword, true);
+                        let start_asr = std::time::Instant::now();
+                        if let Ok(transcript) = runtime.asr.transcribe(&samples) {
+                            record_asr(start_asr, true);
+                            let transcript_json = serde_json::json!({
+                                "session": uuid::Uuid::new_v4().to_string(),
+                                "text": transcript,
+                                "final": true,
+                            });
+                            // TODO: Send transcript to event socket.
+                        } else {
+                            record_asr(start_asr, false);
+                        }
+                    } else {
+                        record_hotword(start_hotword, false);
+                    }
                 }
-            } else {
-                record_hotword(start_hotword, false);
-            }
-        }
             }
             Ok((Op::Transcript, _)) => {
                 return Err(anyhow::anyhow!("Unexpected transcript from client"));

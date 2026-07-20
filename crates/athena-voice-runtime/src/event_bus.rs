@@ -85,11 +85,11 @@ mod tests {
     async fn subscribers_receive_broadcast() {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
-    let ev = Event::LlmFallback {
-        session: SessionId::new_v4(),
-        reason: LlmFallbackReason::NoMatch,
-        slots: Vec::new(),
-    };
+        let ev = Event::LlmFallback {
+            session: SessionId::new_v4(),
+            reason: LlmFallbackReason::NoMatch,
+            slots: Vec::new(),
+        };
         bus.sender().send(ev).unwrap();
         let got = rx.recv().await.unwrap();
         assert!(matches!(got, Event::LlmFallback { .. }));
@@ -101,11 +101,11 @@ mod tests {
         let mut rx = bus.subscribe();
         for _ in 0..5 {
             bus.sender()
-        .send(Event::LlmFallback {
-            session: SessionId::new_v4(),
-            reason: LlmFallbackReason::NoMatch,
-            slots: Vec::new(),
-        })
+                .send(Event::LlmFallback {
+                    session: SessionId::new_v4(),
+                    reason: LlmFallbackReason::NoMatch,
+                    slots: Vec::new(),
+                })
                 .unwrap();
         }
         let first = rx.recv().await;

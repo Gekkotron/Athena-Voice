@@ -32,13 +32,12 @@ impl Runtime {
         let (event_tx, _) = mpsc::channel(32);
         let vad = VadDetector::new(config.vad_aggressiveness)?;
         let hotword = HotwordDetector::load(&config.model_dir)?;
-        let model_path = config.model_dir.join(&config.asr_model).with_extension("bin");
+        let model_path = config
+            .model_dir
+            .join(&config.asr_model)
+            .with_extension("bin");
         let asr = WhisperAsr::load(&model_path)?;
-        let tts = PiperTts::load(
-            &config.model_dir,
-            &config.tts_model,
-            &config.tts_voice,
-        )?;
+        let tts = PiperTts::load(&config.model_dir, &config.tts_model, &config.tts_voice)?;
 
         Ok(Self {
             config,

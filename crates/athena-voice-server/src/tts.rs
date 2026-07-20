@@ -27,7 +27,8 @@ impl PiperTts {
             .into_runnable()?;
 
         // Load tokenizer config.
-        let tokenizer: serde_json::Value = serde_json::from_reader(std::fs::File::open(json_path)?)?;
+        let tokenizer: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(json_path)?)?;
         let sample_rate = tokenizer["audio"]
             .get("sample_rate")
             .and_then(|v| v.as_u64())
@@ -45,15 +46,17 @@ impl PiperTts {
     pub fn synthesize(&self, text: &str) -> anyhow::Result<Vec<i16>> {
         // Tokenize text.
         let tokens = self.tokenize(text)?;
-        let input = tract_ndarray::Array2::from_shape_vec((1, tokens.len()), tokens)?
-            .into_tensor();
+        let input = tract_ndarray::Array2::from_shape_vec((1, tokens.len()), tokens)?.into_tensor();
 
         // Run inference.
         let result = self.model.run(tvec![input])?;
         let output = result[0].to_array_view::<f32>()?;
 
         // Convert to i16 PCM.
-        Ok(output.iter().map(|&x| (x.clamp(-1.0, 1.0) * 32767.0) as i16).collect())
+        Ok(output
+            .iter()
+            .map(|&x| (x.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect())
     }
 
     /// Tokenize text using Piper's tokenizer.

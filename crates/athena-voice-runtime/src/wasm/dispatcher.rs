@@ -49,7 +49,7 @@ impl SkillDispatcherHandle {
     }
 
     /// Convenience: fire-and-forget dispatch.
-    pub async fn send(&self, session: SessionId, skill: String, intent: Intent) -> Result<(), ()> {
+    pub async fn send(&self, session: SessionId, skill: String, intent: Intent) -> Result<(), SkillError> {
         self.dispatch(DispatchRequest {
             session,
             skill,
@@ -57,7 +57,7 @@ impl SkillDispatcherHandle {
             reply: None,
         })
         .await
-        .map_err(|_| ())
+        .map_err(|_| SkillError::Custom("Dispatch failed".into()))
     }
 
     /// Convenience: request/response dispatch — waits until the plugin
