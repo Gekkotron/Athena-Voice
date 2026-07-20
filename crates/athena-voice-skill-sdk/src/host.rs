@@ -129,10 +129,16 @@ mod guest {
         }
     }
 
-    pub(super) fn state_set(key: &str, val: &[u8]) -> Result<(), SkillError> {
-        unsafe { host_state_set(key.to_string(), val.to_vec()) }
-            .map_err(|e| SkillError::State(e.to_string()))
-    }
+pub(super) fn state_set(key: &str, val: &[u8]) -> Result<(), SkillError> {
+    let now_sec = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| SkillError::State(e.to_string()))?
+        .as_secs();
+    let mut payload = now_sec.to_le_bytes().to_vec();
+    payload.extend_from_slice(val);
+    unsafe { host_state_set(key.to_string(), payload) }
+        .map_err(|e| SkillError::State(e.to_string()))
+}
 
     pub(super) fn mqtt_publish(topic: &str, payload: &[u8]) -> Result<(), SkillError> {
         let code = unsafe { host_mqtt_publish(topic.to_string(), payload.to_vec()) }

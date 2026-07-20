@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RetentionConfig {
+    #[serde(default)]
+    pub gc_after_sec: Option<u64>,
+}
+
 use figment::providers::{Env, Format, Toml};
 use figment::{Error as FigmentError, Figment};
 use serde::{Deserialize, Serialize};
@@ -52,6 +58,12 @@ pub struct PerSkillConfig {
     pub mqtt_publish_allowlist: Vec<String>,
     #[serde(default)]
     pub config: HashMap<String, String>,
+    /// Optional TTL in seconds for keys set by this skill. Every `host_state_set`
+    /// prepends the current timestamp (little-endian u64); keys older than
+    /// `now_sec - gc_after_sec` are automatically deleted. Missing or 0
+    /// disables GC.
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -8,11 +8,66 @@ criterion in one line so it can pick up without further prompting. Tasks
 
 ## Backlog
 
+- [ ] Plan 6 — Hermetic skills persistence & retention
+Add `[skills.<name>.retention]` to `athena.toml`: `gc_after_sec = 3600` (optional per-skill TTL).
+Extend `athena_voice_storage::Store` with `skill_kv_gc(skill_name, now_sec)` — deletes keys whose timestamps exceed the TTL.
+In `SkillRegistry::dispatch`, inject `retention_gc_after_sec: Option<u64>` into `UserData`; `host_state_set` now takes monotonic `now_sec: u64` (queried via `std::time::SystemTime` at dispatch start).
+Guest SDK `HostCtx::state_set` transparently prepends `[u8; 8]` (LE `now_sec`) to the payload.
+Host deletes expired keys automatically on every state write.
+Unit tests: storage GC respects TTL; roundtrip prevails for fresh keys.
+Integration test: skills-smoke-test sets a key, waits 2 s (CI), asserts key gone after TTL=1.
+Document `[skills.<name>.retention]` in `athena.example.toml`.
+Success criteria: `retention.gc_after_sec` respected; skills persist across restart; storage contains only fresh keys; cloudsync (Plan 3) sees consistent KVs.
 
+- [ ] Plan 7 — Skill-driven audio playback
+Guest SDK gains `HostCtx::play_serialised_pcm(sample_rate, vec<f32>)` and `HostCtx::play_serialised_opus(vec<u8>)`.
+Host converts f32 → s16le → pipewire `AudioStream`, emits `Event::AudioChunk` → socket (Plan 5).
+Host registers `opus` host fn; native copy-to-stream without full decode.
+Sampled responses: `SkillResponse::SampledPcm { sample_rate, samples }` / `SampledOpus { opus_frames }`.
+Integration test: dispatch a `"joue un son"` intent → assert PCM emitted → assert TTS emitter creates gap.
+Volume control via `SkillResponse::Volume(f32)` (0.0–1.5).
+Success criteria: sampled sounds play coherently; volume applies; Opus decoding fast; skills can schedule sequential playback.
 
+- [ ] Plan 8 — Skill-friendly INI-style config
+Add `[skills] config_file = "/etc/athena-voice/skills.ini"` (INI-compatible).
+Guest SDK `host_config_get` parses INI slice via `ini` crate.
+Skills receive `config = IniSlice` in host functions.
+Integration: smoke-test reads `config.default_volume = 0.7` from INI.
+Tests: INI parsing roundtrips; compat with extant TOML.
+Success criteria: INI config works alongside TOML; no regression on TOML-only skills.
 
+- [ ] Plan 9 — Skill-local short-lived tmpfs
+Guest SDK gains `HostCtx::tmp_store(key, val: &[u8], expires_sec: u64)` → RAM-only backing.
+RAM index survives skill restart but NOT runtime restart.
+Automatic GC on every write.
+Unit: tmp keys disappear after expiry.
+Integration: smoke-test stores tmp key → runtime restart → key gone.
+Success criteria: skills have transient storage without touching SQLite.
 
+- [ ] Plan 10 — Skill HTTP OAuth2 helper
+Guest SDK: `HostCtx::request_oauth2_device_code(client_id, client_secret) → DeviceCodeResponse`.
+Host polls `/token` endpoint, caches tokens in plain-text file.
+Config: `[skills.<name>.oauth]` section for client_id/client_secret.
+Unit: mock server → assert SDK extracts `device_code` → polling.
+Integration: skills-smoke-test queries to a real OAuth provider.
+Success criteria: OAuth-secured APIs usable by skills.
 
+- [ ] Plan 11 — Skill fine-grained permission DSL
+`[skills.<name>.grants]`: `audio_playback`, `mqtt.topic:home/#`,
+`http.host:api.open-meteo.com`, `oauth.client_id:123`, `tmpfs.mib:50`.
+Host validates grants on every host call.
+Integration: smoke-test blocked on all host functions without grants.
+Success criteria: host blocks ungranted calls; grants documented in `athena.example.toml`.
+
+- [ ] Plan 12 — Skill install manager
+New crate `crates/athena-voice-installer`.
+WASM loader now accepts signed modules via minisig
+n.
+Per-user skills under `~/.athena-voice/skills/*.wasm`.
+Install command: `athena-voice-installer install skills-weather/weather.wasm minisign.pub`.
+Workflow: download → verify → copy to `[skills].dir`.
+Integration: publish skills-smoke-test minisign keypair → assert install succeeds.
+Success criteria: CLI installs skills from signed bundles.
 
 ## Done
 

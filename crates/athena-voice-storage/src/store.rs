@@ -1,8 +1,6 @@
 use async_trait::async_trait;
-
 use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
-
 use crate::error::StoreError;
 use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
 
@@ -42,6 +40,9 @@ pub trait Store: Send + Sync + 'static {
     async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
 
     async fn skill_kv_set(&self, skill: &str, key: &str, value: &[u8]) -> Result<(), StoreError>;
+
+    /// Deletes every key in `skill` whose last-write timestamp exceeds `now_sec`.
+    async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError>;
 
     async fn provision_satellite(
         &self,

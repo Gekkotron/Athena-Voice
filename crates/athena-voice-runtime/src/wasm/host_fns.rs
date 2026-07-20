@@ -52,25 +52,28 @@ impl MqttPublisher for AsyncClientPublisher {
 /// is a wash.
 #[derive(Clone)]
 pub struct SkillCtx {
-    /// Logical skill name — used for tracing spans and for the MQTT ACL
-    /// prefix (`athena/skills/<name>/…`).
-    pub name: String,
-    /// Storage backend, scoped by `Store::skill_kv_{get,set}(&name, …)`.
-    pub store: Arc<dyn Store>,
-    /// MQTT client shared with the rest of the runtime.
-    pub mqtt: Arc<dyn MqttPublisher>,
-    /// Allowlisted hosts (bare host names, no scheme) the skill may reach via
-    /// `host_http_get_json`.
-    pub http_allowlist: Vec<String>,
-    /// Extra MQTT publish prefixes/patterns the skill may target beyond its
-    /// built-in `athena/skills/<name>/*` namespace. Supports the same wildcard
-    /// grammar as MQTT subscriptions (`+` = one level, `#` = tail).
-    pub mqtt_publish_allowlist: Vec<String>,
-    /// Config map exposed via `host_config_get`.
-    pub config: HashMap<String, String>,
-    /// Tokio runtime handle used to bridge async runtime APIs (Store, MQTT,
-    /// reqwest) from the sync host-fn callback.
-    pub tokio: Handle,
+ /// Logical skill name — used for tracing spans and for the MQTT ACL
+ /// prefix (`athena/skills/<name>/…`).
+ pub name: String,
+ /// Storage backend, scoped by `Store::skill_kv_{get,set}(&name, …)`.
+ pub store: Arc<dyn Store>,
+ /// MQTT client shared with the rest of the runtime.
+ pub mqtt: Arc<dyn MqttPublisher>,
+ /// Allowlisted hosts (bare host names, no scheme) the skill may reach via
+ /// `host_http_get_json`.
+ pub http_allowlist: Vec<String>,
+ /// Extra MQTT publish prefixes/patterns the skill may target beyond its
+ /// built-in `athena/skills/<name>/*` namespace. Supports the same wildcard
+ /// grammar as MQTT subscriptions (`+` = one level, `#` = tail).
+ pub mqtt_publish_allowlist: Vec<String>,
+ /// Config map exposed via `host_config_get`.
+ pub config: HashMap<String, String>,
+ /// Tokio runtime handle used to bridge async runtime APIs (Store, MQTT,
+ /// reqwest) from the sync host-fn callback.
+ pub tokio: Handle,
+ /// Optional TTL in seconds for state keys set by this skill.
+ /// Keys older than this are deleted automatically by `host_state_set`.
+ pub retention_gc_after_sec: Option<u64>,
     /// HTTP client used by `host_http_get_json` — cloning is cheap (internal
     /// `Arc`), so we keep one instance per skill.
     pub http: reqwest::Client,
@@ -286,20 +289,33 @@ fn host_state_get(
 }
 
 fn host_state_set(
-    plugin: &mut CurrentPlugin,
-    inputs: &[Val],
-    _outputs: &mut [Val],
-    ud: UserData<SkillCtx>,
+ plugin: &mut CurrentPlugin,
+ inputs: &[Val],
+ _outputs: &mut [Val],
+ ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
-    let key: String = plugin.memory_get_val(&inputs[0])?;
-    let val: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
-    let (store, name, tokio) = with_ctx(&ud, |ctx| {
-        (ctx.store.clone(), ctx.name.clone(), ctx.tokio.clone())
-    })?;
-    tokio
-        .block_on(async move { store.skill_kv_set(&name, &key, &val).await })
-        .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
-    Ok(())
+ let key: String = plugin.memory_get_val(&inputs[0])?;
+ let val: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
+ let (store, name, retention_gc_after_sec, tokio) = with_ctx(&ud, |ctx| {
+ (ctx.store.clone(), ctx.name.clone(), ctx.retention_gc_after_sec, ctx.tokio.clone())
+ })?;
+
+ // Write to store and run GC if retention is enabled
+ tokio
+ .block_on(async move {
+ store.skill_kv_set(&name, &key, &val).await?;
+ if let Some(ttl) = retention_gc_after_sec {
+ let now_sec = u64::from_le_bytes(
+ val.get(0..8).ok_or_else(|| extism::Error::msg("timestamp must be 8 bytes"))?
+ .try_into()?
+ );
+ store.skill_kv_gc(&name, now_sec.saturating_sub(ttl)).await?;
+ }
+ Ok(())
+ })
+ .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
+
+ Ok(())
 }
 
 /// Result codes returned in the single `i64` output of `host_mqtt_publish`.

@@ -85,8 +85,10 @@ hot_reload = false
 #   http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
 #   config = { default_city = "Paris", units = "celsius" }
 #
-# Example — home automation skill publishing to a Zigbee2MQTT-style broker:
-#
-#   [skills.home]
-#   mqtt_publish_allowlist = ["home/+/light/set", "home/+/switch/set"]
-#   config = { entities = '[{"name":"lumière du salon","room":"salon","kind":"light","set_topic":"home/salon/light/set","on_payload":"ON","off_payload":"OFF"}]' }
+    # Example — home automation skill publishing to a Zigbee2MQTT-style broker:
+    # 
+    # [skills.home]
+    # mqtt_publish_allowlist = ["home/+/light/set", "home/+/switch/set"]
+    # config = { entities = '[{"name":"lumière du salon","room":"salon","kind":"light","set_topic":"home/salon/light/set","on_payload":"ON","off_payload":"OFF"}]' }
+    # # Optional retention policy: delete keys older than 1 hour
+    # retention = { gc_after_sec = 3600 }

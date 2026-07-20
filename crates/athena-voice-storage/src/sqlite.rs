@@ -213,9 +213,9 @@ impl Store for SqliteStore {
             .bind(kind)
             .bind(payload)
             .bind(now)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        .execute(&self.pool)
+        .await?;
+        Ok::<(), StoreError>(())
     }
 
     async fn list_events_by_session(
@@ -293,7 +293,21 @@ impl Store for SqliteStore {
         .bind(value)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok::<(), StoreError>(())
+    }
+
+    async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError> {
+        sqlx::query(
+            "DELETE FROM skill_kv
+             WHERE skill = ?1
+               AND LENGTH(value) >= 8
+               AND CAST(SUBSTR(value, 1, 8) AS BLOB) <= ?2"
+        )
+        .bind(skill)
+        .bind(now_sec.to_le_bytes().to_vec())
+        .execute(&self.pool)
+        .await?;
+        Ok::<(), StoreError>(())
     }
 
     async fn provision_satellite(

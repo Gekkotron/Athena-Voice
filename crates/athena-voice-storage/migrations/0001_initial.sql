@@ -44,8 +44,9 @@ CREATE TABLE satellites (
 );
 
 CREATE TABLE skill_kv (
-    skill   TEXT NOT NULL,
-    key     TEXT NOT NULL,
-    value   BLOB NOT NULL,
-    PRIMARY KEY (skill, key)
+  skill TEXT NOT NULL,
+  key TEXT NOT NULL,
+  timestamp_sec INTEGER NOT NULL,
+  value BLOB NOT NULL,
+  PRIMARY KEY (skill, key)
 );

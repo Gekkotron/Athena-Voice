@@ -107,4 +107,8 @@ impl Store for InMemoryStore {
     ) -> Result<(), StoreError> {
         Ok(())
     }
+
+    async fn skill_kv_gc(&self, _skill: &str, _now_sec: u64) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
