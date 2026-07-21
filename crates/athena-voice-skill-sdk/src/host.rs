@@ -62,6 +62,20 @@ impl HostCtx {
         Ok(None)
     }
 
+    #[must_use]
+    pub fn config_get_toml(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    /// REACH: tmp_set/tmp_get always return Ok(None) on host.
+    pub fn tmp_set(&self, _key: &str, _val: &[u8], _expires_sec: u64) -> Result<(), SkillError> {
+        Ok(())
+    }
+
+    pub fn tmp_get(&self, _key: &str) -> Result<Option<Vec<u8>>, SkillError> {
+        Ok(None)
+    }
+
     /// Reads a value from the per-skill KV store.
     pub fn state_get(&self, _key: &str) -> Result<Option<Vec<u8>>, SkillError> {
         Ok(None)
@@ -130,6 +144,8 @@ mod guest {
         fn host_schedule_mqtt(fires_at_ms: Vec<u8>, topic: String, payload: Vec<u8>) -> Vec<u8>;
         fn host_play_pcm(sample_rate: u32, samples: Vec<u8>);
         fn host_play_opus(frames: Vec<u8>);
+        fn host_tmp_set(skill: String, key: String, val: Vec<u8>, expires_sec: u64);
+        fn host_tmp_get(skill: String, key: String) -> Vec<u8>;
     }
 
     pub(super) fn log(level: &str, msg: &str) {
@@ -205,6 +221,20 @@ pub(super) fn state_set(key: &str, val: &[u8]) -> Result<(), SkillError> {
                 "unknown schedule_mqtt result code {other}"
             ))),
         }
+    }
+
+    pub(super) fn play_opus(frames: &[u8]) -> Result<(), extism::Error> {
+        unsafe { host_play_opus(frames.to_vec()) };
+        Ok(())
+    }
+
+    pub(super) fn tmp_set(skill: &str, key: &str, val: &[u8], expires_sec: u64) -> Result<(), extism::Error> {
+        unsafe { host_tmp_set(skill.to_string(), key.to_string(), val.to_vec(), expires_sec) };
+        Ok(())
+    }
+
+    pub(super) fn tmp_get(skill: &str, key: &str) -> Result<Vec<u8>, extism::Error> {
+        unsafe { host_tmp_get(skill.to_string(), key.to_string()) }
     }
 
     pub(super) fn http_get_json(url: &str) -> Result<Value, SkillError> {
@@ -307,7 +337,29 @@ impl HostCtx {
     }
 
     pub fn play_opus(&self, frames: &[u8]) -> Result<(), SkillError> {
-        unsafe { host_play_opus(frames.to_vec()) };
+        guest::play_opus(frames).map_err(|e| SkillError::HostFn(e.to_string()))
+    }
+
+    pub fn tmp_set(&self, key: &str, val: &[u8], expires_sec: u64) -> Result<(), SkillError> {
+        guest::tmp_set(self.name(), key, val, expires_sec).map_err(|e| SkillError::HostFn(e.to_string()))
+    }
+
+    pub fn tmp_get(&self, key: &str) -> Result<Option<Vec<u8>>, SkillError> {
+        guest::tmp_get(self.name(), key).map(|bytes| if bytes.is_empty() { None } else { Some(bytes) })
+            .map_err(|e| SkillError::HostFn(e.to_string()))
+    }
+
+    pub fn tmp_set(&self, key: &str, val: &[u8], expires_sec: u64) -> Result<(), SkillError> {
+        unsafe { host_tmp_set(self.name().to_string(), key.to_string(), val.to_vec(), expires_sec) };
         Ok(())
+    }
+
+    pub fn tmp_get(&self, key: &str) -> Result<Option<Vec<u8>>, SkillError> {
+        let bytes = unsafe { host_tmp_get(self.name().to_string(), key.to_string()) };
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(bytes))
+        }
     }
 }

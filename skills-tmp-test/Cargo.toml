@@ -1,0 +1,11 @@
+[package]
+name = "skills-tmp-test"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+athena-voice-skill-sdk = { path = "../crates/athena-voice-skill-sdk" }
+extism-pdk = "1.26.0"

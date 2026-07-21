@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use athena_voice_core::event::{Event, Outcome, Stage};
+use athena_voice_core::event::{Event, Outcome};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
-use crate::error::StoreError;
+
 use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
 
 #[async_trait]
-pub trait Store: Send + Sync + 'static {
+pub trait Store: Send + Sync + TmpStore {
     async fn record_session(
         &self,
         session: SessionId,
@@ -37,13 +37,6 @@ pub trait Store: Send + Sync + 'static {
         message: &str,
     ) -> Result<(), StoreError>;
 
-    async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
-
-    async fn skill_kv_set(&self, skill: &str, key: &str, value: &[u8]) -> Result<(), StoreError>;
-
-    /// Deletes every key in `skill` whose last-write timestamp exceeds `now_sec`.
-    async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError>;
-
     async fn provision_satellite(
         &self,
         id: SatelliteId,
@@ -52,8 +45,6 @@ pub trait Store: Send + Sync + 'static {
 
     async fn find_satellite(&self, id: &SatelliteId) -> Result<Option<SatelliteRow>, StoreError>;
 
-    /// Schedules a future MQTT publish for `skill`. Returns the row id, which
-    /// callers use to correlate later state (e.g. `skill_kv_set`).
     async fn schedule_event(
         &self,
         skill: &str,
@@ -62,10 +53,18 @@ pub trait Store: Send + Sync + 'static {
         payload: &[u8],
     ) -> Result<i64, StoreError>;
 
-    /// Atomically selects and removes every scheduled event whose
-    /// `fires_at_ms <= now_ms`, ordered by `fires_at_ms` ascending.
     async fn pop_due_events(&self, now_ms: i64) -> Result<Vec<ScheduledEvent>, StoreError>;
 
-    /// Deletes a scheduled event by id. Returns `true` iff a row was removed.
     async fn delete_scheduled(&self, id: i64) -> Result<bool, StoreError>;
+
+    async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    async fn skill_kv_set(
+        &self,
+        skill: &str,
+        key: &str,
+        value: &[u8],
+    ) -> Result<(), StoreError>;
+
+    async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError>;
 }

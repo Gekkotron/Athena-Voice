@@ -5,12 +5,25 @@ pub mod error;
 pub mod models;
 pub mod sqlite;
 pub mod store;
+pub mod tmp;
 
 pub use error::StoreError;
 pub use sqlite::SqliteStore;
+pub use tmp::{MemoryTmpStore, TmpStore};
 
-#[derive(Debug, Default)]
-pub struct InMemoryStore;
+/// In-memory store with TmpStore support.
+#[derive(Debug)]
+pub struct InMemoryStore {
+    tmp_store: MemoryTmpStore,
+}
+
+impl Default for InMemoryStore {
+    fn default() -> Self {
+        Self {
+            tmp_store: MemoryTmpStore::new(),
+        }
+    }
+}
 
 pub use models::ScheduledEvent;
 pub use store::Store;
@@ -110,5 +123,19 @@ impl Store for InMemoryStore {
 
     async fn skill_kv_gc(&self, _skill: &str, _now_sec: u64) -> Result<(), StoreError> {
         Ok(())
+    }
+}
+
+impl TmpStore for InMemoryStore {
+    fn tmp_set(&self, skill: &str, key: &str, val: Vec<u8>, expires_sec: u64) -> Result<(), StoreError> {
+        self.tmp_store.tmp_set(skill, key, val, expires_sec)
+    }
+
+    fn tmp_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.tmp_store.tmp_get(skill, key)
+    }
+
+    fn tmp_gc(&self, now_sec: u64) {
+        self.tmp_store.tmp_gc(now_sec);
     }
 }

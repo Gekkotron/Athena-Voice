@@ -301,13 +301,59 @@ impl Store for SqliteStore {
             "DELETE FROM skill_kv
              WHERE skill = ?1
                AND LENGTH(value) >= 8
-               AND CAST(SUBSTR(value, 1, 8) AS BLOB) <= ?2"
+               AND CAST(SUBSTR(value, 1, 8) AS BLOB) <= ?2",
         )
         .bind(skill)
         .bind(now_sec.to_le_bytes().to_vec())
         .execute(&self.pool)
         .await?;
         Ok::<(), StoreError>(())
+    }
+
+    fn tmp_set(&self, skill: &str, key: &str, val: Vec<u8>, expires_sec: u64) -> Result<(), StoreError> {
+        let expires_at = self.now_sec() + expires_sec;
+        sqlx::query(
+            "INSERT INTO skill_tmp (skill, key, value, expires_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(skill, key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
+        )
+        .bind(skill)
+        .bind(key)
+        .bind(val)
+        .bind(expires_at as i64)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    fn tmp_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let now = self.now_sec();
+        let row = sqlx::query_as(
+            "SELECT value FROM skill_tmp WHERE skill = ?1 AND key = ?2 AND expires_at > ?3",
+        )
+        .bind(skill)
+        .bind(key)
+        .bind(now as i64)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r: (Vec<u8>,)| r.0))
+    }
+
+    fn tmp_gc(&self, now_sec: u64) {
+        let pool = self.pool.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query("DELETE FROM skill_tmp WHERE expires_at <= ?1")
+                .bind(now_sec as i64)
+                .execute(&pool)
+                .await;
+        });
+    }
+
+    fn now_sec(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    }
     }
 
     async fn provision_satellite(
