@@ -87,13 +87,16 @@ impl Runtime {
     // Also start the MQTT event mirror task so athena/events/* is populated.
     let mirror = event_bus::spawn_mqtt_mirror(event_bus.sender(), client.tx);
 
-    // Start audio sink with access to the event bus.
-    let event_bus_clone = event_bus.clone();
-    let audio_task = tokio::spawn(async move {
-        if let Err(e) = audio::AudioSink::new(event_bus_clone.subscribe()).run().await {
-            tracing::error!("audio sink failed: {e}");
-        }
-    });
+    // Conditionally start audio sink
+    #[cfg(feature = "audio")]
+    {
+        let event_bus_clone = event_bus.clone();
+        let audio_task = tokio::spawn(async move {
+            if let Err(e) = audio::AudioSink::new(event_bus_clone.subscribe()).run().await {
+                tracing::error!("audio sink failed: {e}");
+            }
+        });
+    }
 
     Ok(Self {
         shutdown,

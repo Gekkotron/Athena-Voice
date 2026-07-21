@@ -68,8 +68,10 @@ impl Skill for TimerSkill {
         let payload = serde_json::to_vec(&serde_json::json!({ "seconds": seconds }))
             .map_err(|e| SkillError::Custom(format!("payload encode: {e}")))?;
 
-        let id = ctx.schedule_mqtt(fires_at_ms, "athena/skills/timer/expired", &payload)?;
-        ctx.state_set(&format!("timer/{id}"), &seconds.to_le_bytes())?;
+    let id = ctx.schedule_mqtt(fires_at_ms, "athena/skills/timer/expired", &payload)?;
+    ctx.tmp_set(&format!("timer/{id}"), &seconds.to_le_bytes(), seconds)?;
+    // Also set persistent kv for cross-restart durability
+    ctx.state_set(&format!("timer/{id}"), &seconds.to_le_bytes())?;
 
         Ok(SkillResponse::speak(format!(
             "d'accord, minuteur de {duration_text} lancé"

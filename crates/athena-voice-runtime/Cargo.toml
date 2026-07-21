@@ -19,7 +19,7 @@ dashmap = { workspace = true }
 extism = { workspace = true }
 futures = { workspace = true }
 ini = "2.0"
-pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", branch = "master" }
+pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", branch = "master", optional = true }
 reqwest = { workspace = true }
 rumqttc = { workspace = true }
 serde = { workspace = true }
@@ -30,6 +30,10 @@ tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 toml = "0.8"
+
+[features]
+default = ["audio"]
+audio = ["dep:pipewire"]
 
 strsim = { workspace = true }
 
