@@ -1,4 +1,22 @@
-//! Guest-side view of the host functions.
+use ini::Ini;
+use serde_json::Value;
+
+/// INI slice (borrows underlying config bytes).
+/// Usage: `let config = host_config_get()?;`
+/// Access sections via `config.section("foo")`.
+pub struct IniSlice<'a> {
+    pub(crate) data: &'a [u8],
+}
+
+impl<'a> IniSlice<'a> {
+    #[must_use]
+    pub fn section(&self, section: &str) -> Option<&Ini> {
+        let ini = Ini::load_from_str(std::str::from_utf8(self.data).ok()?).ok()?;
+        ini.section(Some(section))
+    }
+}
+
+/// Guest-side view of the host functions.
 //!
 //! Plan 4 Task 3 defined `HostCtx` as a stub trait shape so host-side code
 //! (Task 5) could compile against it. Task 8 replaces the stubs with real
@@ -35,8 +53,13 @@ impl HostCtx {
 
     /// Reads a config value scoped to this skill.
     #[must_use]
-    pub fn config_get(&self, _key: &str) -> Option<String> {
+    pub fn config_get_toml(&self, _key: &str) -> Option<String> {
         None
+    }
+
+    /// REACH: config_get always returns None on host.
+    pub fn config_get(&self) -> Result<Option<IniSlice>, SkillError> {
+        Ok(None)
     }
 
     /// Reads a value from the per-skill KV store.
@@ -99,7 +122,7 @@ mod guest {
     #[host_fn]
     unsafe extern "ExtismHost" {
         fn host_log(level: String, msg: String);
-        fn host_config_get(key: String) -> String;
+        fn host_config_get() -> Vec<u8>;
         fn host_state_get(key: String) -> Vec<u8>;
         fn host_state_set(key: String, val: Vec<u8>);
         fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i64;
@@ -113,12 +136,8 @@ mod guest {
         let _ = unsafe { host_log(level.to_string(), msg.to_string()) };
     }
 
-    pub(super) fn config_get(key: &str) -> Option<String> {
-        match unsafe { host_config_get(key.to_string()) } {
-            Ok(v) if v.is_empty() => None,
-            Ok(v) => Some(v),
-            Err(_) => None,
-        }
+    pub(super) fn config_get(_key: &str) -> Result<Vec<u8>, extism::Error> {
+        Ok(unsafe { host_config_get() })
     }
 
     pub(super) fn state_get(key: &str) -> Result<Option<Vec<u8>>, SkillError> {
@@ -208,9 +227,49 @@ impl HostCtx {
         guest::log(level, msg);
     }
 
+    /// Gets the skill's config.
+    ///
+    /// Returns:
+    /// - `Ok(Some(IniSlice))` if `[skills] config_file` is set (INI/TOML)
+    /// - `Ok(None)` if no config file and `key` not in TOML map
+    /// - `Ok(Some(String))` if `key` found in TOML map
+    ///
+    /// Usage:
+    /// ```
+    /// let config = ctx.config_get()?;
+    /// if let Some(ini) = config {
+    ///     let play_speed = ini.section("audio").and_then(|s| s.get("speed"));
+    /// }
+    /// ```
+    pub fn config_get(&self) -> Result<Option<IniSlice>, SkillError> {
+        let bytes = guest::config_get("").map_err(|e| SkillError::Config(e.to_string()))?;
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(IniSlice { data: &bytes }))
+        }
+    }
+
+    /// Gets a TOML config value (backwards compatible).
+    pub fn config_get(&self) -> Result<Option<IniSlice>, SkillError> {
+        let bytes = guest::config_get("").map_err(|e| SkillError::Config(e.to_string()))?;
+        if bytes.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(IniSlice { data: &bytes }))
+        }
+    }
+
     #[must_use]
-    pub fn config_get(&self, key: &str) -> Option<String> {
-        guest::config_get(key)
+    pub fn config_get_toml(&self, _key: &str) -> Option<String> {
+        // Backward compatibility: assume TOML map
+        let bytes = unsafe { host_config_get() };
+        if bytes.is_empty() {
+            None
+        } else {
+            String::from_utf8(bytes).ok()
+        }
+    }
     }
 
     pub fn state_get(&self, key: &str) -> Result<Option<Vec<u8>>, SkillError> {

@@ -47,13 +47,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Default)]
 pub struct SkillConfig {
     pub http_allowlist: Vec<String>,
-    /// Extra MQTT publish patterns (MQTT topic-filter grammar with `+`/`#`)
-    /// this skill may target on top of its default `athena/skills/<name>/*`
-    /// namespace. Empty leaves the default ACL untouched.
     pub mqtt_publish_allowlist: Vec<String>,
     pub config: HashMap<String, String>,
-    /// Optional TTL for keys set by this skill, injected into `SkillCtx`.
     pub retention_gc_after_sec: Option<u64>,
+    /// Optional INI/TOML file for skill config.
+    /// Values: path to file (INI/TOML), or empty to use `config`.
+    /// Accessed via `host_config_get` → `IniSlice`/`toml::from_slice`.
+    pub config_file: Option<String>,
 }
 
 /// Runtime handles + per-skill config passed into
@@ -432,6 +432,7 @@ let ctx = SkillCtx {
     http: deps.http.clone(),
     retention_gc_after_sec: cfg.retention_gc_after_sec,
     event_bus: deps.audio_event_tx.clone(),
+    config_file: cfg.config_file,
 };
 let manifest = Manifest::new([Wasm::file(path)]);
 let mut builder = PluginBuilder::new(manifest)

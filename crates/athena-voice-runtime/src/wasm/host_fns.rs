@@ -76,6 +76,9 @@ pub struct SkillCtx {
  pub retention_gc_after_sec: Option<u64>,
  /// Event bus for skill-driven audio playback.
  pub event_bus: tokio::sync::broadcast::Sender<Event>,
+ /// Optional INI/TOML config file for skill config.
+ /// If provided, `host_config_get` returns its contents as a byte slice.
+ pub config_file: Option<String>,
     /// HTTP client used by `host_http_get_json` — cloning is cheap (internal
     /// `Arc`), so we keep one instance per skill.
     pub http: reqwest::Client,
@@ -276,13 +279,16 @@ fn log_line(skill: &str, level: &str, msg: &str) {
 
 fn host_config_get(
     plugin: &mut CurrentPlugin,
-    inputs: &[Val],
+    _inputs: &[Val],
     outputs: &mut [Val],
     ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
-    let key: String = plugin.memory_get_val(&inputs[0])?;
-    let value = with_ctx(&ud, |ctx| ctx.config.get(&key).cloned())?.unwrap_or_default();
-    let handle = plugin.memory_new(&value)?;
+    let ctx = with_ctx(&ud, |ctx| ctx.clone())?;
+    let config_bytes = match ctx.config_file {
+        Some(ref path) => std::fs::read(path).unwrap_or_default(),
+        None => serde_json::to_vec(&ctx.config)?,
+    };
+    let handle = plugin.memory_new(&config_bytes)?;
     outputs[0] = plugin.memory_to_val(handle);
     Ok(())
 }
@@ -561,6 +567,7 @@ async fn make_ctx(name: &str) -> SkillCtx {
         http: reqwest::Client::new(),
         retention_gc_after_sec: None,
         event_bus: tokio::sync::broadcast::channel(32).0,
+        config_file: None,
     }
 }
 

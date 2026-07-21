@@ -8,7 +8,7 @@ members = [
 "crates/athena-voice-cli",
 "crates/athena-voice-skill-sdk",
 "crates/athena-voice-server",
-"crates/athena-voice-client",
+"crates/athena-voice-client", "skills-audio-test",
 ]
 exclude = [
     # skills-smoke-test and skills-timer compile to wasm32-wasip1 and can't

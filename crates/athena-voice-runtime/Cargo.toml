@@ -18,6 +18,7 @@ chrono = { workspace = true }
 dashmap = { workspace = true }
 extism = { workspace = true }
 futures = { workspace = true }
+ini = "2.0"
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs.git", branch = "master" }
 reqwest = { workspace = true }
 rumqttc = { workspace = true }
@@ -45,6 +46,7 @@ portpicker = "0.1"
 tracing-subscriber = { workspace = true }
 wiremock = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
+ini = "2.0"
 
 [lints]
 workspace = true
