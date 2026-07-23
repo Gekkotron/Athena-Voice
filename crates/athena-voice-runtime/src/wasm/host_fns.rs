@@ -542,6 +542,37 @@ fn host_tmp_get(
     Ok(())
 }
 
+fn host_tmp_set(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    _outputs: &mut [Val],
+    ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let skill: String = plugin.memory_get_val(&inputs[0])?;
+    let key: String = plugin.memory_get_val(&inputs[1])?;
+    let val: Vec<u8> = plugin.memory_get_val(&inputs[2])?;
+    let expires_sec: u64 = plugin.memory_get_val(&inputs[3])?;
+    
+    let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
+    store.tmp_set(&skill, &key, val, expires_sec).map_err(extism::Error::msg)
+}
+
+fn host_tmp_get(
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    outputs: &mut [Val],
+    ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let skill: String = plugin.memory_get_val(&inputs[0])?;
+    let key: String = plugin.memory_get_val(&inputs[1])?;
+    
+    let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
+    let val = store.tmp_get(&skill, &key).map_err(extism::Error::msg)?;
+    let handle = plugin.memory_new(val.unwrap_or_default())?;
+    outputs[0] = plugin.memory_to_val(handle);
+    Ok(())
+}
+
 fn host_schedule_mqtt(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],

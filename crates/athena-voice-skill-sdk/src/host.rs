@@ -136,7 +136,6 @@ mod guest {
     #[host_fn]
     unsafe extern "ExtismHost" {
         fn host_log(level: String, msg: String);
-        fn host_config_get() -> Vec<u8>;
         fn host_state_get(key: String) -> Vec<u8>;
         fn host_state_set(key: String, val: Vec<u8>);
         fn host_mqtt_publish(topic: String, payload: Vec<u8>) -> i64;
@@ -221,6 +220,20 @@ pub(super) fn state_set(key: &str, val: &[u8]) -> Result<(), SkillError> {
                 "unknown schedule_mqtt result code {other}"
             ))),
         }
+    }
+
+    pub(super) fn play_opus(frames: &[u8]) -> Result<(), extism::Error> {
+        unsafe { host_play_opus(frames.to_vec()) };
+        Ok(())
+    }
+
+    pub(super) fn tmp_set(skill: &str, key: &str, val: &[u8], expires_sec: u64) -> Result<(), extism::Error> {
+        unsafe { host_tmp_set(skill.to_string(), key.to_string(), val.to_vec(), expires_sec) };
+        Ok(())
+    }
+
+    pub(super) fn tmp_get(skill: &str, key: &str) -> Result<Vec<u8>, extism::Error> {
+        unsafe { host_tmp_get(skill.to_string(), key.to_string()) }
     }
 
     pub(super) fn play_opus(frames: &[u8]) -> Result<(), extism::Error> {
@@ -338,6 +351,15 @@ impl HostCtx {
 
     pub fn play_opus(&self, frames: &[u8]) -> Result<(), SkillError> {
         guest::play_opus(frames).map_err(|e| SkillError::HostFn(e.to_string()))
+    }
+
+    pub fn tmp_set(&self, key: &str, val: &[u8], expires_sec: u64) -> Result<(), SkillError> {
+        guest::tmp_set(self.name(), key, val, expires_sec).map_err(|e| SkillError::HostFn(e.to_string()))
+    }
+
+    pub fn tmp_get(&self, key: &str) -> Result<Option<Vec<u8>>, SkillError> {
+        guest::tmp_get(self.name(), key).map(|bytes| if bytes.is_empty() { None } else { Some(bytes) })
+            .map_err(|e| SkillError::HostFn(e.to_string()))
     }
 
     pub fn tmp_set(&self, key: &str, val: &[u8], expires_sec: u64) -> Result<(), SkillError> {
