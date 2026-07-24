@@ -104,6 +104,21 @@ impl MqttProviderClient {
     pub fn request_timeout(&self) -> Duration {
         self.request_timeout
     }
+
+    /// Publishes a follow-up message on the request topic without touching
+    /// the response routing (used for streaming request bodies, e.g. STT
+    /// audio frames).
+    pub async fn publish_request(&self, payload: Bytes) -> Result<(), String> {
+        self.client
+            .publish(
+                &self.request_topic,
+                QoS::AtLeastOnce,
+                false,
+                payload.to_vec(),
+            )
+            .await
+            .map_err(|e| format!("mqtt publish: {e}"))
+    }
 }
 
 /// Pumps the MQTT event loop and routes incoming publishes on `response_topic`

@@ -13,7 +13,7 @@ pub struct AudioFrame {
     pub pcm: Bytes,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transcript {
     pub text: String,
     pub is_final: bool,
