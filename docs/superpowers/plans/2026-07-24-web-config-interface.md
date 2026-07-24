@@ -23,7 +23,7 @@
 
 ### Task 1: Secrets remediation (Part 0 of the spec)
 
-The Jeedom API key `JJ5qGwlquxyayFlfqYc5COM9Ee5IQZJpQD3T0O8V6yEwZ9dMAvYSu4JetQJPLn4b` is committed and pushed to the public repo. The user rotates it in Jeedom (out of scope for you); this task removes every tracked occurrence and guards against recurrence. No history rewrite (decided in spec).
+A Jeedom API key (beginning with `JJ5qGwlquxyayFlfqYc5…`) was committed and pushed to the public repo. The user rotates it in Jeedom (out of scope for you); this task removes every tracked occurrence and guards against recurrence. No history rewrite (decided in spec).
 
 **Files:**
 - Modify: `athena.voice.toml` (the `[skills.jeedom]` section, currently lines 51–55)

@@ -43,3 +43,9 @@ lcov.info
 /models/ggml-small.bin
 /models/ggml-medium.bin
 /models/ggml-large*.bin
+
+# Local secrets and databases must never be committed
+*.secrets.toml
+*.db
+*.db-shm
+*.db-wal
