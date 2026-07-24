@@ -35,6 +35,7 @@ async fn spawn_and_shutdown_are_clean() {
             keep_alive_secs: 30,
         },
         factory,
+        None,
     )
     .expect("spawn");
 

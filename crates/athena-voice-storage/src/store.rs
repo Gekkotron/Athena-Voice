@@ -1,8 +1,10 @@
 use async_trait::async_trait;
-use athena_voice_core::event::{Event, Outcome};
+use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 
+use crate::error::StoreError;
 use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
+use crate::tmp::TmpStore;
 
 #[async_trait]
 pub trait Store: Send + Sync + TmpStore {

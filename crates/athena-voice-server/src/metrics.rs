@@ -28,6 +28,8 @@ pub fn record_vad(start: Instant) {
 }
 
 /// Record hotword processing time and result.
+// Staged for the audio-socket path; unused until `start_audio_socket` is implemented.
+#[allow(dead_code)]
 pub fn record_hotword(start: Instant, detected: bool) {
     let ns = start.elapsed().as_nanos() as u64;
     let metrics = METRICS.get_or_init(Metrics::default);
@@ -39,6 +41,7 @@ pub fn record_hotword(start: Instant, detected: bool) {
 }
 
 /// Record ASR processing time and result.
+#[allow(dead_code)]
 pub fn record_asr(start: Instant, success: bool) {
     let ns = start.elapsed().as_nanos() as u64;
     let metrics = METRICS.get_or_init(Metrics::default);
@@ -50,6 +53,7 @@ pub fn record_asr(start: Instant, success: bool) {
 }
 
 /// Record TTS processing time and result.
+#[allow(dead_code)]
 pub fn record_tts(start: Instant, success: bool) {
     let ns = start.elapsed().as_nanos() as u64;
     let metrics = METRICS.get_or_init(Metrics::default);

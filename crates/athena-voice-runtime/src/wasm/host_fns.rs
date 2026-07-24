@@ -16,6 +16,7 @@ use reqwest::Url;
 use rumqttc::{AsyncClient, QoS};
 use tokio::runtime::Handle;
 
+use athena_voice_core::event::{AudioFormat, Event};
 use athena_voice_storage::Store;
 
 use crate::wasm::error::HostFnError;
@@ -180,10 +181,18 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
         .with_namespace("extism:host/user"),
         Function::new(
             "host_config_get",
-            [PTR],
+            [],
             [PTR],
             user_data.clone(),
             host_config_get,
+        )
+        .with_namespace("extism:host/user"),
+        Function::new(
+            "host_local_time",
+            [],
+            [PTR],
+            user_data.clone(),
+            host_local_time,
         )
         .with_namespace("extism:host/user"),
         Function::new(
@@ -244,7 +253,7 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
         .with_namespace("extism:host/user"),
         Function::new(
             "host_tmp_set",
-            [PTR, PTR, ValType::I64],
+            [PTR, PTR, PTR, ValType::I64],
             [],
             user_data.clone(),
             host_tmp_set,
@@ -309,6 +318,26 @@ fn host_config_get(
     Ok(())
 }
 
+/// Serves the host's local wall-clock time as JSON
+/// `{ "epoch_ms": <i64>, "offset_sec": <i32> }`. The WASI guest only sees
+/// UTC, so this is the one place skills can learn the user's timezone.
+fn host_local_time(
+    plugin: &mut CurrentPlugin,
+    _inputs: &[Val],
+    outputs: &mut [Val],
+    _ud: UserData<SkillCtx>,
+) -> Result<(), extism::Error> {
+    let now = chrono::Local::now();
+    let payload = serde_json::json!({
+        "epoch_ms": now.timestamp_millis(),
+        "offset_sec": now.offset().local_minus_utc(),
+    });
+    let bytes = serde_json::to_vec(&payload)?;
+    let handle = plugin.memory_new(bytes.as_slice())?;
+    outputs[0] = plugin.memory_to_val(handle);
+    Ok(())
+}
+
 fn host_state_get(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
@@ -345,13 +374,13 @@ fn host_state_set(
  .block_on(async move {
  store.skill_kv_set(&name, &key, &val).await?;
  if let Some(ttl) = retention_gc_after_sec {
- let now_sec = u64::from_le_bytes(
- val.get(0..8).ok_or_else(|| extism::Error::msg("timestamp must be 8 bytes"))?
- .try_into()?
- );
+ let now_sec = std::time::SystemTime::now()
+ .duration_since(std::time::UNIX_EPOCH)
+ .map_err(|e| extism::Error::msg(e.to_string()))?
+ .as_secs();
  store.skill_kv_gc(&name, now_sec.saturating_sub(ttl)).await?;
  }
- Ok(())
+ Ok::<(), extism::Error>(())
  })
  .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
 
@@ -479,8 +508,9 @@ fn host_play_pcm(
     if event_bus.receiver_count() > 0 {
         tokio.block_on(async move {
             let _ = event_bus.send(Event::AudioChunk {
-                session: uuid::Uuid::new_v4().into(), // FIXME: Use real session
+                session: athena_voice_core::ids::SessionId::new_v4(), // FIXME: Use real session
                 format: AudioFormat::F32le,
+                sample_rate,
                 payload: samples.into_iter().flat_map(|f| f.to_le_bytes().to_vec()).collect(),
             });
         });
@@ -502,43 +532,13 @@ fn host_play_opus(
     if event_bus.receiver_count() > 0 {
         tokio.block_on(async move {
             let _ = event_bus.send(Event::AudioChunk {
-                session: uuid::Uuid::new_v4().into(), // FIXME: Use real session
+                session: athena_voice_core::ids::SessionId::new_v4(), // FIXME: Use real session
                 format: AudioFormat::Opus,
+                sample_rate: 48_000,
                 payload: frames,
             });
         });
     }
-    Ok(())
-}
-
-fn host_tmp_set(
-    plugin: &mut CurrentPlugin,
-    inputs: &[Val],
-    _outputs: &mut [Val],
-    ud: UserData<SkillCtx>,
-) -> Result<(), extism::Error> {
-    let skill: String = plugin.memory_get_val(&inputs[0])?;
-    let key: String = plugin.memory_get_val(&inputs[1])?;
-    let val: Vec<u8> = plugin.memory_get_val(&inputs[2])?;
-    let expires_sec: u64 = plugin.memory_get_val(&inputs[3])?;
-    
-    let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
-    store.tmp_set(&skill, &key, val, expires_sec).map_err(extism::Error::msg)
-}
-
-fn host_tmp_get(
-    plugin: &mut CurrentPlugin,
-    inputs: &[Val],
-    outputs: &mut [Val],
-    ud: UserData<SkillCtx>,
-) -> Result<(), extism::Error> {
-    let skill: String = plugin.memory_get_val(&inputs[0])?;
-    let key: String = plugin.memory_get_val(&inputs[1])?;
-    
-    let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
-    let val = store.tmp_get(&skill, &key).map_err(extism::Error::msg)?;
-    let handle = plugin.memory_new(val.unwrap_or_default())?;
-    outputs[0] = plugin.memory_to_val(handle);
     Ok(())
 }
 
@@ -749,6 +749,7 @@ async fn make_ctx(name: &str) -> SkillCtx {
         vec![
             "host_log",
             "host_config_get",
+            "host_local_time",
             "host_state_get",
             "host_state_set",
             "host_mqtt_publish",

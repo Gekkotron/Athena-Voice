@@ -1,6 +1,8 @@
 //! Audio resampling utilities.
 
 /// Resample audio from `from_rate` to `to_rate`.
+// Staged for the audio-socket path; unused until `start_audio_socket` is implemented.
+#[allow(dead_code)]
 pub fn resample_audio(audio: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
     if from_rate == to_rate {
         return audio.to_vec();

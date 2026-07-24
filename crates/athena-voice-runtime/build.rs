@@ -23,6 +23,15 @@ fn main() {
         .expect("runtime crate lives at <root>/crates/athena-voice-runtime");
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR set by cargo"));
 
+    // Every skill links the SDK as a path dep — a guest-ABI change there must
+    // re-trigger the wasm rebuilds below.
+    println!(
+        "cargo:rerun-if-changed={}",
+        project_root
+            .join("crates/athena-voice-skill-sdk/src")
+            .display()
+    );
+
     build_skill_wasm(
         project_root,
         &out_dir,

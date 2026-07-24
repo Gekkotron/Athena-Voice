@@ -103,7 +103,7 @@ fn resolve_city(intent: &Intent, ctx: &HostCtx) -> String {
     if let Some(s) = slot {
         return s.to_string();
     }
-    ctx.config_get("default_city")
+    ctx.config_get_toml("default_city")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| HARD_DEFAULT_CITY.to_string())
 }
@@ -125,7 +125,7 @@ fn resolve_geocoding(ctx: &HostCtx, city: &str) -> Result<Option<Geo>, String> {
     }
 
     let base = ctx
-        .config_get("geocoding_base_url")
+        .config_get_toml("geocoding_base_url")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| GEOCODING_DEFAULT_BASE.to_string());
     let base = base.trim_end_matches('/');
@@ -246,7 +246,7 @@ fn weather_tomorrow(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillErro
 
 fn fetch_forecast(ctx: &HostCtx, geo: &Geo) -> Result<serde_json::Value, String> {
     let base = ctx
-        .config_get("forecast_base_url")
+        .config_get_toml("forecast_base_url")
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| FORECAST_DEFAULT_BASE.to_string());
     let base = base.trim_end_matches('/');

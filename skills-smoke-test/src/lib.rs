@@ -16,17 +16,27 @@ impl Skill for SmokeSkill {
     }
 
     fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
+        if locale != "fr" {
+            return Vec::new();
+        }
         let mut rules = time::patterns();
         rules.extend(audio::patterns());
         rules
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
-        match intent.name.as_str() {
-            "time.query" => time::handle(intent),
-            "audio.play" => audio::handle(intent),
-            _ => Err(SkillError::Custom(format!("unknown intent {}", intent.name))),
+        let name = intent.name.clone();
+        let result = match name.as_str() {
+            "time.query" => time::handle(intent, ctx),
+            "audio.play" | "audio.volume" => audio::handle(intent),
+            _ => Err(SkillError::Custom(format!("unknown intent {name}"))),
+        };
+        if result.is_ok() {
+            // Record the last handled intent so retention tests can observe
+            // a state write with the automatic timestamp prefix.
+            ctx.state_set("last_intent", name.as_bytes())?;
         }
+        result
     }
 }
 

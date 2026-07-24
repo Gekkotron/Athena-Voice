@@ -13,6 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 strsim = { workspace = true }
 thiserror = { workspace = true }
+ini = "1.3"
 
 # Guest-only: the Extism PDK is used to import the host functions declared in
 # `crates/athena-voice-runtime/src/wasm/host_fns.rs`. Skills targeting

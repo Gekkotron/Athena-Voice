@@ -1,23 +1,28 @@
 [workspace]
 resolver = "2"
 members = [
-"crates/athena-voice-core",
-"crates/athena-voice-storage",
-"crates/athena-voice-providers",
-"crates/athena-voice-runtime",
-"crates/athena-voice-cli",
-"crates/athena-voice-skill-sdk",
-"crates/athena-voice-server",
-"crates/athena-voice-client", "skills-audio-test", "skills-tmp-test", "test-minimal",
+    "crates/athena-voice-core",
+    "crates/athena-voice-storage",
+    "crates/athena-voice-providers",
+    "crates/athena-voice-runtime",
+    "crates/athena-voice-cli",
+    "crates/athena-voice-skill-sdk",
+    "crates/athena-voice-server",
+    "crates/athena-voice-client",
 ]
 exclude = [
-    # skills-smoke-test and skills-timer compile to wasm32-wasip1 and can't
-    # share the workspace's native target. Built by CI via a dedicated
-    # cargo build --target invocation.
+    # The skills-* crates compile to wasm32-wasip1 and can't share the
+    # workspace's native target. Each has a build.sh producing
+    # skills/<name>.wasm; the runtime's build.rs also builds the ones its
+    # integration tests need.
     "skills-smoke-test",
     "skills-timer",
     "skills-home",
     "skills-weather",
+    "skills-audio-test",
+    "skills-tmp-test",
+    # Scratch crate, not part of the product build.
+    "test-minimal",
 ]
 
 [workspace.package]

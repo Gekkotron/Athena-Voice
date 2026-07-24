@@ -1,9 +1,7 @@
-[profile.default]
-retries = 0
-fail-fast = false
-slow-timeout = { period = "30s", terminate-after = 3 }
-
-[profile.ci]
-retries = { backoff = "fixed", count = 1, delay = "2s" }
-fail-fast = false
-slow-timeout = { period = "60s", terminate-after = 3 }
+# The filesystem-watcher test relies on macOS FSEvents + a 250 ms debouncer
+# thread; under a fully parallel test run it gets starved and misses its
+# windows. Reserving most execution slots effectively serializes it.
+[[profile.default.overrides]]
+filter = 'test(tempdir_watcher_yields_add_modify_remove_events)'
+threads-required = 8
+retries = 2

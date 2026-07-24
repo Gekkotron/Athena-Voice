@@ -1,6 +1,8 @@
 //! Test skill for temporary storage.
 use athena_voice_skill_sdk::host::HostCtx;
-use athena_voice_skill_sdk::{Intent, PatternRule, Skill, SkillError, SkillResponse};
+use athena_voice_skill_sdk::{
+    Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec,
+};
 use extism_pdk::{FnResult, plugin_fn};
 
 struct TmpTestSkill;
@@ -10,25 +12,42 @@ impl Skill for TmpTestSkill {
         "tmp-test"
     }
 
-    fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
-        vec![PatternRule::new(
-            "tmp.test",
-            vec!["test tmp {key} {value}"],
-            locale.to_string(),
-        )
-        .with_slot("key", athena_voice_skill_sdk::SlotKind::String)
-        .with_slot("value", athena_voice_skill_sdk::SlotKind::String)]
+    fn pattern_rules(&self, _locale: &str) -> Vec<PatternRule> {
+        vec![PatternRule {
+            intent: "tmp.test".into(),
+            phrases: vec!["test tmp {key} {value}".into()],
+            slots: vec![
+                SlotSpec {
+                    name: "key".into(),
+                    kind: SlotKind::String,
+                },
+                SlotSpec {
+                    name: "value".into(),
+                    kind: SlotKind::String,
+                },
+            ],
+        }]
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
-        let key = intent.slots.get("key").and_then(|s| s.as_string()).unwrap_or_default();
-        let val = intent.slots.get("value").and_then(|s| s.as_string()).unwrap_or_default();
-        
-        // Test: set → get → verify → expire
-        ctx.tmp_set(&key, val.as_bytes(), 2)?; // Expire in 2 sec
+        let key = intent
+            .slots
+            .get("key")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let val = intent
+            .slots
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        // Test: set → get → verify (2s TTL).
+        ctx.tmp_set(&key, val.as_bytes(), 2)?;
         let stored = ctx.tmp_get(&key)?;
-        
-        Ok(if stored == Some(val.as_bytes().to_vec()) {
+
+        Ok(if stored.as_deref() == Some(val.as_bytes()) {
             SkillResponse::speak("found")
         } else {
             SkillResponse::speak("not found")

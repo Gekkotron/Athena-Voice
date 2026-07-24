@@ -8,8 +8,13 @@ use tract_onnx::prelude::*;
 #[derive(Debug)]
 pub struct PiperTts {
     model: RunnableModel<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>,
+    // The remaining fields feed the real Piper tokenizer, which is still a
+    // TODO in `tokenize`.
+    #[allow(dead_code)]
     voice: String,
+    #[allow(dead_code)]
     sample_rate: u32,
+    #[allow(dead_code)]
     tokenizer: serde_json::Value,
 }
 
@@ -20,7 +25,7 @@ impl PiperTts {
         let json_path = model_dir.join(model_name).with_extension("onnx.json");
 
         // Load ONNX model.
-        let mut model = onnx()
+        let model = onnx()
             .model_for_path(model_path)?
             .into_typed()?
             .into_optimized()?
@@ -49,7 +54,7 @@ impl PiperTts {
         let input = tract_ndarray::Array2::from_shape_vec((1, tokens.len()), tokens)?.into_tensor();
 
         // Run inference.
-        let result = self.model.run(tvec![input])?;
+        let result = self.model.run(tvec![input.into()])?;
         let output = result[0].to_array_view::<f32>()?;
 
         // Convert to i16 PCM.

@@ -11,6 +11,7 @@ description = "Persistence layer for Athena-Voice (SQLite default, Postgres feat
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true }
+dashmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

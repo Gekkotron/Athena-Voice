@@ -38,6 +38,9 @@ async fn migrations_create_expected_tables() {
     .unwrap();
 
     let names: Vec<String> = rows.iter().map(|r| r.get::<String, _>(0)).collect();
+    // NB: `skill_tmp` (migration 0003) is currently unused — tmp storage is
+    // in-memory by design (transient across restarts) — but the migration
+    // stays because it is already applied to existing databases.
     assert_eq!(
         names,
         vec![
@@ -47,6 +50,7 @@ async fn migrations_create_expected_tables() {
             "scheduled_events".to_string(),
             "sessions".to_string(),
             "skill_kv".to_string(),
+            "skill_tmp".to_string(),
         ]
     );
 }

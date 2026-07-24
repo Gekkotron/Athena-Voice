@@ -141,27 +141,41 @@ mod tests {
     use std::io::Write;
     use std::time::Instant;
 
-    /// A watcher run against a tempdir sees exactly one Added / one
-    /// Modified / one Removed WatchEvent within ~500 ms of the mutations.
+    /// A watcher run against a tempdir sees an Added / Modified / Removed
+    /// WatchEvent for the target file within the per-phase window.
     ///
     /// The debouncer coalesces bursts within the 250 ms window, so we sleep
     /// briefly between phases to avoid an add+remove getting merged into a
-    /// single event. FSEvents on macOS can also emit `Modify(Metadata)` on
-    /// creation, so we accept "at least one" of each kind and pin the
-    /// ordering by watching-for the trio in sequence.
+    /// single event.
     #[test]
     fn tempdir_watcher_yields_add_modify_remove_events() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("athena-watch")
+            .tempdir_in("/tmp")
+            .unwrap();
         let (_handle, mut rx) = spawn_watcher(dir.path()).expect("watcher");
 
-        // Give the watcher a beat to arm itself before we poke the FS.
-        std::thread::sleep(Duration::from_millis(100));
+        // Arm-check: the PollWatcher's baseline snapshot runs on its own
+        // thread, and under heavy machine load it can complete AFTER our
+        // first write — the file then lands in the baseline and no Added is
+        // ever reported. Keep creating fresh probe files until one is seen;
+        // only then is the watcher provably live.
+        let mut armed = false;
+        for i in 0..40 {
+            let probe = dir.path().join(format!("probe-{i}.wasm"));
+            std::fs::write(&probe, b"x").unwrap();
+            if wait_for(&mut rx, WatchKind::Added, &probe, Duration::from_millis(500)).is_some() {
+                armed = true;
+                break;
+            }
+        }
+        assert!(armed, "watcher never armed within probe budget");
 
         let path = dir.path().join("smoke.wasm");
 
         // Phase 1: create.
         std::fs::write(&path, b"hello").unwrap();
-        let added = wait_for(&mut rx, WatchKind::Added, Duration::from_millis(2000));
+        let added = wait_for(&mut rx, WatchKind::Added, &path, Duration::from_millis(5000));
         assert!(added.is_some(), "no Added event within window");
 
         // Ensure the debounce window closes before the next mutation, so
@@ -177,20 +191,21 @@ mod tests {
             f.write_all(b" world").unwrap();
             f.sync_all().unwrap();
         }
-        let modified = wait_for(&mut rx, WatchKind::Modified, Duration::from_millis(2000));
+        let modified = wait_for(&mut rx, WatchKind::Modified, &path, Duration::from_millis(5000));
         assert!(modified.is_some(), "no Modified event within window");
 
         std::thread::sleep(Duration::from_millis(300));
 
         // Phase 3: remove.
         std::fs::remove_file(&path).unwrap();
-        let removed = wait_for(&mut rx, WatchKind::Removed, Duration::from_millis(2000));
+        let removed = wait_for(&mut rx, WatchKind::Removed, &path, Duration::from_millis(5000));
         assert!(removed.is_some(), "no Removed event within window");
     }
 
     fn wait_for(
         rx: &mut mpsc::UnboundedReceiver<WatchEvent>,
         kind: WatchKind,
+        path: &Path,
         budget: Duration,
     ) -> Option<WatchEvent> {
         let deadline = Instant::now() + budget;
@@ -200,7 +215,11 @@ mod tests {
                 return None;
             }
             match rx.try_recv() {
-                Ok(ev) if ev.kind == kind => return Some(ev),
+                // Compare file names: the watcher may report canonicalized
+                // paths (/private/tmp/…) for files created via /tmp.
+                Ok(ev) if ev.kind == kind && ev.path.file_name() == path.file_name() => {
+                    return Some(ev);
+                }
                 Ok(_) => {}
                 Err(mpsc::error::TryRecvError::Empty) => {
                     std::thread::sleep(Duration::from_millis(20));

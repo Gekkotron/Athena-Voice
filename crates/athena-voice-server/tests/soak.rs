@@ -1,81 +1,47 @@
-//! Integration test: 24-hour soak test for the server.
+//! Server-side audio front-end tests.
+//!
+//! The original 24-hour soak concept (stream WAV clips at the audio socket
+//! and assert hotword → transcript round-trips) needs the audio socket to be
+//! implemented first (`socket::start_audio_socket` is still a stub). Until
+//! then this file covers the pieces that do exist: the VAD detector and
+//! voice segmentation.
 
-use std::path::PathBuf;
-use std::time::Duration;
+use athena_voice_server::vad::{VadDetector, split_voice_segments};
+use bytes::BytesMut;
 
-use athena_voice_server::Config;
-use tokio::net::UnixStream;
-use tokio::time::sleep;
-use tracing_subscriber::EnvFilter;
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_soak_24h() {
-    // Initialize logging.
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
-
-    // Setup tempdir for sockets and models.
-    let temp_dir = tempfile::tempdir().unwrap();
-    let model_dir = temp_dir.path().join("models");
-    std::fs::create_dir_all(&model_dir).unwrap();
-
-    // Copy fixture models to tempdir.
-    // TODO: Add real fixture models.
-
-    let config = Config {
-        model_dir,
-        audio_socket: temp_dir.path().join("audio.sock"),
-        event_socket: temp_dir.path().join("events.sock"),
-        vad_aggressiveness: 2,
-        asr_model: "ggml-small-french-q5_1".to_string(),
-        tts_model: "piper-fr".to_string(),
-        tts_voice: "bl_lightspeed".to_string(),
-        tts_sample_rate: 22050,
-    };
-
-    // Start the server.
-    let runtime = athena_voice_server::Runtime::new(
-        config.clone(),
-        Arc::new(
-            athena_voice_storage::SqliteStore::in_memory()
-                .await
-                .unwrap(),
-        ),
-    )
-    .await
-    .unwrap();
-    tokio::spawn(async move {
-        runtime.run().await.unwrap();
-    });
-
-    // Wait for sockets to be ready.
-    sleep(Duration::from_secs(1)).await;
-
-    // Connect a fake client.
-    let mut audio_stream = UnixStream::connect(&config.audio_socket).await.unwrap();
-    let mut event_stream = UnixStream::connect(&config.event_socket).await.unwrap();
-
-    // Simulate 24 hours of audio clips with "Athéna" every 5 minutes.
-    for i in 0..(24 * 12) {
-        // 12 chunks per hour
-        // Load a real audio clip containing "Athéna".
-        let clip_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/athena_clip_48khz_mono_10s.wav");
-        let clip_data = std::fs::read(clip_path).expect("Failed to load audio clip");
-
-        // Send to server.
-        audio_stream.write_all(&clip_data).await.unwrap();
-
-        // Check for transcript in event stream.
-        let mut buf = [0; 1024];
-        if let Ok(n) = event_stream.try_read(&mut buf) {
-            let transcript = String::from_utf8_lossy(&buf[..n]);
-            tracing::info!("Transcript: {}", transcript);
-            assert!(transcript.contains("Athéna"), "Hotword not detected");
-            assert!(transcript.contains("final": true), "Not a final transcript");
-        }
-
-        sleep(Duration::from_secs(300)).await; // 5 minutes
+fn pcm_bytes(samples: &[i16]) -> BytesMut {
+    let mut buf = BytesMut::with_capacity(samples.len() * 2);
+    for s in samples {
+        buf.extend_from_slice(&s.to_le_bytes());
     }
+    buf
+}
+
+#[test]
+fn silence_yields_no_voice_segments() {
+    let vad = VadDetector::new(2).expect("vad");
+    // 100 ms of silence at 48 kHz mono.
+    let silence = vec![0i16; 4_800];
+    let segments = split_voice_segments(&vad, pcm_bytes(&silence));
+    assert!(segments.is_empty(), "silence must not produce segments");
+}
+
+#[test]
+fn loud_signal_yields_voice_segments() {
+    let vad = VadDetector::new(2).expect("vad");
+    // 100 ms square wave well above the energy threshold.
+    let loud: Vec<i16> = (0..4_800)
+        .map(|i| if i % 2 == 0 { 12_000 } else { -12_000 })
+        .collect();
+    let segments = split_voice_segments(&vad, pcm_bytes(&loud));
+    assert!(!segments.is_empty(), "loud signal must produce segments");
+    let total: usize = segments.iter().map(BytesMut::len).sum();
+    assert!(total > 0);
+}
+
+#[test]
+fn short_buffer_is_not_voice() {
+    let vad = VadDetector::new(2).expect("vad");
+    // Shorter than one 10 ms frame at 48 kHz.
+    assert!(!vad.process(&[10_000i16; 100]));
 }

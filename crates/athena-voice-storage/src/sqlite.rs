@@ -11,11 +11,13 @@ use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 use crate::error::StoreError;
 use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
 use crate::store::Store;
+use crate::tmp::{MemoryTmpStore, TmpStore};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 pub struct SqliteStore {
     pool: sqlx::SqlitePool,
+    tmp_store: MemoryTmpStore,
 }
 
 impl SqliteStore {
@@ -35,7 +37,10 @@ impl SqliteStore {
 
         MIGRATOR.run(&pool).await?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            tmp_store: MemoryTmpStore::new(),
+        })
     }
 
     #[must_use]
@@ -285,8 +290,10 @@ impl Store for SqliteStore {
 
     async fn skill_kv_set(&self, skill: &str, key: &str, value: &[u8]) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO skill_kv (skill, key, value) VALUES (?1, ?2, ?3) \
-             ON CONFLICT(skill, key) DO UPDATE SET value = excluded.value",
+            "INSERT INTO skill_kv (skill, key, timestamp_sec, value) \
+             VALUES (?1, ?2, strftime('%s', 'now'), ?3) \
+             ON CONFLICT(skill, key) DO UPDATE \
+             SET value = excluded.value, timestamp_sec = excluded.timestamp_sec",
         )
         .bind(skill)
         .bind(key)
@@ -297,63 +304,12 @@ impl Store for SqliteStore {
     }
 
     async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError> {
-        sqlx::query(
-            "DELETE FROM skill_kv
-             WHERE skill = ?1
-               AND LENGTH(value) >= 8
-               AND CAST(SUBSTR(value, 1, 8) AS BLOB) <= ?2",
-        )
+        sqlx::query("DELETE FROM skill_kv WHERE skill = ?1 AND timestamp_sec <= ?2")
         .bind(skill)
-        .bind(now_sec.to_le_bytes().to_vec())
+        .bind(now_sec as i64)
         .execute(&self.pool)
         .await?;
         Ok::<(), StoreError>(())
-    }
-
-    fn tmp_set(&self, skill: &str, key: &str, val: Vec<u8>, expires_sec: u64) -> Result<(), StoreError> {
-        let expires_at = self.now_sec() + expires_sec;
-        sqlx::query(
-            "INSERT INTO skill_tmp (skill, key, value, expires_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(skill, key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
-        )
-        .bind(skill)
-        .bind(key)
-        .bind(val)
-        .bind(expires_at as i64)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    fn tmp_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
-        let now = self.now_sec();
-        let row = sqlx::query_as(
-            "SELECT value FROM skill_tmp WHERE skill = ?1 AND key = ?2 AND expires_at > ?3",
-        )
-        .bind(skill)
-        .bind(key)
-        .bind(now as i64)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.map(|r: (Vec<u8>,)| r.0))
-    }
-
-    fn tmp_gc(&self, now_sec: u64) {
-        let pool = self.pool.clone();
-        tokio::spawn(async move {
-            let _ = sqlx::query("DELETE FROM skill_tmp WHERE expires_at <= ?1")
-                .bind(now_sec as i64)
-                .execute(&pool)
-                .await;
-        });
-    }
-
-    fn now_sec(&self) -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
     }
 
     async fn provision_satellite(
@@ -395,6 +351,29 @@ impl Store for SqliteStore {
                 .transpose()
                 .map_err(decode_err)?,
         }))
+    }
+}
+
+// Tmp storage is documented as transient across restarts (see `crate::tmp`),
+// so the SQLite store delegates to the in-memory implementation instead of
+// persisting a `skill_tmp` table.
+impl TmpStore for SqliteStore {
+    fn tmp_set(
+        &self,
+        skill: &str,
+        key: &str,
+        val: Vec<u8>,
+        expires_sec: u64,
+    ) -> Result<(), StoreError> {
+        self.tmp_store.tmp_set(skill, key, val, expires_sec)
+    }
+
+    fn tmp_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.tmp_store.tmp_get(skill, key)
+    }
+
+    fn tmp_gc(&self, now_sec: u64) {
+        self.tmp_store.tmp_gc(now_sec);
     }
 }
 

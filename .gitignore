@@ -4,6 +4,12 @@
 /skills-timer/target
 /skills-home/target
 /skills-weather/target
+/skills-audio-test/target
+/skills-tmp-test/target
+/test-minimal/target
+
+# Built wasm skills (produced by skills-*/build.sh and build.rs)
+/skills/
 Cargo.lock.bak
 **/*.rs.bk
 
@@ -19,7 +25,6 @@ Thumbs.db
 # Env / secrets
 .env
 .env.local
-athena.local.toml
 
 # Local databases (default config points here)
 athena.db

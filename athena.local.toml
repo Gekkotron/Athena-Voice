@@ -1,0 +1,38 @@
+# Local test config — run the whole stack on one machine:
+#
+#   1. brew services start mosquitto        (or: mosquitto -p 1883)
+#   2. ./skills-weather/build.sh            (drops skills/weather.wasm)
+#   3. cargo run -p athena-voice-cli -- serve --config athena.local.toml
+#   4. cargo run -p athena-voice-client -- --text "météo à Strasbourg"
+#
+# Providers are the deterministic fakes: STT is bypassed by the client's
+# text injection, and the fake TTS streams the answer's words back as
+# chunks, which the client prints as the spoken sentence.
+
+locales = ["fr"]
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[storage]
+database_url = "sqlite:///tmp/athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice-local"
+
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"
+
+[skills]
+dir = "./skills"
+
+[skills.weather]
+# open-meteo is free and needs no API key; both hosts must be allowlisted
+# for the skill's host_http_get_json calls.
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+config = { default_city = "Strasbourg" }

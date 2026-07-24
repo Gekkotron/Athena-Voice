@@ -32,7 +32,7 @@ async fn set_upserts() {
         .await
         .unwrap();
     let v = s.skill_kv_get("weather", "last_city").await.unwrap();
-    assert_eq!(v.as_deref().map(|v| &v[8..]), Some(b"Lyon".as_slice()));
+    assert_eq!(v.as_deref(), Some(b"Lyon".as_slice()));
 }
 
 #[tokio::test]
@@ -59,12 +59,10 @@ async fn skill_kv_gc_deletes_expired_keys() {
         .unwrap()
         .as_secs();
     
-    // Set keys with timestamps (mimicking what skill_kv_set now does)
-    // The value column now contains the 8-byte timestamp followed by the actual data
-    let mut old_payload = (now_sec - 10).to_le_bytes().to_vec();
-    old_payload.extend_from_slice(b"old");
-    let mut fresh_payload = (now_sec - 1).to_le_bytes().to_vec();
-    fresh_payload.extend_from_slice(b"fresh");
+    // Insert rows with explicit ages; the retention timestamp lives in the
+    // `timestamp_sec` column and the value stays verbatim.
+    let old_payload = b"old".to_vec();
+    let fresh_payload = b"fresh".to_vec();
     
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("test")
@@ -102,9 +100,8 @@ async fn skill_kv_gc_ignores_other_skills() {
         .unwrap()
         .as_secs();
     
-    // Set keys for different skills (with timestamp prefix)
-    let mut payload = (now_sec - 10).to_le_bytes().to_vec();
-    payload.extend_from_slice(b"data");
+    // Same-aged key under two skills; GC must only touch the named skill.
+    let payload = b"data".to_vec();
     
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("test")
@@ -135,7 +132,7 @@ async fn skill_kv_gc_ignores_other_skills() {
 }
 
 #[tokio::test]
-async fn state_set_prepends_timestamp_automatically() {
+async fn skill_kv_set_records_timestamp_column() {
     let s = store().await;
     let now_sec = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -155,7 +152,7 @@ async fn state_set_prepends_timestamp_automatically() {
     
     assert!(row.0 >= now_sec as i64 - 1); // Allow 1s tolerance
     
-    // Verify the value can be retrieved correctly (skipping timestamp prefix)
+    // Verify the value round-trips verbatim.
     let retrieved = s.skill_kv_get("test", "key").await.unwrap();
     assert_eq!(retrieved.as_deref(), Some(b"value".as_slice()));
 }

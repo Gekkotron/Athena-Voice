@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use athena_voice_providers::ProviderFactory;
-use athena_voice_runtime::Runtime;
 use athena_voice_runtime::mqtt::MqttConfig as RuntimeMqttConfig;
-use athena_voice_storage::SqliteStore;
+use athena_voice_runtime::wasm::registry::SkillConfig as RuntimeSkillConfig;
+use athena_voice_runtime::{Runtime, SkillsInit};
+use athena_voice_storage::{SqliteStore, Store};
 
 use crate::cli::ServeArgs;
 use crate::{config, logging};
@@ -16,7 +17,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         Err(e) => anyhow::bail!("logging init failed: {e}"),
     }
 
-    let _store = SqliteStore::open(&cfg.storage.database_url).await?;
+    let store: Arc<dyn Store> = Arc::new(SqliteStore::open(&cfg.storage.database_url).await?);
 
     tracing::info!(
         host = %cfg.server.host,
@@ -42,12 +43,42 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     let runtime_mqtt = RuntimeMqttConfig {
         host: cfg.mqtt.host.clone(),
         port: cfg.mqtt.port,
-        client_id: cfg.mqtt.client_id.clone(),
+        // Suffix with the pid: MQTT brokers disconnect duplicate client ids
+        // in an endless mutual-kick loop, so two serve instances (or a
+        // restart racing its predecessor) must never share one.
+        client_id: format!("{}-{}", cfg.mqtt.client_id, std::process::id()),
         username: cfg.mqtt.username.clone(),
         password: cfg.mqtt.password.clone(),
         keep_alive_secs: cfg.mqtt.keep_alive_secs,
     };
-    let runtime = Runtime::spawn(runtime_mqtt, factory)?;
+    let skills = cfg.skills.dir.clone().map(|dir| SkillsInit {
+        dir,
+        store: store.clone(),
+        locales: cfg
+            .locales
+            .iter()
+            .map(|l| l.as_str().to_string())
+            .collect(),
+        per_skill: cfg
+            .skills
+            .per_skill
+            .iter()
+            .map(|(name, c)| {
+                (
+                    name.clone(),
+                    RuntimeSkillConfig {
+                        http_allowlist: c.http_allowlist.clone(),
+                        mqtt_publish_allowlist: c.mqtt_publish_allowlist.clone(),
+                        config: c.config.clone(),
+                        retention_gc_after_sec: c.retention.gc_after_sec,
+                        config_file: c.config_file.clone(),
+                    },
+                )
+            })
+            .collect(),
+    });
+
+    let runtime = Runtime::spawn(runtime_mqtt, factory, skills)?;
     tracing::info!("runtime spawned; awaiting SIGINT");
 
     tokio::signal::ctrl_c().await.ok();

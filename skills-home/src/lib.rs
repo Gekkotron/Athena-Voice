@@ -35,7 +35,7 @@ static ENTITIES: OnceCell<Vec<Entity>> = OnceCell::new();
 fn entities(ctx: &HostCtx) -> &'static [Entity] {
     ENTITIES
         .get_or_init(|| {
-            let raw = ctx.config_get("entities").unwrap_or_default();
+            let raw = ctx.config_get_toml("entities").unwrap_or_default();
             if raw.is_empty() {
                 return Vec::new();
             }

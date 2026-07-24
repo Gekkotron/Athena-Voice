@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use athena_voice_core::event::{BargeInReason, Event, LlmFallbackReason};
+use athena_voice_core::event::{AudioFormat, BargeInReason, Event, LlmFallbackReason};
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::types::Transcript;
 use athena_voice_skill_sdk::SkillResponse;
@@ -162,10 +162,8 @@ pub fn spawn_router(
                                     let intent = m.intent.clone();
                                     let this_epoch = epoch;
 
-                                    let _ = deps.event_tx.send(Event::SkillInvoked {
-                                        session: deps.session,
-                                        skill: skill.clone(),
-                                    });
+                                    // NB: the dispatcher emits `SkillInvoked`
+                                    // itself right before entering the plugin.
 
                                     tokio::spawn(async move {
                                         let result = tokio::select! {
@@ -206,6 +204,34 @@ pub fn spawn_router(
                                     session: deps.session,
                                     skill: m.skill.clone(),
                                 });
+
+                                // A matched intent with unfilled slots can't be
+                                // dispatched — hand the LLM a prompt that elicits
+                                // the missing values instead of the raw text.
+                                let missing_slots = m.intent.slots.iter()
+                                    .filter(|(_, v)| v.is_null())
+                                    .map(|(k, _)| k.clone())
+                                    .collect::<Vec<_>>();
+                                if !missing_slots.is_empty() {
+                                    let _ = deps.event_tx.send(Event::LlmFallback {
+                                        session: deps.session,
+                                        reason: LlmFallbackReason::MissingSlots,
+                                        slots: missing_slots.clone(),
+                                    });
+                                    let prompt = format!(
+                                        "The user said \"{}\". The matched intent {} \
+                                         needs the value for slots {}. Ask a short \
+                                         follow-up question to obtain it.",
+                                        t.text,
+                                        m.intent.name,
+                                        missing_slots.join(", "),
+                                    );
+                                    if deps.llm_tx.send(prompt).await.is_err() {
+                                        break;
+                                    }
+                                    prior_work_in_flight = true;
+                                    continue;
+                                }
                             }
                             let _ = deps.event_tx.send(Event::LlmFallback {
                 session: deps.session,
@@ -275,6 +301,36 @@ async fn handle_outcome(
             *prior_work_in_flight = true;
         }
         Ok(SkillResponse::Empty) => {}
+        Ok(SkillResponse::SampledPcm {
+            sample_rate,
+            samples,
+        }) => {
+            let payload = samples
+                .iter()
+                .flat_map(|s| s.to_le_bytes())
+                .collect::<Vec<u8>>();
+            let _ = deps.event_tx.send(Event::AudioChunk {
+                session: deps.session,
+                format: AudioFormat::F32le,
+                sample_rate,
+                payload,
+            });
+        }
+        Ok(SkillResponse::SampledOpus { opus_frames }) => {
+            let _ = deps.event_tx.send(Event::AudioChunk {
+                session: deps.session,
+                format: AudioFormat::Opus,
+                sample_rate: 48_000,
+                payload: opus_frames,
+            });
+        }
+        Ok(SkillResponse::Volume { level }) => {
+            // The audio sink (feature `audio`) applies this to playback.
+            let _ = deps.event_tx.send(Event::VolumeChanged {
+                session: deps.session,
+                level,
+            });
+        }
         Err(err) => {
             warn!(skill = %skill, error = %err, "skill dispatch failed");
         }

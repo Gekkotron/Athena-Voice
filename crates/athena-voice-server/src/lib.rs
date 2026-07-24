@@ -8,16 +8,14 @@ pub use runtime::Runtime;
 
 use std::sync::Arc;
 
-use athena_voice_core::event::Event;
-use athena_voice_storage::Store;
 
 mod asr;
 mod hotword;
 mod metrics;
 mod resample;
 mod socket;
-mod tts;
-mod vad;
+pub mod tts;
+pub mod vad;
 
 impl Runtime {
     /// Start the server.

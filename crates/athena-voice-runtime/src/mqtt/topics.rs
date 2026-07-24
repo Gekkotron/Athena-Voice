@@ -36,12 +36,16 @@ pub fn event_topic(kind: &str) -> String {
 pub enum ParsedTopic {
     Start { sat: SatelliteId, sid: SessionId },
     Audio { sat: SatelliteId, sid: SessionId },
+    /// Raw UTF-8 utterance injected as a final transcript, bypassing STT.
+    /// Lets text-only satellites (and humans testing with `mosquitto_pub`)
+    /// drive the intent pipeline without sending audio.
+    Text { sat: SatelliteId, sid: SessionId },
     End { sat: SatelliteId, sid: SessionId },
 }
 
 #[must_use]
 pub fn parse_satellite_topic(topic: &str) -> Option<ParsedTopic> {
-    // athena/sat/<sat_id>/session/<sid>/{start|audio|end}
+    // athena/sat/<sat_id>/session/<sid>/{start|audio|text|end}
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() != 6 || parts[0] != ROOT || parts[1] != "sat" || parts[3] != "session" {
         return None;
@@ -51,6 +55,7 @@ pub fn parse_satellite_topic(topic: &str) -> Option<ParsedTopic> {
     match parts[5] {
         "start" => Some(ParsedTopic::Start { sat, sid }),
         "audio" => Some(ParsedTopic::Audio { sat, sid }),
+        "text" => Some(ParsedTopic::Text { sat, sid }),
         "end" => Some(ParsedTopic::End { sat, sid }),
         _ => None,
     }
@@ -67,6 +72,16 @@ mod tests {
     #[test]
     fn wildcard_matches_spec() {
         assert_eq!(sat_wildcard(), "athena/sat/+/session/#");
+    }
+
+    #[test]
+    fn text_topic_parses() {
+        let sid = SessionId::new_v4();
+        let topic = format!("athena/sat/phone-01/session/{sid}/text");
+        assert_eq!(
+            parse_satellite_topic(&topic),
+            Some(ParsedTopic::Text { sat: sat(), sid })
+        );
     }
 
     #[test]

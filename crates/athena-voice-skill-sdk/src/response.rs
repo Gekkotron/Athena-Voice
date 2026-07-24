@@ -20,7 +20,10 @@ pub enum SkillResponse {
         opus_frames: Vec<u8>,
     },
     /// Adjust the playback volume (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
-    Volume(f32),
+    ///
+    /// Struct variant on purpose: serde's internally-tagged enums cannot
+    /// serialize a newtype variant holding a bare float.
+    Volume { level: f32 },
 }
 
 impl SkillResponse {
@@ -48,7 +51,9 @@ impl SkillResponse {
     }
     #[must_use]
     pub fn volume(level: f32) -> Self {
-        Self::Volume(level.clamp(0.0, 1.5))
+        Self::Volume {
+            level: level.clamp(0.0, 1.5),
+        }
     }
 }
 
@@ -60,6 +65,10 @@ pub enum SkillError {
     MqttFailed(String),
     #[error("state error: {0}")]
     State(String),
+    #[error("config error: {0}")]
+    Config(String),
+    #[error("host function error: {0}")]
+    HostFn(String),
     #[error("custom: {0}")]
     Custom(String),
 }
@@ -119,9 +128,11 @@ fn volume_variant_serde() {
     assert!(json.contains(r#""kind":"volume"#));
     assert!(json.contains("1.2"));
     let back: SkillResponse = serde_json::from_str(&json).unwrap();
-    assert!(matches!(back, SkillResponse::Volume(v) if (v - 1.2).abs() < f32::EPSILON));
+    assert!(matches!(back, SkillResponse::Volume { level } if (level - 1.2).abs() < f32::EPSILON));
     // Volume is clamped
-    assert!(matches!(SkillResponse::volume(2.0), SkillResponse::Volume(1.5)));
+    assert!(
+        matches!(SkillResponse::volume(2.0), SkillResponse::Volume { level } if (level - 1.5).abs() < f32::EPSILON)
+    );
 }
 
     #[test]

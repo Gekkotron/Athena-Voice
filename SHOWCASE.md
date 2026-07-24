@@ -18,23 +18,30 @@
 
 | Skill | Intents | Features |
 |-------|---------|----------|
-| `smoke-test` | `time.query`, `audio.play`, `audio.volume` | Strobes every host function, INI config |
+| `smoke-test` | `time.query` (real local time), `audio.play`, `audio.volume` | Strobes every host function, INI config |
 | `timer` | `timer.set` (FR patterns) | State retention, tmp storage, MQTT events |
+| `weather` | `weather.now`, `weather.tomorrow` (FR patterns) | Live open-meteo HTTP, geocoding cache |
+| `home` | Light/switch control (FR patterns) | MQTT publish allowlist |
 
 ## Quick Start
 
 ```bash
-# Build all skills
-./skills-smoke-test/build.sh
-./skills-timer/build.sh
+# One-shot demo (broker + server + three example questions):
+brew services start mosquitto   # once
+./demo.sh
 
-# Run runtime demo
-cd crates/athena-voice-runtime
-cargo run --example demo --no-default-features
-
-# Test with event streams
-socat - UNIX-CONNECT:/tmp/athena/events.sock
+# Or by hand:
+./skills-smoke-test/build.sh && ./skills-timer/build.sh && ./skills-weather/build.sh
+cargo run -p athena-voice-cli -- serve --config athena.local.toml
+# in another terminal (add --speak to hear the answer via macOS `say`):
+cargo run -p athena-voice-client -- --text "météo à Strasbourg" --speak
 ```
+
+The client is an MQTT "satellite": it publishes
+`athena/sat/<sat>/session/<uuid>/{start,text,end}` and subscribes to the
+session's `transcript` / `tts` / `done` topics (`--events` also mirrors
+`athena/events/#`). The `text` topic injects a final transcript directly,
+so no STT model is needed for testing.
 
 ## Next Plans
 
@@ -53,5 +60,5 @@ VAD → ASR → Intent → Skill → TTS
 ├─ Wasm skill registry (hot reload)
 ├─ Persistent KV store + tmpfs
 ├─ INI/TOML config file support
-├─ PipeWire audio sink
+├─ rodio audio sink (feature `audio`, cross-platform)
 ```

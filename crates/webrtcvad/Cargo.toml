@@ -1,0 +1,7 @@
+[package]
+name = "webrtcvad"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
+description = "Stub WebRTC-style VAD used by athena-voice-server until a real binding is wired in."

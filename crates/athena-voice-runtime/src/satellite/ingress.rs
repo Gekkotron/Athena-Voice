@@ -104,6 +104,25 @@ fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
                 let _ = state.audio_tx.try_send(frame);
             }
         }
+        ParsedTopic::Text { sat: _, sid } => {
+            // Raw UTF-8 utterance injected as a final transcript, straight
+            // into the session's router — lets text-only satellites skip STT.
+            if let Some(state) = deps.session_manager.get(sid) {
+                let text = String::from_utf8_lossy(payload).trim().to_string();
+                if text.is_empty() {
+                    return;
+                }
+                let _ = deps.event_bus.send(Event::TranscriptFinal {
+                    session: sid,
+                    text: text.clone(),
+                });
+                let _ = state.text_tx.try_send(Transcript {
+                    text,
+                    is_final: true,
+                    confidence: None,
+                });
+            }
+        }
         ParsedTopic::End { sat: _, sid } => {
             // Closing the session cancels the token, which drops the audio_tx
             // and causes downstream actors to flush.
@@ -120,9 +139,10 @@ fn extract_locale(payload: &[u8]) -> Option<Locale> {
 
 fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: Locale) {
     let (audio_tx, audio_rx) = mpsc::channel::<AudioFrame>(64);
+    let (t_tx, t_rx) = mpsc::channel::<Transcript>(16);
     if deps
         .session_manager
-        .open(sid, sat.clone(), locale.clone(), audio_tx)
+        .open(sid, sat.clone(), locale.clone(), audio_tx, t_tx.clone())
         .is_err()
     {
         warn!(session = %sid, "session collision on start");
@@ -140,7 +160,6 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
     // Wire the actor DAG: audio → ingest → vad → stt → router → llm → tts → sink
     let (ing_tx, ing_rx) = mpsc::channel(64);
     let (vad_tx, vad_rx) = mpsc::channel(64);
-    let (t_tx, t_rx) = mpsc::channel::<Transcript>(16);
     let (llm_prompt_tx, llm_prompt_rx) = mpsc::channel::<String>(4);
     let (tok_tx, tok_rx) = mpsc::channel::<String>(64);
     let (chunk_tx, chunk_rx) = mpsc::channel::<bytes::Bytes>(64);

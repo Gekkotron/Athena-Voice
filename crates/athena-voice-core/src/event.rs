@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{Locale, SatelliteId, SessionId};
 use crate::types::Intent;
 
+/// Serde default for `Event::AudioChunk::sample_rate`, keeping older
+/// serialized events (which lacked the field) decodable.
+fn default_sample_rate() -> u32 {
+    48_000
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioFormat {
@@ -120,8 +126,15 @@ SkillNotify {
 AudioChunk {
     session: SessionId,
     format: AudioFormat,
+    /// Sample rate of the payload in Hz. For Opus this is the nominal
+    /// decode rate (48000).
+    #[serde(default = "default_sample_rate")]
+    sample_rate: u32,
     payload: Vec<u8>,
 },
+/// A skill requested a playback-volume change
+/// (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
+VolumeChanged { session: SessionId, level: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

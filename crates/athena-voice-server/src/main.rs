@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use athena_voice_server::{Config, Runtime};
-use athena_voice_storage::SqliteStore;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 

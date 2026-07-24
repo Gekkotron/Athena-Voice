@@ -1,74 +1,35 @@
-//! Test INI config file support.
+//! Plan 8 — skill-friendly INI-style config.
+//!
+//! The host serves the bytes of `[skills] config_file` verbatim through
+//! `host_config_get` (covered by unit tests in `wasm::host_fns`); this test
+//! locks in the guest-side contract: the SDK's `IniSlice` parses those bytes
+//! into sections a skill can query.
 
-use std::collections::HashMap;
+use athena_voice_skill_sdk::host::IniSlice;
 
-use athena_voice_runtime::{Config, Runtime, SkillDeps, SkillRegistry};
-use athena_voice_storage::SqliteStore;
-use rumqttc::MqttOptions;
-use tempfile::NamedTempFile;
-use tokio::sync::broadcast;
+#[test]
+fn ini_section_lookup_roundtrip() {
+    let ini = "[audio]\nvolume = 0.7\nspeed = fast\n\n[net]\ntimeout = 5\n";
+    let slice = IniSlice::from_bytes(ini.as_bytes().to_vec());
 
-use athena_voice_providers::ProviderFactory;
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ini_config_file_roundtrip() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Setup
-    let mqtt_cfg = MqttOptions::new("test-client", "127.0.0.1", 1883);
-    let factory = ProviderFactory::simple();
-    let runtime = Runtime::spawn(mqtt_cfg, factory).unwrap();
-    let store = SqliteStore::open("sqlite::memory:").await.unwrap();
-    
-    // Create INI config
-    let ini_content = "[audio]
-speed = fast";
-    let ini_file = NamedTempFile::new().unwrap();
-    std::fs::write(ini_file.path(), ini_content).unwrap();
-
-    // Create SkillsDeps with config_file
-    let mut per_skill = HashMap::new();
-    per_skill.insert("audio-test".to_string(), 
-        athena_voice_runtime::SkillConfig {
-            config_file: Some(ini_file.path().to_string_lossy().into_owned()),
-            ..Default::default()
-        }
+    let audio = slice.section("audio").expect("audio section present");
+    assert_eq!(
+        audio.get("volume").cloned().flatten().as_deref(),
+        Some("0.7")
     );
-    
-    let skill_deps = SkillDeps {
-        store: store.into(),
-        mqtt: runtime.sessions.dispatcher().unwrap().mqtt_client(),
-        tokio: tokio::runtime::Handle::current(),
-        http: reqwest::Client::new(),
-        locales: vec!["fr".into()],
-        per_skill,
-        event_tx: None,
-        audio_event_tx: runtime.event_bus.subscribe().sender(),
-    };
-    
-    // Load skill
-    let skills_dir = NamedTempFile::new().unwrap().path().to_path_buf();
-    let registry = SkillRegistry::load_dir(&skills_dir, skill_deps).unwrap();
-    
-    // Build skill .wasm
-    let wasm_path = "./skills-audio-test/target/wasm32-wasip1/debug/skills_audio_test.wasm";
-    std::fs::create_dir_all(skills_dir.parent().unwrap()).unwrap();
-    std::fs::copy(
-        "./target/wasm32-wasip1/debug/skills_audio_test.wasm",
-        skills_dir.join("audio-test.wasm"),
-    ).unwrap();
-    
-    // Reload registry
-    registry.load_dir(&skills_dir, skill_deps).unwrap();
-    
-    // Dispatch test intent
-    let response = registry.dispatch("audio-test", 
-        athena_voice_core::types::Intent::new("audio.test", vec![]).unwrap()
-    ).unwrap();
-    
-    if let SkillResponse::Speak(text) = response {
-        assert!(text.contains("fast"));
-    } else {
-        panic!("Unexpected response: {:?}", response);
-    }
+    assert_eq!(
+        audio.get("speed").cloned().flatten().as_deref(),
+        Some("fast")
+    );
+
+    let net = slice.section("net").expect("net section present");
+    assert_eq!(net.get("timeout").cloned().flatten().as_deref(), Some("5"));
+
+    assert!(slice.section("missing").is_none());
+}
+
+#[test]
+fn ini_garbage_bytes_yield_no_sections() {
+    let slice = IniSlice::from_bytes(vec![0xFF, 0xFE, 0x00]);
+    assert!(slice.section("audio").is_none());
 }

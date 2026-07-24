@@ -1,56 +1,29 @@
-//! Test skill-local transient storage.
+//! Plan 9 — skill-local short-lived tmpfs.
+//!
+//! `host_tmp_set` / `host_tmp_get` are backed by the store's `TmpStore`
+//! implementation; this test locks in the semantics skills rely on:
+//! per-skill namespacing, TTL expiry, and garbage collection.
 
-use athena_voice_runtime::{Runtime, SkillDeps, SkillRegistry};
-use athena_voice_storage::SqliteStore;
-use rumqttc::MqttOptions;
-use tempfile::NamedTempFile;
-use uuid::Uuid;
-
-use athena_voice_providers::ProviderFactory;
+use athena_voice_storage::{SqliteStore, TmpStore};
 
 #[tokio::test(flavor = "multi_thread")]
-async fn tmp_storage_roundtrip() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    // Setup
-    let mqtt_cfg = MqttOptions::new("test-tmp", "127.0.0.1", 1883);
-    let factory = ProviderFactory::simple();
-    let runtime = Runtime::spawn(mqtt_cfg, factory).unwrap();
+async fn tmp_set_get_roundtrip_namespacing_and_expiry() {
     let store = SqliteStore::open("sqlite::memory:").await.unwrap();
-    
-    // Create test skill
-    let skills_dir = NamedTempFile::new().unwrap().path().to_path_buf();
-    std::fs::create_dir_all(&skills_dir).unwrap();
-    
-    let skill_deps = SkillDeps {
-        store: store.into(),
-        mqtt: runtime.sessions.dispatcher().unwrap().mqtt_client(),
-        tokio: tokio::runtime::Handle::current(),
-        http: reqwest::Client::new(),
-        locales: vec!["fr".into()],
-        per_skill: Default::default(),
-        event_tx: None,
-        audio_event_tx: runtime.event_bus.subscribe().sender(),
-    };
-    
-    // Load skill
-    let registry = SkillRegistry::load_dir(&skills_dir, skill_deps).unwrap();
-    
-    // Build skill .wasm
-    let wasm_path = "./skills-tmp-test/target/wasm32-wasip1/debug/skills_tmp_test.wasm";
-    std::fs::copy(wasm_path, skills_dir.join("tmp-test.wasm")).unwrap();
-    
-    // Test: set/read key
-    let response = registry.dispatch("tmp-test", 
-        athena_voice_core::types::Intent::new("tmp.test", vec![
-            athena_voice_core::types::Slot::String("test-key".into()),
-            athena_voice_core::types::Slot::String("test-val".into()),
-        ]).unwrap()
-    ).unwrap();
-    
-    if let athena_voice_skill_sdk::SkillResponse::Speak(text) = response {
-        assert!(text.contains("found"));
-    } else {
-        panic!("Unexpected response: {:?}", response);
-    }
+
+    store.tmp_set("timer", "k", b"v".to_vec(), 60).unwrap();
+    assert_eq!(
+        store.tmp_get("timer", "k").unwrap().as_deref(),
+        Some(&b"v"[..])
+    );
+
+    // Other skills don't see the key (namespace isolation).
+    assert!(store.tmp_get("other-skill", "k").unwrap().is_none());
+
+    // A zero TTL is already expired on read.
+    store.tmp_set("timer", "gone", b"x".to_vec(), 0).unwrap();
+    assert!(store.tmp_get("timer", "gone").unwrap().is_none());
+
+    // GC with a far-future clock drops everything still stored.
+    store.tmp_gc(u64::MAX);
+    assert!(store.tmp_get("timer", "k").unwrap().is_none());
 }

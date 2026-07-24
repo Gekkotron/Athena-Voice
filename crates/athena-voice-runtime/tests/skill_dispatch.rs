@@ -91,6 +91,9 @@ async fn end_to_end_skill_dispatch() {
         config,
         tokio: tokio::runtime::Handle::current(),
         http,
+        retention_gc_after_sec: None,
+        event_bus: tokio::sync::broadcast::channel(8).0,
+        config_file: None,
     };
 
     let manifest = Manifest::new([Wasm::file(&wasm_path)]);
@@ -171,8 +174,11 @@ async fn end_to_end_skill_dispatch() {
         .map(|c| String::from_utf8_lossy(c).into_owned())
         .collect::<Vec<_>>()
         .join(" ");
+    // The smoke skill speaks the host's real local time ("il est 15 heures
+    // 42" / "il est minuit"), so assert the stable prefix rather than a
+    // fixed hour.
     assert!(
-        joined.contains("huit") && joined.contains("heure"),
+        joined.contains("il est"),
         "expected TTS chunks to carry the skill speech; joined chunks: {joined:?}"
     );
 

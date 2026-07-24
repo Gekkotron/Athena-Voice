@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::metrics::record_vad;
 use bytes::BytesMut;
 use std::time::Instant;
-use webrtcvad::{Vad, VadMode};
+use webrtcvad::Vad;
 
 /// Voice Activity Detector.
 #[derive(Clone)]

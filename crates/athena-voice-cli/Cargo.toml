@@ -27,7 +27,9 @@ tracing-subscriber = { workspace = true }
 
 athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
 athena-voice-providers = { path = "../athena-voice-providers", version = "0.1" }
-athena-voice-runtime = { path = "../athena-voice-runtime", version = "0.1" }
+# The runtime's `audio` feature (local playback of skill audio via rodio)
+# is opt-in: `cargo build -p athena-voice-cli --features audio`.
+athena-voice-runtime = { path = "../athena-voice-runtime", version = "0.1", default-features = false }
 athena-voice-storage = { path = "../athena-voice-storage", version = "0.1" }
 
 [dev-dependencies]
@@ -39,3 +41,6 @@ tempfile = "3"
 
 [lints]
 workspace = true
+
+[features]
+audio = ["athena-voice-runtime/audio"]

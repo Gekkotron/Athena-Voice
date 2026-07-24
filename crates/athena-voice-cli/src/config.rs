@@ -58,12 +58,15 @@ pub struct PerSkillConfig {
     pub mqtt_publish_allowlist: Vec<String>,
     #[serde(default)]
     pub config: HashMap<String, String>,
-    /// Optional TTL in seconds for keys set by this skill. Every `host_state_set`
-    /// prepends the current timestamp (little-endian u64); keys older than
-    /// `now_sec - gc_after_sec` are automatically deleted. Missing or 0
-    /// disables GC.
+    /// Optional TTL in seconds for keys set by this skill. Keys whose
+    /// stored timestamp is older than `now_sec - gc_after_sec` are deleted
+    /// automatically on the next write. Missing or 0 disables GC.
     #[serde(default)]
     pub retention: RetentionConfig,
+    /// Optional INI config file served verbatim to the skill via
+    /// `host_config_get` (takes precedence over the `config` map).
+    #[serde(default)]
+    pub config_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

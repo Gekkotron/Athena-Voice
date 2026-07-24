@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
-use athena_voice_core::types::AudioFrame;
+use athena_voice_core::types::{AudioFrame, Transcript};
 
 #[derive(Debug, Error)]
 #[error("session {session} already exists")]
@@ -18,6 +18,9 @@ pub struct SessionState {
     pub locale: Locale,
     pub cancel: CancellationToken,
     pub audio_tx: mpsc::Sender<AudioFrame>,
+    /// Direct line into the session's router, used by the `.../text` ingress
+    /// topic to inject a final transcript without going through STT.
+    pub text_tx: mpsc::Sender<Transcript>,
 }
 
 #[derive(Default)]
@@ -32,6 +35,7 @@ impl SessionManager {
         sat: SatelliteId,
         locale: Locale,
         audio_tx: mpsc::Sender<AudioFrame>,
+        text_tx: mpsc::Sender<Transcript>,
     ) -> Result<(), SessionExists> {
         if self.map.contains_key(&session) {
             return Err(SessionExists { session });
@@ -43,6 +47,7 @@ impl SessionManager {
                 locale,
                 cancel: CancellationToken::new(),
                 audio_tx,
+                text_tx,
             },
         );
         Ok(())
@@ -83,21 +88,30 @@ impl SessionManager {
 mod tests {
     use super::*;
 
-    fn state() -> (SessionId, SatelliteId, Locale, mpsc::Sender<AudioFrame>) {
+    #[allow(clippy::type_complexity)]
+    fn state() -> (
+        SessionId,
+        SatelliteId,
+        Locale,
+        mpsc::Sender<AudioFrame>,
+        mpsc::Sender<Transcript>,
+    ) {
         let (tx, _rx) = mpsc::channel(1);
+        let (text_tx, _text_rx) = mpsc::channel(1);
         (
             SessionId::new_v4(),
             SatelliteId::new("phone-01").unwrap(),
             Locale::new("fr").unwrap(),
             tx,
+            text_tx,
         )
     }
 
     #[tokio::test]
     async fn open_and_get() {
         let mgr = SessionManager::default();
-        let (sid, sat, loc, tx) = state();
-        mgr.open(sid, sat.clone(), loc.clone(), tx).unwrap();
+        let (sid, sat, loc, tx, text_tx) = state();
+        mgr.open(sid, sat.clone(), loc.clone(), tx, text_tx).unwrap();
         assert_eq!(mgr.len(), 1);
         let entry = mgr.get(sid).expect("present");
         assert_eq!(entry.sat, sat);
@@ -107,10 +121,10 @@ mod tests {
     #[tokio::test]
     async fn open_duplicate_returns_error() {
         let mgr = SessionManager::default();
-        let (sid, sat, loc, tx) = state();
-        mgr.open(sid, sat.clone(), loc.clone(), tx.clone()).unwrap();
+        let (sid, sat, loc, tx, text_tx) = state();
+        mgr.open(sid, sat.clone(), loc.clone(), tx.clone(), text_tx.clone()).unwrap();
         assert!(matches!(
-            mgr.open(sid, sat, loc, tx),
+            mgr.open(sid, sat, loc, tx, text_tx),
             Err(SessionExists { .. })
         ));
     }
@@ -118,8 +132,8 @@ mod tests {
     #[tokio::test]
     async fn close_cancels_and_removes() {
         let mgr = SessionManager::default();
-        let (sid, sat, loc, tx) = state();
-        mgr.open(sid, sat, loc, tx).unwrap();
+        let (sid, sat, loc, tx, text_tx) = state();
+        mgr.open(sid, sat, loc, tx, text_tx).unwrap();
         let token = mgr.get(sid).unwrap().cancel.clone();
         mgr.close(sid);
         assert_eq!(mgr.len(), 0);
@@ -131,8 +145,8 @@ mod tests {
         let mgr = SessionManager::default();
         let mut tokens = Vec::new();
         for _ in 0..3 {
-            let (sid, sat, loc, tx) = state();
-            mgr.open(sid, sat, loc, tx).unwrap();
+            let (sid, sat, loc, tx, text_tx) = state();
+            mgr.open(sid, sat, loc, tx, text_tx).unwrap();
             tokens.push(mgr.get(sid).unwrap().cancel.clone());
         }
         mgr.cancel_all();

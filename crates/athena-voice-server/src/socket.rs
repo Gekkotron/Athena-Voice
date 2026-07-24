@@ -10,12 +10,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::Framed;
 
-use once_cell::sync::OnceCell;
-use serde_json::json;
 
-use crate::metrics::{record_asr, record_hotword, record_tts, record_vad};
+use crate::metrics::{record_asr, record_hotword};
 use crate::runtime::Runtime;
-use crate::vad::{VadDetector, split_voice_segments};
+use crate::vad::split_voice_segments;
 
 /// Socket header: 0xAE.
 const HEADER: u8 = 0xAE;
@@ -44,6 +42,8 @@ impl TryFrom<u8> for Op {
 
 /// Socket protocol codec.
 #[derive(Debug, Default)]
+// Staged for the audio-socket path; unused until `start_audio_socket` is implemented.
+#[allow(dead_code)]
 pub struct SocketCodec;
 
 impl tokio_util::codec::Decoder for SocketCodec {
@@ -87,6 +87,7 @@ impl tokio_util::codec::Encoder<(Op, BytesMut)> for SocketCodec {
 }
 
 /// Start the audio socket server.
+#[allow(dead_code)]
 pub async fn start_audio_socket(_runtime: Arc<Runtime>) -> anyhow::Result<()> {
     unimplemented!("Audio socket not yet implemented")
 }
@@ -149,6 +150,7 @@ async fn handle_event_stream(mut stream: UnixStream, runtime: Arc<Runtime>) -> a
 }
 
 /// Handle an audio stream.
+#[allow(dead_code)]
 async fn handle_audio_stream(stream: UnixStream, runtime: Arc<Runtime>) -> anyhow::Result<()> {
     let mut framed = Framed::new(stream, SocketCodec::default());
     while let Some(result) = framed.next().await {
@@ -168,7 +170,7 @@ async fn handle_audio_stream(stream: UnixStream, runtime: Arc<Runtime>) -> anyho
                         let start_asr = std::time::Instant::now();
                         if let Ok(transcript) = runtime.asr.transcribe(&samples) {
                             record_asr(start_asr, true);
-                            let transcript_json = serde_json::json!({
+                            let _transcript_json = serde_json::json!({
                                 "session": uuid::Uuid::new_v4().to_string(),
                                 "text": transcript,
                                 "final": true,

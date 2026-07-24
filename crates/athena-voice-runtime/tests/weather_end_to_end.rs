@@ -82,6 +82,9 @@ async fn drive_utterance(
         config,
         tokio: tokio::runtime::Handle::current(),
         http,
+        retention_gc_after_sec: None,
+        event_bus: tokio::sync::broadcast::channel(8).0,
+        config_file: None,
     };
 
     let manifest = Manifest::new([Wasm::file(wasm_path)]);

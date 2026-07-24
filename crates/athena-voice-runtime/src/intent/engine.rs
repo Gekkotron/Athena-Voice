@@ -83,14 +83,26 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     let mut cursor = 0usize;
     let mut slots: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     let mut filled_phrase = String::new();
-    let mut slots_filled = 0;
     for (i, seg) in segments.iter().enumerate() {
         match seg {
             Segment::Literal(lit) => {
                 let lit_lower = lit.to_lowercase();
-                let hit = normalised_input[cursor..].find(&lit_lower)?;
-                cursor += hit + lit_lower.len();
-                filled_phrase.push_str(lit);
+                match normalised_input[cursor..].find(&lit_lower) {
+                    Some(hit) => {
+                        cursor += hit + lit_lower.len();
+                        filled_phrase.push_str(lit);
+                    }
+                    None => {
+                        // A literal with trailing whitespace (right before a
+                        // slot) can sit at the very end of the input when the
+                        // slot value is missing — match it trimmed so the
+                        // router can elicit the slot via LLM fallback.
+                        let trimmed = lit_lower.trim_end();
+                        let hit = normalised_input[cursor..].find(trimmed)?;
+                        cursor += hit + trimmed.len();
+                        filled_phrase.push_str(lit.trim_end());
+                    }
+                }
             }
             Segment::Slot(name) => {
                 // Slot value spans from the cursor to the start of the next
@@ -108,15 +120,11 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
                         slots.insert(name.clone(), json!(raw));
                         filled_phrase.push_str(raw);
                         cursor = end;
-                        slots_filled += 1;
                     } else {
                         slots.insert(name.clone(), serde_json::Value::Null);
                     }
                 } else {
                     slots.insert(name.clone(), serde_json::Value::Null);
-                }
-                if slots_filled == 0 {
-                    return None;
                 }
             }
         }

@@ -1,6 +1,5 @@
 //! Server runtime.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use athena_voice_core::event::Event;

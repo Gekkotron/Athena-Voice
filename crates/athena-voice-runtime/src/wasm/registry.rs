@@ -119,12 +119,24 @@ pub trait SkillPlugin: Send {
 /// guest ABI in Task 8 and stay local so Task 8 can adjust freely.
 pub struct ExtismSkillPlugin {
     plugin: Plugin,
+    ctx: Option<SkillCtx>,
 }
 
 impl ExtismSkillPlugin {
     #[must_use]
     pub fn new(plugin: Plugin) -> Self {
-        Self { plugin }
+        Self { plugin, ctx: None }
+    }
+
+    /// Wraps a plugin together with the `SkillCtx` its host functions were
+    /// built from, so the registry can consult per-skill settings (e.g.
+    /// retention GC) at dispatch time.
+    #[must_use]
+    pub fn with_ctx(plugin: Plugin, ctx: SkillCtx) -> Self {
+        Self {
+            plugin,
+            ctx: Some(ctx),
+        }
     }
 }
 
@@ -146,12 +158,7 @@ impl SkillPlugin for ExtismSkillPlugin {
     }
 
     fn ctx(&self) -> Option<&SkillCtx> {
-        self.plugin
-            .user_data()
-            .get::<SkillCtx>()
-            .ok()
-            .and_then(|arc| arc.lock().ok())
-            .as_deref()
+        self.ctx.as_ref()
     }
 }
 
@@ -224,16 +231,8 @@ impl SkillRegistry {
             if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
                 continue;
             }
-    let (name, plugin, retention_gc_after_sec) = build_plugin_from_file(&path, deps)?;
-    let mut cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
-    cfg.retention_gc_after_sec = retention_gc_after_sec;
-    let mut per_skill = deps.per_skill.clone();
-    per_skill.insert(name.clone(), cfg);
-    let new_deps = SkillDeps {
-        per_skill,
-        ..deps.clone()
-    };
-    registry.install(&name, plugin, &deps.locales)?;
+            let (name, plugin, _retention_gc_after_sec) = build_plugin_from_file(&path, deps)?;
+            registry.install(&name, plugin, &deps.locales)?;
         }
         Ok(registry)
     }
@@ -314,16 +313,8 @@ impl SkillRegistry {
     /// the deps bus, failure emits `Event::SkillReloadFailed`.
     pub fn reload_path(&self, path: &Path, deps: &SkillDeps) -> Result<String, RegistryError> {
         let outcome = (|| -> Result<String, RegistryError> {
-    let (name, plugin, retention_gc_after_sec) = build_plugin_from_file(path, deps)?;
-    let mut cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
-    cfg.retention_gc_after_sec = retention_gc_after_sec;
-    let mut per_skill = deps.per_skill.clone();
-    per_skill.insert(name.clone(), cfg);
-    let new_deps = SkillDeps {
-        per_skill,
-        ..deps.clone()
-    };
-    self.install(&name, plugin, &new_deps.locales)?;
+            let (name, plugin, _retention_gc_after_sec) = build_plugin_from_file(path, deps)?;
+            self.install(&name, plugin, &deps.locales)?;
             Ok(name)
         })();
 
@@ -435,16 +426,17 @@ let ctx = SkillCtx {
     config_file: cfg.config_file,
 };
 let manifest = Manifest::new([Wasm::file(path)]);
-let mut builder = PluginBuilder::new(manifest)
+let builder = PluginBuilder::new(manifest)
 .with_wasi(true)
-.with_functions(host_functions(ctx));
+.with_functions(host_functions(ctx.clone()));
 let plugin = builder
 .build()
 .map_err(|source| RegistryError::Build {
  skill: name.clone(),
  source,
         })?;
-    let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(ExtismSkillPlugin::new(plugin)));
+    let plugin: Arc<Mutex<dyn SkillPlugin>> =
+        Arc::new(Mutex::new(ExtismSkillPlugin::with_ctx(plugin, ctx)));
     Ok((name, plugin, retention_gc_after_sec))
 }
 
@@ -690,6 +682,7 @@ mod tests {
             locales: vec!["fr".into()],
             per_skill: HashMap::new(),
             event_tx: Some(tx),
+            audio_event_tx: broadcast::channel(4).0,
         };
 
         let err = reg.reload_path(&path, &deps).unwrap_err();
@@ -727,6 +720,7 @@ mod tests {
             locales: vec!["fr".into()],
             per_skill: HashMap::new(),
             event_tx: None,
+            audio_event_tx: broadcast::channel(4).0,
         }
     }
 
