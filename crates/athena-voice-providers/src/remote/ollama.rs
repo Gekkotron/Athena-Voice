@@ -174,6 +174,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connection_refused_returns_err_not_hang() {
+        // Port 9 (discard) refuses connections on macOS/Linux dev machines.
+        let llm = OllamaLlm::new("http://127.0.0.1:9", "test");
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            llm.complete(
+                SessionId::new_v4(),
+                Locale::new("fr").unwrap(),
+                "salut".into(),
+                vec![],
+            ),
+        )
+        .await
+        .expect("must fail fast, not hang");
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn malformed_lines_are_skipped_and_stream_ends_without_done() {
+        let mut server = mockito::Server::new_async().await;
+        // Garbage line + valid token, then the stream just ends (no done:true
+        // marker) — the token stream must still terminate.
+        let mock_body = "\
+not json at all\n\
+{\"message\":{\"content\":\"ok\"},\"done\":false}\n";
+        let _m = server
+            .mock("POST", "/api/chat")
+            .with_status(200)
+            .with_body(mock_body)
+            .create_async()
+            .await;
+
+        let llm = OllamaLlm::new(server.url(), "test");
+        let tokens = llm
+            .complete(
+                SessionId::new_v4(),
+                Locale::new("en").unwrap(),
+                "hi".into(),
+                vec![],
+            )
+            .await
+            .expect("complete");
+
+        let all: Vec<_> = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokens.collect::<Vec<_>>(),
+        )
+        .await
+        .expect("stream must terminate without done marker");
+        let texts: Vec<String> = all.into_iter().map(Result::unwrap).collect();
+        assert_eq!(texts, vec!["ok".to_string()]);
+    }
+
+    #[tokio::test]
     async fn http_error_returns_err() {
         let mut server = mockito::Server::new_async().await;
         let _m = server

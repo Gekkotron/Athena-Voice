@@ -27,11 +27,11 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Backlog
 
-- [ ] Verify the Ollama LLM fallback end to end
-      `crates/athena-voice-providers/src/remote/ollama.rs` exists but has never been exercised. Configure `llm = { ollama = { base_url = "http://localhost:11434", model = "<small local model>" } }` in a config variant and drive an unmatched utterance ("raconte-moi une blague") through the client.
-      Audit ollama.rs the same way as the MQTT providers: token stream termination, timeouts, error surfaces (connection refused must yield a spoken apology or clean LlmFallback failure, not a hang).
-      Document in the config header that Ollama must be installed and which model was tested.
-      Success criteria: (a) unmatched intents produce an LLM-generated spoken answer when Ollama runs; (b) with Ollama down, the session still completes with a clean failure path; (c) any bugs found are fixed with tests.
+- [ ] Live-verify the Ollama LLM fallback with a real Ollama install
+      The code side is done: ollama.rs is covered by mockito tests (streaming happy path, HTTP error, connection refused fails fast, malformed lines skipped, stream termination without a done marker), and the LLM pipeline actor now speaks a locale-aware apology instead of staying silent when the backend fails (see pipeline/llm.rs::apology + tests).
+      Remaining: install Ollama (`brew install ollama`), pull a small model (e.g. `ollama pull llama3.2:1b`), set `llm = { ollama = { base_url = "http://localhost:11434", model = "llama3.2:1b" } }` in athena.voice.toml (or a copy), and drive an unmatched utterance ("raconte-moi une blague") through the client end to end.
+      Document which model was tested in the config header.
+      Success criteria: (a) unmatched intents produce an LLM-generated spoken answer; (b) stopping Ollama mid-session yields the spoken apology, not silence or a hang.
 
 - [ ] Piper engine option for the TTS worker
       Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
