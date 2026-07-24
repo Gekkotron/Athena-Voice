@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use dashmap::DashMap;
 use dashmap::mapref::one::Ref;
 use thiserror::Error;
@@ -21,6 +24,17 @@ pub struct SessionState {
     /// Direct line into the session's router, used by the `.../text` ingress
     /// topic to inject a final transcript without going through STT.
     pub text_tx: mpsc::Sender<Transcript>,
+    /// Unix millis of the last inbound activity (audio/text). Drives the
+    /// idle reaper; refreshed via [`SessionManager::touch`].
+    last_activity_ms: AtomicU64,
+}
+
+fn now_ms() -> u64 {
+    #[allow(clippy::cast_possible_truncation)]
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[derive(Default)]
@@ -48,6 +62,7 @@ impl SessionManager {
                 cancel: CancellationToken::new(),
                 audio_tx,
                 text_tx,
+                last_activity_ms: AtomicU64::new(now_ms()),
             },
         );
         Ok(())
@@ -56,6 +71,31 @@ impl SessionManager {
     #[must_use]
     pub fn get(&self, session: SessionId) -> Option<Ref<'_, SessionId, SessionState>> {
         self.map.get(&session)
+    }
+
+    /// Records inbound activity for `session` (audio or text arrived).
+    pub fn touch(&self, session: SessionId) {
+        if let Some(state) = self.map.get(&session) {
+            state.last_activity_ms.store(now_ms(), Ordering::Relaxed);
+        }
+    }
+
+    /// Closes every session idle for longer than `max_idle`, returning the
+    /// reaped ids. Closing cancels the session's token, which drives the
+    /// normal teardown (sink publishes `done`, `SessionEnded` fires).
+    pub fn reap_idle(&self, max_idle: Duration) -> Vec<SessionId> {
+        #[allow(clippy::cast_possible_truncation)]
+        let cutoff = now_ms().saturating_sub(max_idle.as_millis() as u64);
+        let stale: Vec<SessionId> = self
+            .map
+            .iter()
+            .filter(|e| e.value().last_activity_ms.load(Ordering::Relaxed) < cutoff)
+            .map(|e| *e.key())
+            .collect();
+        for sid in &stale {
+            self.close(*sid);
+        }
+        stale
     }
 
     pub fn close(&self, session: SessionId) {
@@ -138,6 +178,29 @@ mod tests {
         mgr.close(sid);
         assert_eq!(mgr.len(), 0);
         assert!(token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn reaper_closes_only_idle_sessions() {
+        let mgr = SessionManager::default();
+        let (idle_sid, sat, loc, tx, text_tx) = state();
+        mgr.open(idle_sid, sat, loc, tx, text_tx).unwrap();
+        let (active_sid, sat, loc, tx, text_tx) = state();
+        mgr.open(active_sid, sat, loc, tx, text_tx).unwrap();
+        let idle_token = mgr.get(idle_sid).unwrap().cancel.clone();
+
+        // Nothing is stale yet.
+        assert!(mgr.reap_idle(Duration::from_millis(80)).is_empty());
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        // Activity refreshes the deadline for one session only.
+        mgr.touch(active_sid);
+
+        let reaped = mgr.reap_idle(Duration::from_millis(80));
+        assert_eq!(reaped, vec![idle_sid]);
+        assert!(idle_token.is_cancelled(), "reap must cancel the session");
+        assert!(mgr.get(idle_sid).is_none());
+        assert!(mgr.get(active_sid).is_some(), "touched session survives");
     }
 
     #[tokio::test]

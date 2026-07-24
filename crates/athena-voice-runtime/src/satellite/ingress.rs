@@ -109,6 +109,7 @@ fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
             open_session(deps, sat, sid, locale);
         }
         ParsedTopic::Audio { sat: _, sid } => {
+            deps.session_manager.touch(sid);
             if let Some(state) = deps.session_manager.get(sid) {
                 let frame = AudioFrame {
                     session: sid,
@@ -119,6 +120,7 @@ fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
             }
         }
         ParsedTopic::Text { sat: _, sid } => {
+            deps.session_manager.touch(sid);
             // Raw UTF-8 utterance injected as a final transcript, straight
             // into the session's router — lets text-only satellites skip STT.
             if let Some(state) = deps.session_manager.get(sid) {

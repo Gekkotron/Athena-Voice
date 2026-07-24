@@ -36,6 +36,7 @@ async fn spawn_and_shutdown_are_clean() {
         },
         factory,
         None,
+        std::time::Duration::from_secs(120),
     )
     .expect("spawn");
 

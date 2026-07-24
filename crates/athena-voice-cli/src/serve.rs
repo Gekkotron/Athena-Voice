@@ -78,7 +78,12 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
             .collect(),
     });
 
-    let runtime = Runtime::spawn(runtime_mqtt, factory, skills)?;
+    let runtime = Runtime::spawn(
+        runtime_mqtt,
+        factory,
+        skills,
+        std::time::Duration::from_secs(cfg.server.session_idle_secs),
+    )?;
     tracing::info!("runtime spawned; awaiting SIGINT");
 
     tokio::signal::ctrl_c().await.ok();

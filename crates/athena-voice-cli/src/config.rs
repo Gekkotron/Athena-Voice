@@ -73,6 +73,14 @@ pub struct PerSkillConfig {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    /// Sessions with no inbound audio/text for this many seconds are closed
+    /// by the runtime's reaper (satellite died without sending `end`).
+    #[serde(default = "default_session_idle_secs")]
+    pub session_idle_secs: u64,
+}
+
+fn default_session_idle_secs() -> u64 {
+    120
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

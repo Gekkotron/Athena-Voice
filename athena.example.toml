@@ -4,6 +4,9 @@
 locales = ["fr", "en"]
 
 [server]
+# Close sessions with no inbound audio/text after this many seconds —
+# covers satellites that die without sending `end`. Default 120.
+# session_idle_secs = 120
 host = "0.0.0.0"
 port = 8080
 

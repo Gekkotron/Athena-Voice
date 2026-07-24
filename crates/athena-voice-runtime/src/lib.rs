@@ -64,6 +64,7 @@ impl Runtime {
         mqtt_cfg: MqttConfig,
         factory: Arc<ProviderFactory>,
         skills: Option<SkillsInit>,
+        session_idle: std::time::Duration,
     ) -> Result<Self, RuntimeError> {
         let client = MqttClient::connect(mqtt_cfg)?;
         let sessions = Arc::new(SessionManager::default());
@@ -121,6 +122,26 @@ impl Runtime {
 
         // Also start the MQTT event mirror task so athena/events/* is populated.
         let mirror = event_bus::spawn_mqtt_mirror(event_bus.sender(), client.tx);
+
+        // Reap sessions whose satellite went silent without sending `end` —
+        // their DAG actors would otherwise stay parked until shutdown.
+        {
+            let sessions = sessions.clone();
+            let cancel = shutdown.clone();
+            drop(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(10));
+                loop {
+                    tokio::select! {
+                        () = cancel.cancelled() => break,
+                        _ = tick.tick() => {
+                            for sid in sessions.reap_idle(session_idle) {
+                                tracing::info!(session = %sid, "reaped idle session");
+                            }
+                        }
+                    }
+                }
+            }));
+        }
 
         // Conditionally start audio sink
         #[cfg(feature = "audio")]
