@@ -23,6 +23,7 @@ athena-voice-skill-sdk = { workspace = true }
 athena-voice-storage = { workspace = true }
 
 [dev-dependencies]
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [lints]

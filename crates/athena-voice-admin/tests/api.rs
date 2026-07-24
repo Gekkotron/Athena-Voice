@@ -231,3 +231,86 @@ async fn upload_rejects_bad_names() {
     let res = app.oneshot(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn put_config_rejects_traversal_name() {
+    // Percent-encoded `/` inside the path segment: axum's router matches on
+    // the raw (still-encoded) path, so this stays a single `{name}` segment,
+    // but the `Path` extractor hands the handler the decoded `/etc/evil` —
+    // which must be rejected by `valid_skill_name` before it ever reaches a
+    // store write or `dir.join(...)`.
+    let (deps, token) = test_deps().await;
+    let store = deps.store.clone();
+    let app = router(deps);
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/%2Fetc%2Fevil/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"values":{"x":"y"}}"#))
+        .unwrap();
+    let res = app.oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let rows = store.skill_settings_all().await.unwrap();
+    assert!(
+        rows.is_empty(),
+        "traversal-y name must be rejected before anything is persisted"
+    );
+}
+
+#[tokio::test]
+async fn list_bundled_empty_when_unset() {
+    let (deps, token) = test_deps().await;
+    let app = router(deps);
+    let res = app
+        .oneshot(get("/api/bundled", Some(&token)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn list_bundled_lists_wasm_stems() {
+    let (mut deps, token) = test_deps().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("demo.wasm"), b"AGFzbQ").unwrap();
+    deps.bundled_dir = Some(dir.path().to_path_buf());
+    let app = router(deps);
+    let res = app
+        .oneshot(get("/api/bundled", Some(&token)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, serde_json::json!([{"name": "demo"}]));
+}
+
+#[tokio::test]
+async fn install_bundled_rejects_bad_name() {
+    let (deps, token) = test_deps().await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/bundled/%2Fetc%2Fevil/install", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn install_bundled_conflict_when_unconfigured() {
+    let (deps, token) = test_deps().await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/bundled/demo/install", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+}

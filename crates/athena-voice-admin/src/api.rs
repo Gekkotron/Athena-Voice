@@ -171,9 +171,12 @@ pub(crate) struct ConfigWrite {
 
 pub(crate) async fn put_config(
     State(state): State<AppState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
+    Path(name): Path<String>,
     Json(body): Json<ConfigWrite>,
 ) -> Response {
+    if !valid_skill_name(&name) {
+        return invalid_skill_name_response();
+    }
     let schema = state
         .skills
         .as_ref()
@@ -274,6 +277,9 @@ pub(crate) async fn enable_skill(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Response {
+    if !valid_skill_name(&name) {
+        return invalid_skill_name_response();
+    }
     if let Err(e) = state.store.skill_enabled_set(&name, true).await {
         return internal_error(e);
     }
@@ -285,6 +291,9 @@ pub(crate) async fn disable_skill(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Response {
+    if !valid_skill_name(&name) {
+        return invalid_skill_name_response();
+    }
     if let Err(e) = state.store.skill_enabled_set(&name, false).await {
         return internal_error(e);
     }
@@ -295,13 +304,23 @@ pub(crate) async fn disable_skill(
 }
 
 /// `[a-z0-9_-]+` — the only path-safety guard between a user-supplied skill
-/// name and the filesystem. Applied to every name that ends up in a
-/// `dir.join(...)` call below (upload and bundled install).
+/// name and the filesystem. `PathBuf::join` replaces the base entirely when
+/// given an absolute path, so every handler that takes a `name` from the
+/// request (path segment or multipart filename) must check this BEFORE that
+/// name is used in a store call or a `dir.join(...)`.
 fn valid_skill_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+fn invalid_skill_name_response() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": "skill name must match [a-z0-9_-]+"})),
+    )
+        .into_response()
 }
 
 pub(crate) async fn upload_skill(State(state): State<AppState>, mut parts: Multipart) -> Response {
@@ -322,11 +341,7 @@ pub(crate) async fn upload_skill(State(state): State<AppState>, mut parts: Multi
         // (400) regardless of server config, and must never reach the
         // filesystem check below either way.
         if !valid_skill_name(name) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "skill name must match [a-z0-9_-]+"})),
-            )
-                .into_response();
+            return invalid_skill_name_response();
         }
         let Some(handle) = state.skills.clone() else {
             return (
@@ -380,11 +395,7 @@ pub(crate) async fn install_bundled(
     Path(name): Path<String>,
 ) -> Response {
     if !valid_skill_name(&name) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "skill name must match [a-z0-9_-]+"})),
-        )
-            .into_response();
+        return invalid_skill_name_response();
     }
     let (Some(bundled), Some(handle)) = (state.bundled_dir.clone(), state.skills.clone()) else {
         return (
