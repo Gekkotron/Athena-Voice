@@ -51,7 +51,13 @@ fn check(kind: FieldKind, raw: &str, key: &str, items: &[ItemField]) -> Result<(
         }
         FieldKind::List => {
             let parsed: Vec<serde_json::Map<String, serde_json::Value>> = serde_json::from_str(raw)
-                .map_err(|e| format!("`{key}` is not a JSON array of objects: {e}"))?;
+                .map_err(|e| {
+                    format!(
+                        "`{key}` is not a JSON array of objects (parse error at line {}, column {})",
+                        e.line(),
+                        e.column()
+                    )
+                })?;
             for (i, item) in parsed.iter().enumerate() {
                 for f in items {
                     let v = item
@@ -206,5 +212,22 @@ mod tests {
     fn no_schema_means_no_validation() {
         let values = HashMap::from([("anything".to_string(), "goes".to_string())]);
         assert_eq!(validate(None, &values), Ok(()));
+    }
+
+    #[test]
+    fn list_parse_error_never_echoes_submitted_value() {
+        // serde_json's Display for a type-mismatch error embeds the offending
+        // input verbatim (e.g. `invalid type: string "my-secret-value-123",
+        // expected a sequence`) — the validator must never forward `{e}` (or
+        // `raw`) into the message it returns, only position info.
+        let s = jeedom_schema();
+        let sentinel = "my-secret-value-123";
+        let bad = HashMap::from([("sensors".to_string(), format!("\"{sentinel}\""))]);
+        let err = validate(Some(&s), &bad).expect_err("a JSON string is not an array of objects");
+        assert!(
+            !err.contains(sentinel),
+            "error must not echo the submitted value: {err}"
+        );
+        assert!(err.contains("sensors"), "error should name the key: {err}");
     }
 }

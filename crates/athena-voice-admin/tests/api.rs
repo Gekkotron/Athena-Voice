@@ -150,3 +150,30 @@ async fn put_config_persists_and_rejects_invalid() {
     let res = app.oneshot(bad).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY); // axum Json rejection
 }
+
+#[tokio::test]
+async fn put_config_rejects_reserved_key_before_persisting() {
+    // Schema validation can't fire in this test setup (skills: None, so no
+    // loaded schema) — that path is covered at the unit level in
+    // validate.rs. This pins the reject-before-persist ordering using the
+    // `$`-reserved-key path instead, which runs regardless of schema.
+    let (deps, token) = test_deps().await;
+    let store = deps.store.clone();
+    let app = router(deps);
+
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/jeedom/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"values":{"$http_allowlist":"[]"}}"#))
+        .unwrap();
+    let res = app.oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    let rows = store.skill_settings_for("jeedom").await.unwrap();
+    assert!(
+        rows.is_empty(),
+        "reserved-key write must be rejected before anything is persisted"
+    );
+}
