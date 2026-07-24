@@ -1,5 +1,5 @@
-//! Parses a French duration phrase (e.g. `"deux secondes"`, `"5 minutes"`,
-//! `"une heure"`) into a number of seconds.
+//! Parses spoken duration phrases (`"deux secondes"`, `"5 minutes"`,
+//! `"one hour"`) into a number of seconds — French and English.
 
 /// Parses `text` into a number of seconds. Returns `None` if the phrase
 /// isn't a recognized `<amount> <unit>` shape.
@@ -20,6 +20,52 @@ pub fn parse_fr_duration(text: &str) -> Option<u64> {
     let amount = parse_amount(amount_word)?;
     let unit_seconds = parse_unit_seconds(unit_word)?;
     Some(amount * unit_seconds)
+}
+
+/// English counterpart of [`parse_fr_duration`]: `<amount> <unit>` where
+/// amount is a digit or `one`..`ten` and unit is `second(s)`, `minute(s)`,
+/// or `hour(s)`.
+#[must_use]
+pub fn parse_en_duration(text: &str) -> Option<u64> {
+    let mut words = text.split_whitespace();
+    let amount_word = words.next()?;
+    let unit_word = words.next()?;
+    if words.next().is_some() {
+        return None;
+    }
+
+    let amount = parse_amount_en(amount_word)?;
+    let unit_seconds = parse_unit_seconds_en(unit_word)?;
+    Some(amount * unit_seconds)
+}
+
+fn parse_amount_en(word: &str) -> Option<u64> {
+    if let Ok(n) = word.parse::<u64>() {
+        return Some(n);
+    }
+    let n = match word.to_lowercase().as_str() {
+        "a" | "an" | "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        "four" => 4,
+        "five" => 5,
+        "six" => 6,
+        "seven" => 7,
+        "eight" => 8,
+        "nine" => 9,
+        "ten" => 10,
+        _ => return None,
+    };
+    Some(n)
+}
+
+fn parse_unit_seconds_en(word: &str) -> Option<u64> {
+    match word.to_lowercase().as_str() {
+        "second" | "seconds" => Some(1),
+        "minute" | "minutes" => Some(60),
+        "hour" | "hours" => Some(3600),
+        _ => None,
+    }
 }
 
 fn parse_amount(word: &str) -> Option<u64> {
@@ -90,5 +136,26 @@ mod tests {
         assert_eq!(parse_fr_duration("deux jours"), None);
         assert_eq!(parse_fr_duration("deux"), None);
         assert_eq!(parse_fr_duration(""), None);
+    }
+}
+
+#[cfg(test)]
+mod en_tests {
+    use super::*;
+
+    #[test]
+    fn parses_english_durations() {
+        assert_eq!(parse_en_duration("5 minutes"), Some(300));
+        assert_eq!(parse_en_duration("two seconds"), Some(2));
+        assert_eq!(parse_en_duration("one hour"), Some(3600));
+        assert_eq!(parse_en_duration("an hour"), Some(3600));
+        assert_eq!(parse_en_duration("ten minutes"), Some(600));
+    }
+
+    #[test]
+    fn rejects_unknown_english() {
+        assert_eq!(parse_en_duration("many seconds"), None);
+        assert_eq!(parse_en_duration("two days"), None);
+        assert_eq!(parse_en_duration(""), None);
     }
 }

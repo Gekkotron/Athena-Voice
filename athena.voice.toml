@@ -14,7 +14,7 @@
 #        cargo run -p athena-voice-client -- --microphone --play --timeout-secs 30
 #        cargo run -p athena-voice-client -- --wav test.wav --play --timeout-secs 30
 
-locales = ["fr"]
+locales = ["fr", "en"]
 
 [server]
 host = "127.0.0.1"

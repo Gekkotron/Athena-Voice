@@ -159,7 +159,9 @@ pub fn spawn_router(
                                     let dispatch_cancel_child = dispatch_cancel.clone();
                                     let session = deps.session;
                                     let skill = m.skill.clone();
-                                    let intent = m.intent.clone();
+                                    let mut intent = m.intent.clone();
+                                    // Skills answer in the session's language.
+                                    intent.locale = deps.locale.as_str().to_string();
                                     let this_epoch = epoch;
 
                                     // NB: the dispatcher emits `SkillInvoked`

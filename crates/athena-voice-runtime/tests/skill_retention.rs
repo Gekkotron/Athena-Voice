@@ -77,6 +77,7 @@ async fn skill_retention_ttl_expires_keys() {
     let intent = athena_voice_skill_sdk::Intent {
         name: "time.query".into(),
         slots: Default::default(),
+        locale: String::new(),
     };
     let reg = registry.clone();
     tokio::task::spawn_blocking(move || reg.dispatch(SKILL_NAME, intent))
@@ -100,6 +101,7 @@ async fn skill_retention_ttl_expires_keys() {
     let intent = athena_voice_skill_sdk::Intent {
         name: "other.query".into(),
         slots: Default::default(),
+        locale: String::new(),
     };
     let reg = registry.clone();
     let _ = tokio::task::spawn_blocking(move || reg.dispatch(SKILL_NAME, intent))

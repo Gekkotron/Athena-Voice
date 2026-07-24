@@ -1,7 +1,33 @@
-//! WMO weather-code → short French phrase mapping.
+//! WMO weather-code → short spoken phrase mapping (FR + EN).
 //!
 //! Codes are documented at
 //! <https://open-meteo.com/en/docs> (WMO Weather interpretation codes).
+
+/// Locale-dispatching phrase; unknown locales fall back to French.
+pub fn phrase(code: i64, locale: &str) -> &'static str {
+    if locale.starts_with("en") {
+        en_phrase(code)
+    } else {
+        fr_phrase(code)
+    }
+}
+
+pub fn en_phrase(code: i64) -> &'static str {
+    match code {
+        0 => "clear skies",
+        1..=3 => "a few clouds",
+        45 | 48 => "fog",
+        51..=57 => "drizzle",
+        61..=65 => "rain",
+        66 | 67 => "freezing rain",
+        71..=75 => "snow",
+        77 => "snow grains",
+        80..=82 => "showers",
+        85 | 86 => "snow showers",
+        95..=99 => "a thunderstorm",
+        _ => "unusual weather",
+    }
+}
 
 pub fn fr_phrase(code: i64) -> &'static str {
     match code {
@@ -99,5 +125,21 @@ mod tests {
         assert_eq!(fr_phrase(-1), "un temps particulier");
         assert_eq!(fr_phrase(42), "un temps particulier");
         assert_eq!(fr_phrase(200), "un temps particulier");
+    }
+}
+
+#[cfg(test)]
+mod en_tests {
+    use super::*;
+
+    #[test]
+    fn en_covers_same_ranges_as_fr() {
+        for code in [0, 2, 45, 53, 63, 66, 73, 77, 81, 85, 97, 200] {
+            assert!(!en_phrase(code).is_empty(), "code {code}");
+        }
+        assert_eq!(phrase(0, "en"), "clear skies");
+        assert_eq!(phrase(0, "en-US"), "clear skies");
+        assert_eq!(phrase(0, "fr"), "temps clair");
+        assert_eq!(phrase(0, ""), "temps clair");
     }
 }

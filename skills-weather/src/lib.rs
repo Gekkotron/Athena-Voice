@@ -27,7 +27,13 @@ const HARD_DEFAULT_CITY: &str = "Paris";
 const GEOCODING_DEFAULT_BASE: &str = "https://geocoding-api.open-meteo.com";
 const FORECAST_DEFAULT_BASE: &str = "https://api.open-meteo.com";
 
-const HTTP_ERROR_SPEAK: &str = "désolé, le service météo est indisponible";
+fn http_error_speak(locale: &str) -> &'static str {
+    if locale.starts_with("en") {
+        "sorry, the weather service is unavailable"
+    } else {
+        "désolé, le service météo est indisponible"
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Geo {
@@ -44,17 +50,13 @@ impl Skill for WeatherSkill {
     }
 
     fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
-        if locale != "fr" {
-            return Vec::new();
-        }
         let city_slot = vec![SlotSpec {
             name: "city".into(),
             kind: SlotKind::String,
         }];
-        vec![
-            PatternRule {
-                intent: "weather.now".into(),
-                phrases: vec![
+        let (now_phrases, tomorrow_phrases): (Vec<String>, Vec<String>) = match locale {
+            "fr" => (
+                vec![
                     "quel temps fait-il".into(),
                     "quel temps fait-il à {city}".into(),
                     "météo à {city}".into(),
@@ -63,35 +65,61 @@ impl Skill for WeatherSkill {
                     "quelle température fait-il".into(),
                     "quelle température fait-il à {city}".into(),
                 ],
+                vec![
+                    "quel temps fera-t-il demain".into(),
+                    "quel temps fera-t-il demain à {city}".into(),
+                ],
+            ),
+            "en" => (
+                vec![
+                    "what's the weather".into(),
+                    "what's the weather in {city}".into(),
+                    "weather in {city}".into(),
+                    "what's the temperature".into(),
+                    "what's the temperature outside".into(),
+                    "what is the temperature in {city}".into(),
+                ],
+                vec![
+                    "what's the weather tomorrow".into(),
+                    "what's the weather tomorrow in {city}".into(),
+                ],
+            ),
+            _ => return Vec::new(),
+        };
+        vec![
+            PatternRule {
+                intent: "weather.now".into(),
+                phrases: now_phrases,
                 slots: city_slot.clone(),
             },
             PatternRule {
                 intent: "weather.tomorrow".into(),
-                phrases: vec![
-                    "quel temps fera-t-il demain".into(),
-                    "quel temps fera-t-il demain à {city}".into(),
-                ],
+                phrases: tomorrow_phrases,
                 slots: city_slot,
             },
         ]
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
+        let locale = intent.locale.clone();
         let requested_city = resolve_city(&intent, ctx);
 
-        let geo = match resolve_geocoding(ctx, &requested_city) {
+        let geo = match resolve_geocoding(ctx, &requested_city, &locale) {
             Ok(Some(g)) => g,
             Ok(None) => {
-                return Ok(SkillResponse::speak(format!(
-                    "désolé, je ne trouve pas {requested_city}"
-                )));
+                let speech = if locale.starts_with("en") {
+                    format!("sorry, I can't find {requested_city}")
+                } else {
+                    format!("désolé, je ne trouve pas {requested_city}")
+                };
+                return Ok(SkillResponse::speak(speech));
             }
             Err(msg) => return Ok(SkillResponse::speak(msg)),
         };
 
         match intent.name.as_str() {
-            "weather.now" => weather_now(ctx, &geo),
-            "weather.tomorrow" => weather_tomorrow(ctx, &geo),
+            "weather.now" => weather_now(ctx, &geo, &locale),
+            "weather.tomorrow" => weather_tomorrow(ctx, &geo, &locale),
             other => Err(SkillError::Custom(format!("unknown intent: {other}"))),
         }
     }
@@ -120,7 +148,7 @@ fn resolve_city(intent: &Intent, ctx: &HostCtx) -> String {
 /// and there is no negative-cache for unknown cities. `Ok(None)` means the
 /// remote geocoding API returned zero results (unknown city); `Err(msg)`
 /// carries a user-facing failure line for HTTP / decode errors.
-fn resolve_geocoding(ctx: &HostCtx, city: &str) -> Result<Option<Geo>, String> {
+fn resolve_geocoding(ctx: &HostCtx, city: &str, locale: &str) -> Result<Option<Geo>, String> {
     let key = format!("geo/{}", city.to_lowercase());
     if let Ok(Some(bytes)) = ctx.state_get(&key)
         && let Ok(cached) = serde_json::from_slice::<Geo>(&bytes)
@@ -134,13 +162,14 @@ fn resolve_geocoding(ctx: &HostCtx, city: &str) -> Result<Option<Geo>, String> {
         .unwrap_or_else(|| GEOCODING_DEFAULT_BASE.to_string());
     let base = base.trim_end_matches('/');
     let encoded = url_encode(city);
-    let url = format!("{base}/v1/search?name={encoded}&language=fr&count=1");
+    let lang = if locale.starts_with("en") { "en" } else { "fr" };
+    let url = format!("{base}/v1/search?name={encoded}&language={lang}&count=1");
 
     let value = match ctx.http_get_json(&url) {
         Ok(v) => v,
         Err(e) => {
             ctx.log("warn", &format!("weather: geocoding HTTP failed: {e}"));
-            return Err(HTTP_ERROR_SPEAK.to_string());
+            return Err(http_error_speak(locale).to_string());
         }
     };
 
@@ -162,7 +191,7 @@ fn resolve_geocoding(ctx: &HostCtx, city: &str) -> Result<Option<Geo>, String> {
             "error",
             "weather: geocoding response missing latitude/longitude",
         );
-        return Err(HTTP_ERROR_SPEAK.to_string());
+        return Err(http_error_speak(locale).to_string());
     };
 
     let geo = Geo { lat, lon, name };
@@ -172,8 +201,8 @@ fn resolve_geocoding(ctx: &HostCtx, city: &str) -> Result<Option<Geo>, String> {
     Ok(Some(geo))
 }
 
-fn weather_now(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillError> {
-    let value = match fetch_forecast(ctx, geo) {
+fn weather_now(ctx: &HostCtx, geo: &Geo, locale: &str) -> Result<SkillResponse, SkillError> {
+    let value = match fetch_forecast(ctx, geo, locale) {
         Ok(v) => v,
         Err(msg) => return Ok(SkillResponse::speak(msg)),
     };
@@ -181,7 +210,7 @@ fn weather_now(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillError> {
         Some(c) => c,
         None => {
             ctx.log("error", "weather: forecast response missing 'current'");
-            return Ok(SkillResponse::speak(HTTP_ERROR_SPEAK));
+            return Ok(SkillResponse::speak(http_error_speak(locale)));
         }
     };
     let temp = current
@@ -195,18 +224,20 @@ fn weather_now(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillError> {
             "error",
             "weather: 'current' missing temperature_2m or weather_code",
         );
-        return Ok(SkillResponse::speak(HTTP_ERROR_SPEAK));
+        return Ok(SkillResponse::speak(http_error_speak(locale)));
     };
     let temp_i = temp.round() as i64;
-    let phrase = weather_code::fr_phrase(code);
-    Ok(SkillResponse::speak(format!(
-        "il fait {temp_i} degrés à {}, {phrase}",
-        geo.name
-    )))
+    let phrase = weather_code::phrase(code, locale);
+    let speech = if locale.starts_with("en") {
+        format!("it is {temp_i} degrees in {}, {phrase}", geo.name)
+    } else {
+        format!("il fait {temp_i} degrés à {}, {phrase}", geo.name)
+    };
+    Ok(SkillResponse::speak(speech))
 }
 
-fn weather_tomorrow(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillError> {
-    let value = match fetch_forecast(ctx, geo) {
+fn weather_tomorrow(ctx: &HostCtx, geo: &Geo, locale: &str) -> Result<SkillResponse, SkillError> {
+    let value = match fetch_forecast(ctx, geo, locale) {
         Ok(v) => v,
         Err(msg) => return Ok(SkillResponse::speak(msg)),
     };
@@ -214,7 +245,7 @@ fn weather_tomorrow(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillErro
         Some(d) => d,
         None => {
             ctx.log("error", "weather: forecast response missing 'daily'");
-            return Ok(SkillResponse::speak(HTTP_ERROR_SPEAK));
+            return Ok(SkillResponse::speak(http_error_speak(locale)));
         }
     };
     let min = daily
@@ -237,18 +268,26 @@ fn weather_tomorrow(ctx: &HostCtx, geo: &Geo) -> Result<SkillResponse, SkillErro
             "error",
             "weather: 'daily' missing min/max/weather_code at index 0",
         );
-        return Ok(SkillResponse::speak(HTTP_ERROR_SPEAK));
+        return Ok(SkillResponse::speak(http_error_speak(locale)));
     };
     let min_i = min.round() as i64;
     let max_i = max.round() as i64;
-    let phrase = weather_code::fr_phrase(code);
-    Ok(SkillResponse::speak(format!(
-        "demain à {}, il fera entre {min_i} et {max_i} degrés avec {phrase}",
-        geo.name
-    )))
+    let phrase = weather_code::phrase(code, locale);
+    let speech = if locale.starts_with("en") {
+        format!(
+            "tomorrow in {}, it will be between {min_i} and {max_i} degrees with {phrase}",
+            geo.name
+        )
+    } else {
+        format!(
+            "demain à {}, il fera entre {min_i} et {max_i} degrés avec {phrase}",
+            geo.name
+        )
+    };
+    Ok(SkillResponse::speak(speech))
 }
 
-fn fetch_forecast(ctx: &HostCtx, geo: &Geo) -> Result<serde_json::Value, String> {
+fn fetch_forecast(ctx: &HostCtx, geo: &Geo, locale: &str) -> Result<serde_json::Value, String> {
     let base = ctx
         .config_get_toml("forecast_base_url")
         .filter(|s| !s.is_empty())
@@ -262,7 +301,7 @@ fn fetch_forecast(ctx: &HostCtx, geo: &Geo) -> Result<serde_json::Value, String>
         Ok(v) => Ok(v),
         Err(e) => {
             ctx.log("warn", &format!("weather: forecast HTTP failed: {e}"));
-            Err(HTTP_ERROR_SPEAK.to_string())
+            Err(http_error_speak(locale).to_string())
         }
     }
 }

@@ -16,18 +16,17 @@ impl Skill for SmokeSkill {
     }
 
     fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
-        if locale != "fr" {
-            return Vec::new();
+        let mut rules = time::patterns(locale);
+        if locale == "fr" {
+            rules.extend(audio::patterns());
         }
-        let mut rules = time::patterns();
-        rules.extend(audio::patterns());
         rules
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
         let name = intent.name.clone();
         let result = match name.as_str() {
-            "time.query" => time::handle(intent, ctx),
+            "time.query" => time::handle(&intent, ctx),
             "audio.play" | "audio.volume" => audio::handle(intent),
             _ => Err(SkillError::Custom(format!("unknown intent {name}"))),
         };

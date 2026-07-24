@@ -44,11 +44,6 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
       Never commit API keys; read them from an env var named in the config.
       Success criteria: (a) unmatched questions get spoken LLM answers with a remote endpoint configured; (b) provider tests green without network; (c) config documented in athena.voice.toml comments.
 
-- [ ] English pattern coverage for the bundled skills
-      The locale plumbing is generic ([skills] pattern_rules(locale) per locale, Locale on sessions) but every bundled skill returns patterns only for "fr". Add EN phrases and responses to smoke-test (time), weather, and timer (duration parser needs an EN counterpart to parse_fr_duration), keyed off the locale argument.
-      Keep FR behavior byte-identical (regression: existing integration tests must not change).
-      Success criteria: (a) a session started with locale "en" matches "what time is it" / "weather in {city}" / "set a timer for {duration}" and answers in English; (b) new integration test drives one EN utterance end to end; (c) FR tests untouched and green.
-
 - [ ] Piper engine option for the TTS worker (PORTABILITY: `say` is the only macOS-only piece left in the voice path)
       Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
       Piper CLI outputs WAV at the model's native rate; resample or pass the actual rate in the response if it differs from --rate (keep it simple: require the worker's --rate to match the model and validate at startup).
@@ -64,6 +59,9 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 ## In progress
 
 ## Done
+
+- [x] English pattern coverage for the bundled skills (2026-07-24)
+      sdk Intent carries the session locale (serde default keeps wire compat; router injects it at dispatch). smoke-test time, weather (patterns, responses, WMO phrases, geocoding language param), and timer (parse_en_duration) answer in English for locale "en"; configs ship locales = ["fr", "en"]. Verified live: EN voice ("What time is it" → "it is 3:14 PM"), EN weather with real data, FR regression intact; new en_end_to_end integration test.
 
 - [x] Ollama LLM fallback verified live + token-contract fix (2026-07-24)
       llama3.2:1b via `brew install ollama` answers unmatched/compound questions in French, streamed sentence-by-sentence through say TTS. Fixed en route: TTS token channel is now VERBATIM fragments (LLMs stream sub-word pieces with their own spacing — the old space-joining would have garbled real LLM text); LLM actor speaks a locale-aware apology when the backend fails; ollama.rs edge-case tests (refused/malformed/no-done). Weather skill gained temperature phrasings ("quelle est la température (extérieure)"). NB: Ollama is too slow on the GEEKOM target — see the remote-LLM backlog task.

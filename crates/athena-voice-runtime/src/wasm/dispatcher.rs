@@ -208,6 +208,7 @@ mod tests {
         Intent {
             name: name.into(),
             slots: BTreeMap::new(),
+            locale: String::new(),
         }
     }
 

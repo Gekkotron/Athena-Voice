@@ -90,6 +90,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
             intent: Intent {
                 name: rule.intent.clone(),
                 slots: BTreeMap::new(),
+                locale: String::new(),
             },
             skill: String::new(),
             confidence: sim as f32,
@@ -157,6 +158,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
         intent: Intent {
             name: rule.intent.clone(),
             slots,
+            locale: String::new(),
         },
         skill: String::new(), // populated by IntentMatcher::find_match
         confidence,

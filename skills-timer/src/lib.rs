@@ -12,7 +12,7 @@ use athena_voice_skill_sdk::host::HostCtx;
 use athena_voice_skill_sdk::{Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec};
 use extism_pdk::{FnResult, plugin_fn};
 
-use duration::parse_fr_duration;
+use duration::{parse_en_duration, parse_fr_duration};
 
 const MAX_SECONDS: u64 = 24 * 3600;
 
@@ -24,20 +24,26 @@ impl Skill for TimerSkill {
     }
 
     fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
-        if locale != "fr" {
-            return Vec::new();
-        }
+        let phrases: Vec<String> = match locale {
+            "fr" => vec![
+                "mets un minuteur de {duration}".into(),
+                "minuteur {duration}".into(),
+                "réveille-moi dans {duration}".into(),
+            ],
+            "en" => vec![
+                "set a timer for {duration}".into(),
+                "timer for {duration}".into(),
+                "wake me up in {duration}".into(),
+            ],
+            _ => return Vec::new(),
+        };
         let slots = vec![SlotSpec {
             name: "duration".into(),
             kind: SlotKind::String,
         }];
         vec![PatternRule {
             intent: "timer.set".into(),
-            phrases: vec![
-                "mets un minuteur de {duration}".into(),
-                "minuteur {duration}".into(),
-                "réveille-moi dans {duration}".into(),
-            ],
+            phrases,
             slots,
         }]
     }
@@ -50,16 +56,26 @@ impl Skill for TimerSkill {
             .unwrap_or_default()
             .to_string();
 
-        let Some(seconds) = parse_fr_duration(&duration_text) else {
-            return Ok(SkillResponse::speak(
-                "désolé, je n'ai pas compris la durée du minuteur",
-            ));
+        let en = intent.locale.starts_with("en");
+        let parsed = if en {
+            parse_en_duration(&duration_text)
+        } else {
+            parse_fr_duration(&duration_text)
+        };
+        let Some(seconds) = parsed else {
+            return Ok(SkillResponse::speak(if en {
+                "sorry, I didn't understand the timer duration"
+            } else {
+                "désolé, je n'ai pas compris la durée du minuteur"
+            }));
         };
 
         if seconds > MAX_SECONDS {
-            return Ok(SkillResponse::speak(
-                "désolé, je ne gère que les minuteurs de moins de vingt-quatre heures",
-            ));
+            return Ok(SkillResponse::speak(if en {
+                "sorry, I only handle timers under twenty-four hours"
+            } else {
+                "désolé, je ne gère que les minuteurs de moins de vingt-quatre heures"
+            }));
         }
 
         let now_ms = now_millis();
@@ -73,9 +89,11 @@ impl Skill for TimerSkill {
     // Also set persistent kv for cross-restart durability
     ctx.state_set(&format!("timer/{id}"), &seconds.to_le_bytes())?;
 
-        Ok(SkillResponse::speak(format!(
-            "d'accord, minuteur de {duration_text} lancé"
-        )))
+        Ok(SkillResponse::speak(if en {
+            format!("okay, timer for {duration_text} started")
+        } else {
+            format!("d'accord, minuteur de {duration_text} lancé")
+        }))
     }
 }
 

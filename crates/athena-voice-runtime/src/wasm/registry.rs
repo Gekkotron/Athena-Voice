@@ -553,6 +553,7 @@ mod tests {
         let intent = Intent {
             name: "time.query".into(),
             slots: BTreeMap::new(),
+            locale: String::new(),
         };
         let resp = reg.dispatch("clock", intent).unwrap();
         assert!(matches!(resp, SkillResponse::Speak { text } if text == "il est huit heures"));
@@ -579,6 +580,7 @@ mod tests {
                 Intent {
                     name: "weather.query".into(),
                     slots: BTreeMap::new(),
+                    locale: String::new(),
                 },
             )
             .unwrap_err();
@@ -594,6 +596,7 @@ mod tests {
                 Intent {
                     name: "x".into(),
                     slots: BTreeMap::new(),
+                    locale: String::new(),
                 },
             )
             .unwrap_err();

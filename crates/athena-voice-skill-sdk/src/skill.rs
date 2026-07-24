@@ -34,6 +34,11 @@ pub struct Intent {
     pub name: String,
     #[serde(default)]
     pub slots: BTreeMap<String, serde_json::Value>,
+    /// Locale of the session that produced this intent (e.g. "fr", "en").
+    /// Filled by the router at dispatch time; empty in unit tests and older
+    /// hosts — skills should treat unknown values as their default locale.
+    #[serde(default)]
+    pub locale: String,
 }
 
 /// Trait skills implement on the guest side. On the host side, we invoke it via

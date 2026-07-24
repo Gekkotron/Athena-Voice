@@ -9,7 +9,7 @@
 # text injection, and the fake TTS streams the answer's words back as
 # chunks, which the client prints as the spoken sentence.
 
-locales = ["fr"]
+locales = ["fr", "en"]
 
 [server]
 host = "127.0.0.1"
