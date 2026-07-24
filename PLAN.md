@@ -33,11 +33,6 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Backlog
 
-- [ ] One-command quickstart for new users
-      Today a new user needs mosquitto + two workers + serve + client, plus whisper.cpp built and a model downloaded — five terminals and tribal knowledge. Add a `quickstart.sh` at the repo root that: checks prerequisites (cargo, mosquitto or offers `docker run eclipse-mosquitto`, cmake); builds whisper-cli if missing; downloads ggml-small.bin if missing (with size warning); builds all skills and binaries; then starts broker-check + stt worker + tts worker + serve with athena.voice.toml under one process group with clean Ctrl-C teardown and prefixed log lines.
-      Also add a matching README section (the current README is 466 bytes) covering Linux (apt paths, Piper instead of say once available) and macOS.
-      Success criteria: (a) fresh clone → `./quickstart.sh` → `cargo run -p athena-voice-client -- --text "météo à Paris"` answers, with no other manual steps besides model download consent; (b) Ctrl-C stops everything it started; (c) script is POSIX-friendly bash checked with shellcheck.
-
 - [ ] Remote LLM provider for constrained targets (GEEKOM)
       Local Ollama inference is too slow on the GEEKOM deployment target. Two paths, both config-only for the runtime: (1) point `base_url` at an Ollama served from a beefier LAN host (works today — the provider is just HTTP); (2) add an `openai_compatible` StageChoice variant in `crates/athena-voice-providers` (chat/completions streaming, api key from env var, base_url + model in config) so hosted APIs and llama.cpp/vLLM servers all work through one provider.
       Mirror the ollama.rs patterns: mockito tests for streaming, HTTP errors, connection refused, malformed chunks, termination; the pipeline's spoken-apology fallback already covers backend death.
@@ -59,6 +54,9 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 ## In progress
 
 ## Done
+
+- [x] One-command quickstart + real README (2026-07-24)
+      ./quickstart.sh: detects broker (running / mosquitto / docker fallback), offers the whisper model download, builds whisper.cpp + skills + binaries, picks the richest mode (voice/say/fake), starts everything with prefixed logs and trap-based teardown (process substitution so $! is the worker, not the log prefixer), readiness-probes with a real client call. shellcheck-clean; verified live including SIGTERM teardown. README rewritten: architecture, modes table, satellite protocol table, manual setup, dev workflow.
 
 - [x] English pattern coverage for the bundled skills (2026-07-24)
       sdk Intent carries the session locale (serde default keeps wire compat; router injects it at dispatch). smoke-test time, weather (patterns, responses, WMO phrases, geocoding language param), and timer (parse_en_duration) answer in English for locale "en"; configs ship locales = ["fr", "en"]. Verified live: EN voice ("What time is it" → "it is 3:14 PM"), EN weather with real data, FR regression intact; new en_end_to_end integration test.
