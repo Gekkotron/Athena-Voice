@@ -37,7 +37,10 @@ impl MqttProviderClient {
         response_topic: impl Into<String>,
         request_timeout: Duration,
     ) -> Self {
-        let opts = MqttOptions::new(client_id.into(), broker_host.into(), broker_port);
+        let mut opts = MqttOptions::new(client_id.into(), broker_host.into(), broker_port);
+        // Streaming TTS responses carry base64 PCM chunks (~12 KiB of JSON
+        // per 200 ms) — well above rumqttc's 10 KiB default packet cap.
+        opts.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
         let (client, event_loop) = AsyncClient::new(opts, 128);
         let response_topic = response_topic.into();
         // Subscribe to responses. Ignore error — pump will retry on reconnect.
@@ -95,6 +98,12 @@ impl MqttProviderClient {
     pub fn response_topic(&self) -> &str {
         &self.response_topic
     }
+
+    /// Timeout the caller should apply while waiting for streamed responses.
+    #[must_use]
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
+    }
 }
 
 /// Pumps the MQTT event loop and routes incoming publishes on `response_topic`
@@ -115,8 +124,16 @@ fn spawn_pump(
                     let Some(sid) = extract_session(&p.payload) else {
                         continue;
                     };
-                    if let Some(sender) = routes.get(&sid) {
-                        let _ = sender.try_send(p);
+                    let closed = routes
+                        .get(&sid)
+                        .is_some_and(|sender| matches!(
+                            sender.try_send(p),
+                            Err(mpsc::error::TrySendError::Closed(_))
+                        ));
+                    // Receiver dropped (stream finished / timed out): drop the
+                    // stale route so the map doesn't grow per session.
+                    if closed {
+                        routes.remove(&sid);
                     }
                 }
                 Ok(_) => {}

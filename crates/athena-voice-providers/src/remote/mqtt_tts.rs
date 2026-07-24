@@ -11,7 +11,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use futures::stream::StreamExt;
 use serde_json::json;
 
 use athena_voice_core::ids::{Locale, SessionId};
@@ -63,14 +62,48 @@ impl Tts for MqttTts {
         });
         let payload = Bytes::from(request.to_string().into_bytes());
         let rx = self.client.call_streaming(session, payload).await?;
+        let timeout = self.client.request_timeout();
 
-        let audio_stream =
-            tokio_stream::wrappers::ReceiverStream::new(rx).filter_map(|publish| async move {
-                let v: serde_json::Value = serde_json::from_slice(&publish.payload).ok()?;
-                let b64 = v.get("chunk_b64")?.as_str()?;
-                let bytes = STANDARD.decode(b64).ok()?;
-                Some(Ok::<Bytes, BoxError>(Bytes::from(bytes)))
-            });
+        // The stream must terminate: on the worker's `done: true` marker, on
+        // a per-message timeout (worker died mid-stream), or on channel
+        // close. A `done` message may itself carry a final chunk.
+        let audio_stream = futures::stream::unfold((rx, false), move |(mut rx, finished)| {
+            async move {
+                if finished {
+                    return None;
+                }
+                loop {
+                    match tokio::time::timeout(timeout, rx.recv()).await {
+                        Err(_) | Ok(None) => return None,
+                        Ok(Some(publish)) => {
+                            let Ok(v) =
+                                serde_json::from_slice::<serde_json::Value>(&publish.payload)
+                            else {
+                                continue;
+                            };
+                            let done = v
+                                .get("done")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false);
+                            let chunk = v
+                                .get("chunk_b64")
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|b| STANDARD.decode(b).ok());
+                            match chunk {
+                                Some(bytes) => {
+                                    return Some((
+                                        Ok::<Bytes, BoxError>(Bytes::from(bytes)),
+                                        (rx, done),
+                                    ));
+                                }
+                                None if done => return None,
+                                None => continue,
+                            }
+                        }
+                    }
+                }
+            }
+        });
         Ok(Box::pin(audio_stream))
     }
 

@@ -1,0 +1,39 @@
+# Local test config with REAL text-to-speech.
+#
+# Same stack as athena.local.toml, but the TTS stage is served by the
+# `athena-voice-tts-worker` binary over MQTT (macOS `say` as the engine):
+#
+#   1. brew services start mosquitto                      (once)
+#   2. cargo run -p athena-voice-tts-worker               (own terminal)
+#   3. cargo run -p athena-voice-cli -- serve --config athena.say.toml
+#   4. cargo run -p athena-voice-client -- --text "météo à Strasbourg" --play
+#
+# The client's --play flag renders the synthesized s16le/22050 chunks on
+# your speakers; real satellites would do the same with the bytes they
+# receive on their session's tts topic.
+
+locales = ["fr"]
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[storage]
+database_url = "sqlite:///tmp/athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice-local"
+
+[providers]
+stt = "fake"
+llm = "fake"
+tts = { mqtt_tts = { name = "say" } }
+
+[skills]
+dir = "./skills"
+
+[skills.weather]
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+config = { default_city = "Strasbourg" }

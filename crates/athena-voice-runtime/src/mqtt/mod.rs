@@ -32,6 +32,9 @@ impl MqttClient {
     pub fn connect(config: MqttConfig) -> Result<Self, RuntimeError> {
         let mut opts = MqttOptions::new(&config.client_id, &config.host, config.port);
         opts.set_keep_alive(Duration::from_secs(config.keep_alive_secs));
+        // TTS egress publishes raw PCM chunks close to rumqttc's 10 KiB
+        // default cap; give audio traffic ample headroom.
+        opts.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
         if let (Some(u), Some(p)) = (&config.username, &config.password) {
             opts.set_credentials(u, p);
         }
