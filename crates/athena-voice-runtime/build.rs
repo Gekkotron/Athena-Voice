@@ -62,6 +62,15 @@ fn main() {
     build_skill_wasm(
         project_root,
         &out_dir,
+        "skills-jeedom",
+        "skills_jeedom",
+        "jeedom-target",
+        "JEEDOM_TEST_WASM",
+        "JEEDOM_TEST_WASM_SKIP",
+    );
+    build_skill_wasm(
+        project_root,
+        &out_dir,
         "skills-weather",
         "skills_weather",
         "weather-target",

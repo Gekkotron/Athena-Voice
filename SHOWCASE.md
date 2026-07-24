@@ -22,6 +22,7 @@
 | `timer` | `timer.set` (FR patterns) | State retention, tmp storage, MQTT events |
 | `weather` | `weather.now`, `weather.tomorrow` (FR patterns) | Live open-meteo HTTP, geocoding cache |
 | `home` | Light/switch control (FR patterns) | MQTT publish allowlist |
+| `jeedom` | `jeedom.read` — sensor values by voice (FR + EN) | Jeedom HTTP API, fuzzy sensor names |
 
 ## Quick Start
 

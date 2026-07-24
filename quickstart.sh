@@ -107,6 +107,7 @@ say_step "building skills"
 ./skills-smoke-test/build.sh >/dev/null
 ./skills-timer/build.sh >/dev/null
 ./skills-weather/build.sh >/dev/null
+./skills-jeedom/build.sh >/dev/null
 say_step "building binaries"
 BINARIES=(-p athena-voice-cli -p athena-voice-client)
 [[ "$MODE" != fake ]] && BINARIES+=(-p athena-voice-tts-worker)

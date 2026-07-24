@@ -92,6 +92,14 @@ hot_reload = false
     # 
     # [skills.home]
     # mqtt_publish_allowlist = ["home/+/light/set", "home/+/switch/set"]
+
+# Jeedom sensor connector: read sensor values by voice ("donne-moi la
+# température du salon"). `sensors` is a JSON array mapping spoken names to
+# Jeedom command ids; the api key travels only on your LAN but restrict it
+# to the commands you expose.
+# [skills.jeedom]
+# http_allowlist = ["jeedom.local"]
+# config = { base_url = "http://jeedom.local", api_key = "YOUR_KEY", sensors = '[{"name":"température du salon","id":123,"unit":"degrés"}]' }
     # config = { entities = '[{"name":"lumière du salon","room":"salon","kind":"light","set_topic":"home/salon/light/set","on_payload":"ON","off_payload":"OFF"}]' }
     # # Optional retention policy: delete keys older than 1 hour
     # retention = { gc_after_sec = 3600 }

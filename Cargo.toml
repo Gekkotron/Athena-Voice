@@ -20,6 +20,7 @@ exclude = [
     "skills-smoke-test",
     "skills-timer",
     "skills-home",
+    "skills-jeedom",
     "skills-weather",
     "skills-audio-test",
     "skills-tmp-test",

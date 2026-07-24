@@ -15,7 +15,8 @@ mic/text ──▶ MQTT ──▶ VAD ─▶ STT (whisper.cpp) ─▶ intent mat
 - **Skills** are sandboxed WASM plugins (Extism) with a capability-scoped
   host API: HTTP allowlists, MQTT topic ACLs, per-skill key-value storage
   with retention, scheduled events, local time, audio playback. Bundled:
-  time, weather (Open-Meteo, no API key), timers, home automation (MQTT).
+  time, weather (Open-Meteo, no API key), timers, home automation (MQTT),
+  and Jeedom sensors (read any sensor by voice via the Jeedom HTTP API).
 - **Providers** are pluggable per stage: STT (whisper.cpp worker or fake),
   LLM (**optional** — `none` by default; unmatched questions get a spoken
   capabilities answer; opt into Ollama or any OpenAI-compatible endpoint,
