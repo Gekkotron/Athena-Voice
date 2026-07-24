@@ -1,6 +1,6 @@
 //! JSON handlers for the admin API.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use axum::Json;
 use axum::extract::State;
@@ -162,4 +162,110 @@ pub(crate) async fn list_skills(State(state): State<AppState>) -> Response {
         out.push(skill_info(&state, &name, rows, &disabled, &registry_names));
     }
     Json(out).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct ConfigWrite {
+    values: HashMap<String, String>,
+}
+
+pub(crate) async fn put_config(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(body): Json<ConfigWrite>,
+) -> Response {
+    let schema = state
+        .skills
+        .as_ref()
+        .and_then(|h| h.registry.config_schema(&name));
+    if let Err(msg) = crate::validate::validate(schema.as_ref(), &body.values) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": msg})),
+        )
+            .into_response();
+    }
+    if let Some(bad_key) = body.values.keys().find(|k| k.starts_with('$')) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("`{bad_key}` is a reserved key")})),
+        )
+            .into_response();
+    }
+    let secret_keys: BTreeSet<&str> = schema
+        .as_ref()
+        .map(|s| {
+            s.fields
+                .iter()
+                .filter(|f| f.is_secret())
+                .map(|f| f.key.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for (key, value) in &body.values {
+        if let Err(e) = state
+            .store
+            .skill_setting_set(&name, key, value, secret_keys.contains(key.as_str()))
+            .await
+        {
+            return internal_error(e);
+        }
+    }
+
+    // Recompute the allowlist from the FULL merged value set (old + new),
+    // so saving one field doesn't drop hosts implied by others.
+    if let Some(schema) = &schema {
+        let rows = match state.store.skill_settings_for(&name).await {
+            Ok(r) => r,
+            Err(e) => return internal_error(e),
+        };
+        let base = state.base_per_skill.get(&name).cloned().unwrap_or_default();
+        let pairs: Vec<(String, String)> = rows.into_iter().map(|r| (r.key, r.value)).collect();
+        let merged = apply_settings(&base, &pairs);
+        let hosts = crate::validate::derived_allowlist(schema, &merged.config);
+        if !hosts.is_empty() {
+            let json = serde_json::to_string(&hosts).expect("Vec<String> serializes");
+            if let Err(e) = state
+                .store
+                .skill_setting_set(&name, HTTP_ALLOWLIST_KEY, &json, false)
+                .await
+            {
+                return internal_error(e);
+            }
+        }
+    }
+
+    let reload_error = reload_skill(&state, &name).await.err();
+    Json(serde_json::json!({"ok": true, "reload_error": reload_error})).into_response()
+}
+
+/// Rebuild the skill's merged config and reload its plugin in place.
+/// `Ok(())` when the admin runs without a skill runtime (config still saved).
+pub(crate) async fn reload_skill(state: &AppState, name: &str) -> Result<(), String> {
+    let Some(handle) = &state.skills else {
+        return Ok(());
+    };
+    let wasm = handle.dir.join(format!("{name}.wasm"));
+    if !wasm.is_file() {
+        return Ok(()); // not installed yet; config waits for the upload
+    }
+    let rows = state
+        .store
+        .skill_settings_for(name)
+        .await
+        .map_err(|e| e.to_string())?;
+    let base = state.base_per_skill.get(name).cloned().unwrap_or_default();
+    let pairs: Vec<(String, String)> = rows.into_iter().map(|r| (r.key, r.value)).collect();
+    let merged = apply_settings(&base, &pairs);
+
+    let mut deps = handle.deps.clone();
+    deps.per_skill.insert(name.to_string(), merged);
+    // reload_path is synchronous plugin construction — run it off the
+    // async worker thread.
+    let registry = handle.registry.clone();
+    let res = tokio::task::spawn_blocking(move || registry.reload_path(&wasm, &deps))
+        .await
+        .map_err(|e| e.to_string())?;
+    res.map(|_| ()).map_err(|e| e.to_string())
 }

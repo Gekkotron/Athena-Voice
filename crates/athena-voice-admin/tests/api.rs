@@ -116,3 +116,37 @@ async fn skills_list_masks_secrets_and_shows_disabled() {
     assert_eq!(jeedom["config"]["api_key"]["set"], true);
     assert_eq!(jeedom["config"]["base_url"]["value"], "http://db"); // DB wins
 }
+
+#[tokio::test]
+async fn put_config_persists_and_rejects_invalid() {
+    let (deps, token) = test_deps().await;
+    let store = deps.store.clone();
+    let app = router(deps);
+
+    // No schema (skill not loaded) → free-form values accepted.
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/jeedom/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"values":{"base_url":"http://192.168.1.91"}}"#,
+        ))
+        .unwrap();
+    let res = app.clone().oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let rows = store.skill_settings_for("jeedom").await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].value, "http://192.168.1.91");
+
+    // Malformed body → 400.
+    let bad = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/jeedom/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"nope": 1}"#))
+        .unwrap();
+    let res = app.oneshot(bad).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY); // axum Json rejection
+}

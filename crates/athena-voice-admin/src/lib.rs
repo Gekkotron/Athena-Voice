@@ -3,6 +3,7 @@
 
 pub(crate) mod api;
 pub mod auth;
+pub(crate) mod validate;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -54,7 +55,8 @@ pub fn router(deps: AdminDeps) -> Router {
     let api = Router::new()
         .route("/status", get(status))
         .route("/skills", get(api::list_skills))
-        // Task 9+ add: skill config/enable/upload/bundled routes here.
+        .route("/skills/{name}/config", axum::routing::put(api::put_config))
+        // Task 10+ add: skill enable/upload/bundled routes here.
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .with_state(state);
     Router::new().nest("/api", api).fallback(get(static_asset))
