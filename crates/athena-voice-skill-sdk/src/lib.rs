@@ -6,9 +6,11 @@
 
 pub mod host;
 pub mod response;
+pub mod schema;
 pub mod skill;
 
 pub use response::{SkillError, SkillResponse};
+pub use schema::{ConfigField, ConfigSchema, FieldKind, ItemField};
 pub use skill::{Intent, PatternRule, Skill, SlotKind, SlotSpec};
 
 // Re-exported so guest skills (which live outside the workspace and pull the
