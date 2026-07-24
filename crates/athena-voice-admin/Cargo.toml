@@ -25,6 +25,11 @@ athena-voice-storage = { workspace = true }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+rumqttc = { workspace = true }
+reqwest = { workspace = true }
+# `test-support` exposes real skill-wasm fixture paths built by the
+# runtime's own build.rs; see that crate's `test_support` module doc.
+athena-voice-runtime = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

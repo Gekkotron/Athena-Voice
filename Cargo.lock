@@ -262,6 +262,8 @@ dependencies = [
  "athena-voice-storage",
  "axum 0.8.9",
  "include_dir",
+ "reqwest",
+ "rumqttc",
  "serde",
  "serde_json",
  "tempfile",

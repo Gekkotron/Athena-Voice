@@ -66,6 +66,27 @@ commands. In short: an MQTT broker, optionally
 `cargo run -p athena-voice-stt-worker` and `-p athena-voice-tts-worker`,
 then `cargo run -p athena-voice-cli -- serve --config <config>`.
 
+## Web configuration
+
+`serve` now hosts a small admin UI on `[server] host/port`
+(default `http://127.0.0.1:8080`).
+
+- **First start prints a one-time admin token** — save it; only its hash is
+  stored. To reset it, delete the `admin_auth` row in the SQLite DB and
+  restart.
+- Configure skills (including the Jeedom API key and sensor list) in the
+  browser: values land in the SQLite database, **never in TOML files**, and
+  override `[skills.<name>]` TOML keys one by one.
+- Enable/disable skills and upload new `.wasm` skills from the same page;
+  changes apply live, no restart.
+- To reach the UI from another machine, set `[server] host = "0.0.0.0"` —
+  the token is still required.
+- Any config value can also be overridden by environment variables:
+  `ATHENA__SERVER__PORT=9090` (double underscore = nesting).
+
+Skills can describe their settings by exporting `config_schema` (see
+`skills-jeedom/src/lib.rs`); skills without it get a raw key/value editor.
+
 ## Enabling the Jeedom skill
 
 The skill ships built (`quickstart.sh` and `./skills-jeedom/build.sh` both
@@ -75,22 +96,23 @@ configured. Three steps:
 1. In Jeedom, note the **command id** of each sensor you want to expose
    (shown on the command's line in the equipment page) and an **API key**
    (Settings → System → Configuration → API).
-2. Add to the config you serve with (e.g. `athena.voice.toml`):
+2. Configure the skill from the web UI above (default
+   `http://127.0.0.1:8080`): open the `jeedom` entry, paste the **API key**
+   into its (masked) secret field, set `base_url` to your box's address
+   (e.g. `http://jeedom.local`), and add each sensor's `name` / `id` /
+   `unit` to the sensor list — `name` is what you'll say (fuzzy-matched),
+   `id` the Jeedom command id, `unit` is spoken after the value. Saving
+   applies the change live, no restart, and the key never touches a TOML
+   file.
+3. Enable the skill from the same page (if not already), then: *« donne-moi
+   la température du salon »* / *"give me the température du salon"*.
 
-   ```toml
-   [skills.jeedom]
-   http_allowlist = ["jeedom.local"]   # your box's hostname or IP
-   config = { base_url = "http://jeedom.local", api_key = "YOUR_KEY", sensors = '[{"name":"température du salon","id":123,"unit":"degrés"},{"name":"humidité de la chambre","id":456,"unit":"pourcent"}]' }
-   ```
-
-   `name` is what you'll say (fuzzy-matched), `id` the Jeedom command id,
-   `unit` is spoken after the value.
-3. Restart the server, then: *« donne-moi la température du salon »* /
-   *"give me the température du salon"*.
-
-Skills in general follow the same recipe: build to `skills/<name>.wasm`,
-add a `[skills.<name>]` section for its capabilities (HTTP/MQTT
-allowlists, config), restart.
+Skills in general follow the same recipe: build to `skills/<name>.wasm`
+(or upload it straight from the web UI), then configure it there — skills
+without a `config_schema` still get a raw key/value editor. A
+`[skills.<name>]` TOML section remains available for non-secret defaults
+(HTTP/MQTT allowlists, config) and is merged underneath whatever the UI
+saves.
 
 ## Satellite protocol (write your own client)
 

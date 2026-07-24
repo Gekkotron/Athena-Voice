@@ -1,10 +1,10 @@
 #![deny(warnings)]
 //! Athena-Voice runtime: actor DAG + MQTT satellite adapter + event bus.
 
+pub mod audio;
 pub mod config;
 pub mod error;
 pub mod event_bus;
-pub mod audio;
 pub mod intent;
 pub mod locale;
 pub mod mqtt;
@@ -12,6 +12,21 @@ pub mod pipeline;
 pub mod satellite;
 pub mod session;
 pub mod wasm;
+
+/// Paths to the `.wasm` skill fixtures this crate's `build.rs` builds for its
+/// own integration tests, re-exported so other crates' tests can load a real
+/// skill without depending on the gitignored `skills/*.wasm` bundle (those
+/// are produced by each `skills-*/build.sh` and aren't present in a fresh
+/// clone) or duplicating the wasm32-wasip1 build step. Gated behind the
+/// `test-support` feature, enabled only from `[dev-dependencies]`.
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    /// Built from the `skills-smoke-test` crate.
+    pub const SMOKE_TEST_WASM: &str = env!("SMOKE_TEST_WASM");
+    /// Built from the `skills-jeedom` crate; exports a `config_schema` that
+    /// marks `api_key` secret and `base_url` url-typed.
+    pub const JEEDOM_TEST_WASM: &str = env!("JEEDOM_TEST_WASM");
+}
 
 pub use error::RuntimeError;
 
@@ -175,7 +190,10 @@ impl Runtime {
         {
             let event_bus_clone = event_bus.clone();
             drop(tokio::spawn(async move {
-                if let Err(e) = audio::AudioSink::new(event_bus_clone.subscribe()).run().await {
+                if let Err(e) = audio::AudioSink::new(event_bus_clone.subscribe())
+                    .run()
+                    .await
+                {
                     tracing::error!("audio sink failed: {e}");
                 }
             }));
@@ -191,15 +209,15 @@ impl Runtime {
         })
     }
 
-/// Cleanly shuts the runtime down: cancels the shutdown token and awaits
-/// the satellite adapter's join handle.
-pub async fn shutdown(mut self) {
-    self.shutdown.cancel();
-    self.sessions.cancel_all();
-    let _ = self.satellite_task.await;
-    if let Some(h) = self.mqtt_pump_task.take() {
-        h.abort();
+    /// Cleanly shuts the runtime down: cancels the shutdown token and awaits
+    /// the satellite adapter's join handle.
+    pub async fn shutdown(mut self) {
+        self.shutdown.cancel();
+        self.sessions.cancel_all();
+        let _ = self.satellite_task.await;
+        if let Some(h) = self.mqtt_pump_task.take() {
+            h.abort();
+        }
+        // Audio sink task runs until events end or failure.
     }
-    // Audio sink task runs until events end or failure.
-}
 }

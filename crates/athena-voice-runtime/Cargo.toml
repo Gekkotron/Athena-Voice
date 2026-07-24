@@ -43,6 +43,12 @@ athena-voice-storage = { path = "../athena-voice-storage", version = "0.1" }
 # audio stack.
 default = []
 audio = ["dep:rodio"]
+# Exposes `test_support`: paths to the `.wasm` fixtures this crate's
+# `build.rs` already builds for its own integration tests. Other crates'
+# tests (e.g. athena-voice-admin) enable this via a `dev-dependencies`
+# feature override so they can load a real skill without depending on the
+# gitignored `skills/*.wasm` bundle or duplicating the build step.
+test-support = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
