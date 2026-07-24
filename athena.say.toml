@@ -37,3 +37,9 @@ dir = "./skills"
 [skills.weather]
 http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
 config = { default_city = "Strasbourg" }
+
+# Jeedom sensors — dormant until configured; see README "Enabling the
+# Jeedom skill" for where to find command ids and the API key.
+# [skills.jeedom]
+# http_allowlist = ["jeedom.local"]
+# config = { base_url = "http://jeedom.local", api_key = "YOUR_KEY", sensors = '[{"name":"température du salon","id":123,"unit":"degrés"}]' }

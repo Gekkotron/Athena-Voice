@@ -66,6 +66,32 @@ commands. In short: an MQTT broker, optionally
 `cargo run -p athena-voice-stt-worker` and `-p athena-voice-tts-worker`,
 then `cargo run -p athena-voice-cli -- serve --config <config>`.
 
+## Enabling the Jeedom skill
+
+The skill ships built (`quickstart.sh` and `./skills-jeedom/build.sh` both
+produce `skills/jeedom.wasm`); it stays dormant until sensors are
+configured. Three steps:
+
+1. In Jeedom, note the **command id** of each sensor you want to expose
+   (shown on the command's line in the equipment page) and an **API key**
+   (Settings → System → Configuration → API).
+2. Add to the config you serve with (e.g. `athena.voice.toml`):
+
+   ```toml
+   [skills.jeedom]
+   http_allowlist = ["jeedom.local"]   # your box's hostname or IP
+   config = { base_url = "http://jeedom.local", api_key = "YOUR_KEY", sensors = '[{"name":"température du salon","id":123,"unit":"degrés"},{"name":"humidité de la chambre","id":456,"unit":"pourcent"}]' }
+   ```
+
+   `name` is what you'll say (fuzzy-matched), `id` the Jeedom command id,
+   `unit` is spoken after the value.
+3. Restart the server, then: *« donne-moi la température du salon »* /
+   *"give me the température du salon"*.
+
+Skills in general follow the same recipe: build to `skills/<name>.wasm`,
+add a `[skills.<name>]` section for its capabilities (HTTP/MQTT
+allowlists, config), restart.
+
 ## Satellite protocol (write your own client)
 
 Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
