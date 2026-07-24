@@ -30,12 +30,15 @@ client_id = "athena-voice-local"
 
 [providers]
 stt = { mqtt_stt = { name = "whisper" } }
-# Real LLM fallback for unmatched/free-form questions. Requires Ollama
-# (`brew install ollama`, `ollama serve`) with the model pulled
-# (`ollama pull llama3.2:1b` — the model this config was tested with).
-# With Ollama down, sessions still complete: the runtime speaks a
-# locale-aware apology instead of hanging.
-llm = { ollama = { base_url = "http://localhost:11434", model = "llama3.2:1b" } }
+# No LLM by default: skills handle what they match, and unmatched
+# questions get a spoken capabilities answer. Fully offline, no model.
+llm = "none"
+# Opt-in alternatives for free-form answers (with the backend down, the
+# runtime speaks a locale-aware apology instead of hanging):
+#   local Ollama:   llm = { ollama = { base_url = "http://localhost:11434", model = "llama3.2:1b" } }
+#   any OpenAI-compatible endpoint (LAN llama.cpp/vLLM/Ollama, or hosted —
+#   key comes from the named env var, never from this file):
+#   llm = { openai_compatible = { base_url = "http://192.168.1.10:11434/v1", model = "llama3.2:1b", api_key_env = "OPENAI_API_KEY" } }
 tts = { mqtt_tts = { name = "say" } }
 
 [skills]

@@ -28,7 +28,7 @@ client_id = "athena-voice-local"
 
 [providers]
 stt = "fake"
-llm = "fake"
+llm = "none"
 tts = { mqtt_tts = { name = "say" } }
 
 [skills]

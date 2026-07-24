@@ -56,7 +56,7 @@ struct ChatChunkMessage {
     content: String,
 }
 
-fn system_prompt(locale: &Locale) -> &'static str {
+pub(crate) fn system_prompt(locale: &Locale) -> &'static str {
     if locale.as_str().starts_with("fr") {
         "Tu es un assistant vocal utile, concis et amical. Réponds toujours en français."
     } else {

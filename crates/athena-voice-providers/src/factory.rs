@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use athena_voice_core::provider::{Llm, Stt, Tts};
 
 use crate::circuit::CircuitBreaker;
-use crate::remote::{MqttStt, MqttTts, OllamaLlm};
+use crate::remote::{MqttStt, MqttTts, OllamaLlm, OpenAiCompatLlm};
 use crate::retry::{RetryConfig, RetryingLlm, RetryingStt, RetryingTts};
 use crate::testing::{fake_llm::FakeLlm, fake_stt::FakeStt, fake_tts::FakeTts};
 
@@ -29,12 +29,24 @@ pub struct ProviderConfig {
 pub enum StageChoice {
     /// Deterministic fake — used by tests and as the default in `athena.example.toml`.
     Fake,
+    /// Explicitly no LLM: unmatched questions get a capabilities answer.
+    /// Only meaningful for the `llm` stage.
+    None,
     /// Real LLM via Ollama HTTP.
     Ollama { base_url: String, model: String },
     /// STT provider that speaks the generic MQTT protocol under `athena/providers/stt/<name>/…`.
     MqttStt { name: String },
     /// TTS provider that speaks the generic MQTT protocol under `athena/providers/tts/<name>/…`.
     MqttTts { name: String },
+    /// Any OpenAI-compatible chat endpoint (hosted APIs, llama.cpp, vLLM,
+    /// Ollama's `/v1`). `api_key_env` names the env var holding the bearer
+    /// token; omit for unauthenticated local servers.
+    OpenaiCompatible {
+        base_url: String,
+        model: String,
+        #[serde(default)]
+        api_key_env: Option<String>,
+    },
 }
 
 /// Shared configuration needed to construct MQTT-based providers.
@@ -130,7 +142,10 @@ async fn build_stt(
                 MqttStt::connect(&broker.host, broker.port, leaked).await,
             ))
         }
-        StageChoice::Ollama { .. } | StageChoice::MqttTts { .. } => {
+        StageChoice::None
+        | StageChoice::Ollama { .. }
+        | StageChoice::MqttTts { .. }
+        | StageChoice::OpenaiCompatible { .. } => {
             Err(format!("cannot use {choice:?} as STT provider"))
         }
     }
@@ -139,9 +154,19 @@ async fn build_stt(
 fn build_llm(choice: &StageChoice) -> Result<Arc<dyn Llm>, String> {
     match choice {
         StageChoice::Fake => Ok(Arc::new(FakeLlm::builder().build())),
+        StageChoice::None => Ok(Arc::new(crate::no_llm::NoLlm)),
         StageChoice::Ollama { base_url, model } => {
             Ok(Arc::new(OllamaLlm::new(base_url.clone(), model.clone())))
         }
+        StageChoice::OpenaiCompatible {
+            base_url,
+            model,
+            api_key_env,
+        } => Ok(Arc::new(OpenAiCompatLlm::new(
+            base_url.clone(),
+            model.clone(),
+            api_key_env.as_deref(),
+        )?)),
         StageChoice::MqttStt { .. } | StageChoice::MqttTts { .. } => {
             Err(format!("cannot use {choice:?} as LLM provider"))
         }
@@ -161,7 +186,10 @@ async fn build_tts(
                 MqttTts::connect(&broker.host, broker.port, leaked).await,
             ))
         }
-        StageChoice::Ollama { .. } | StageChoice::MqttStt { .. } => {
+        StageChoice::None
+        | StageChoice::Ollama { .. }
+        | StageChoice::MqttStt { .. }
+        | StageChoice::OpenaiCompatible { .. } => {
             Err(format!("cannot use {choice:?} as TTS provider"))
         }
     }

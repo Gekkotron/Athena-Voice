@@ -4,6 +4,7 @@
 pub mod circuit;
 pub mod error;
 pub mod factory;
+pub mod no_llm;
 pub mod remote;
 pub mod retry;
 pub mod testing;

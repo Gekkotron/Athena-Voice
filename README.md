@@ -17,8 +17,10 @@ mic/text ──▶ MQTT ──▶ VAD ─▶ STT (whisper.cpp) ─▶ intent mat
   with retention, scheduled events, local time, audio playback. Bundled:
   time, weather (Open-Meteo, no API key), timers, home automation (MQTT).
 - **Providers** are pluggable per stage: STT (whisper.cpp worker or fake),
-  LLM (Ollama or fake — spoken apology when the backend is down), TTS
-  (macOS `say` worker or fake). Real engines run as separate *worker*
+  LLM (**optional** — `none` by default; unmatched questions get a spoken
+  capabilities answer; opt into Ollama or any OpenAI-compatible endpoint,
+  with a spoken apology when the backend is down), TTS (macOS `say`
+  worker or fake). Real engines run as separate *worker*
   processes bridged over MQTT, so they can live on a different machine
   than the runtime.
 - **Bilingual** out of the box (French + English); the session's locale

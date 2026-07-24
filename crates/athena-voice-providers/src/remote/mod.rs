@@ -4,8 +4,10 @@ pub mod mqtt_client;
 pub mod mqtt_stt;
 pub mod mqtt_tts;
 pub mod ollama;
+pub mod openai;
 
 pub use mqtt_client::MqttProviderClient;
 pub use mqtt_stt::MqttStt;
 pub use mqtt_tts::MqttTts;
 pub use ollama::OllamaLlm;
+pub use openai::OpenAiCompatLlm;

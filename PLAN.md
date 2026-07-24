@@ -33,12 +33,6 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Backlog
 
-- [ ] Remote LLM provider for constrained targets (GEEKOM)
-      Local Ollama inference is too slow on the GEEKOM deployment target. Two paths, both config-only for the runtime: (1) point `base_url` at an Ollama served from a beefier LAN host (works today — the provider is just HTTP); (2) add an `openai_compatible` StageChoice variant in `crates/athena-voice-providers` (chat/completions streaming, api key from env var, base_url + model in config) so hosted APIs and llama.cpp/vLLM servers all work through one provider.
-      Mirror the ollama.rs patterns: mockito tests for streaming, HTTP errors, connection refused, malformed chunks, termination; the pipeline's spoken-apology fallback already covers backend death.
-      Never commit API keys; read them from an env var named in the config.
-      Success criteria: (a) unmatched questions get spoken LLM answers with a remote endpoint configured; (b) provider tests green without network; (c) config documented in athena.voice.toml comments.
-
 - [ ] Piper engine option for the TTS worker (PORTABILITY: `say` is the only macOS-only piece left in the voice path)
       Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
       Piper CLI outputs WAV at the model's native rate; resample or pass the actual rate in the response if it differs from --rate (keep it simple: require the worker's --rate to match the model and validate at startup).
@@ -54,6 +48,9 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 ## In progress
 
 ## Done
+
+- [x] LLM made truly optional + openai_compatible provider (2026-07-24)
+      Owner preference: no OpenAI/cloud dependency. `llm = "none"` is now the shipped default — unmatched questions get a deterministic spoken capabilities answer (FR/EN, unit-tested, verified live). For those who opt in: new `openai_compatible` provider (SSE chat/completions; works with hosted APIs, llama.cpp, vLLM, Ollama /v1; bearer token only via api_key_env env var, fail-fast when missing; mockito tests for streaming/auth header/malformed/termination/refused). Ollama stays as the second opt-in. NOT yet live-verified against a real /v1 endpoint end to end — protocol is pinned by tests; config examples in athena.voice.toml.
 
 - [x] Idle-session reaper (2026-07-24)
       SessionManager tracks last inbound activity (audio/text touch); a runtime task ticks every 10 s and closes sessions idle past `[server] session_idle_secs` (default 120) through the normal close path, so `done`/`SessionEnded` fire. Unit-tested (idle reaped, touched survives) and verified live with a kill -9'd client at a 15 s override.
