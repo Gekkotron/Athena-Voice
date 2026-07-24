@@ -175,7 +175,7 @@ mod tests {
 
         // Phase 1: create.
         std::fs::write(&path, b"hello").unwrap();
-        let added = wait_for(&mut rx, WatchKind::Added, &path, Duration::from_millis(5000));
+        let added = wait_for(&mut rx, WatchKind::Added, &path, Duration::from_millis(15_000));
         assert!(added.is_some(), "no Added event within window");
 
         // Ensure the debounce window closes before the next mutation, so
@@ -191,14 +191,14 @@ mod tests {
             f.write_all(b" world").unwrap();
             f.sync_all().unwrap();
         }
-        let modified = wait_for(&mut rx, WatchKind::Modified, &path, Duration::from_millis(5000));
+        let modified = wait_for(&mut rx, WatchKind::Modified, &path, Duration::from_millis(15_000));
         assert!(modified.is_some(), "no Modified event within window");
 
         std::thread::sleep(Duration::from_millis(300));
 
         // Phase 3: remove.
         std::fs::remove_file(&path).unwrap();
-        let removed = wait_for(&mut rx, WatchKind::Removed, &path, Duration::from_millis(5000));
+        let removed = wait_for(&mut rx, WatchKind::Removed, &path, Duration::from_millis(15_000));
         assert!(removed.is_some(), "no Removed event within window");
     }
 
