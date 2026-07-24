@@ -31,11 +31,11 @@ The Jeedom API key was committed and pushed to the public repo. The user rotates
 - Possibly modify: any other tracked file the grep in Step 1 finds
 
 **Interfaces:**
-- Produces: a repo where `git grep JJ5qG[w]lquxyayFlfqYc5` returns nothing; later tasks assume the Jeedom section in `athena.voice.toml` is a comment-only placeholder.
+- Produces: a repo where the leaked key is completely removed from tracked files; later tasks assume the Jeedom section in `athena.voice.toml` is a comment-only placeholder.
 
 - [ ] **Step 1: Find every tracked occurrence of the key**
 
-Run: `git grep -l "JJ5qG[w]lquxyayFlfqYc5"`
+Run: git grep -l "$LEAKED_KEY" (set LEAKED_KEY to the rotated-out Jeedom key — do not write the value into any file)
 Expected: `athena.voice.toml` (possibly others — Step 2 applies to all hits).
 
 - [ ] **Step 2: Replace the Jeedom section in `athena.voice.toml`**
@@ -66,7 +66,7 @@ Append to `.gitignore`:
 
 - [ ] **Step 4: Verify**
 
-Run: `git grep "JJ5qG[w]lquxyayFlfqYc5" || echo CLEAN`
+Run: `git grep "$LEAKED_KEY" || echo CLEAN`
 Expected: `CLEAN`
 Run: `cargo run -p athena-voice-cli -- serve --config athena.voice.toml --dry-run`
 Expected: exits 0 (config still parses without the section).
@@ -2778,7 +2778,8 @@ Also update the README's Jeedom setup section: replace the "paste the key into `
 
 Run: `cargo test --workspace && cargo clippy --workspace --all-targets && cargo build --workspace`
 Expected: all green, no warnings.
-Run: `git grep "JJ5qG[w]lquxyayFlfqYc5" || echo CLEAN` → `CLEAN`.
+Run: `git grep -E "[A-Za-z0-9]{40,}" -- '*.toml' || echo CLEAN`
+Expected: CLEAN (no high-entropy unencrypted secrets in toml files).
 
 - [ ] **Step 5: Commit**
 
