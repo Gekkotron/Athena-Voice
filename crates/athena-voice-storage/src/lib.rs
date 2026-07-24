@@ -15,12 +15,18 @@ pub use tmp::{MemoryTmpStore, TmpStore};
 #[derive(Debug)]
 pub struct InMemoryStore {
     tmp_store: MemoryTmpStore,
+    skill_settings: Mutex<HashMap<(String, String), SkillSettingRow>>,
+    skill_enabled: Mutex<HashMap<String, bool>>,
+    admin_token: Mutex<Option<String>>,
 }
 
 impl Default for InMemoryStore {
     fn default() -> Self {
         Self {
             tmp_store: MemoryTmpStore::new(),
+            skill_settings: Mutex::new(HashMap::new()),
+            skill_enabled: Mutex::new(HashMap::new()),
+            admin_token: Mutex::new(None),
         }
     }
 }
@@ -28,10 +34,12 @@ impl Default for InMemoryStore {
 pub use models::ScheduledEvent;
 pub use store::Store;
 
-use crate::models::{EventRow, SatelliteRow, SessionRow};
+use crate::models::{EventRow, SatelliteRow, SessionRow, SkillSettingRow};
 use async_trait::async_trait;
 use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[async_trait]
 impl Store for InMemoryStore {
@@ -122,6 +130,83 @@ impl Store for InMemoryStore {
     }
 
     async fn skill_kv_gc(&self, _skill: &str, _now_sec: u64) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn skill_settings_for(&self, skill: &str) -> Result<Vec<SkillSettingRow>, StoreError> {
+        let map = self.skill_settings.lock().expect("skill_settings poisoned");
+        let mut rows: Vec<_> = map.values().filter(|r| r.skill == skill).cloned().collect();
+        rows.sort_by(|a, b| a.key.cmp(&b.key));
+        Ok(rows)
+    }
+
+    async fn skill_settings_all(&self) -> Result<Vec<SkillSettingRow>, StoreError> {
+        let map = self.skill_settings.lock().expect("skill_settings poisoned");
+        let mut rows: Vec<_> = map.values().cloned().collect();
+        rows.sort_by(|a, b| (&a.skill, &a.key).cmp(&(&b.skill, &b.key)));
+        Ok(rows)
+    }
+
+    async fn skill_setting_set(
+        &self,
+        skill: &str,
+        key: &str,
+        value: &str,
+        is_secret: bool,
+    ) -> Result<(), StoreError> {
+        self.skill_settings
+            .lock()
+            .expect("skill_settings poisoned")
+            .insert(
+                (skill.to_string(), key.to_string()),
+                SkillSettingRow {
+                    skill: skill.to_string(),
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    is_secret,
+                },
+            );
+        Ok(())
+    }
+
+    async fn skill_setting_delete(&self, skill: &str, key: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .skill_settings
+            .lock()
+            .expect("skill_settings poisoned")
+            .remove(&(skill.to_string(), key.to_string()))
+            .is_some())
+    }
+
+    async fn skill_enabled_set(&self, skill: &str, enabled: bool) -> Result<(), StoreError> {
+        self.skill_enabled
+            .lock()
+            .expect("skill_enabled poisoned")
+            .insert(skill.to_string(), enabled);
+        Ok(())
+    }
+
+    async fn skills_disabled(&self) -> Result<Vec<String>, StoreError> {
+        let map = self.skill_enabled.lock().expect("skill_enabled poisoned");
+        let mut out: Vec<String> = map
+            .iter()
+            .filter(|&(_, &on)| !on)
+            .map(|(k, _)| k.clone())
+            .collect();
+        out.sort();
+        Ok(out)
+    }
+
+    async fn admin_token_hash(&self) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .admin_token
+            .lock()
+            .expect("admin_token poisoned")
+            .clone())
+    }
+
+    async fn admin_token_hash_set(&self, hash: &str) -> Result<(), StoreError> {
+        *self.admin_token.lock().expect("admin_token poisoned") = Some(hash.to_string());
         Ok(())
     }
 }

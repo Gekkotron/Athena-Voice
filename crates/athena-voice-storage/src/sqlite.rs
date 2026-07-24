@@ -9,7 +9,7 @@ use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 
 use crate::error::StoreError;
-use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
+use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow, SkillSettingRow};
 use crate::store::Store;
 use crate::tmp::{MemoryTmpStore, TmpStore};
 
@@ -352,6 +352,112 @@ impl Store for SqliteStore {
                 .map_err(decode_err)?,
         }))
     }
+
+    async fn skill_settings_for(&self, skill: &str) -> Result<Vec<SkillSettingRow>, StoreError> {
+        let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT skill, key, value, is_secret FROM skill_settings WHERE skill = ? ORDER BY key",
+        )
+        .bind(skill)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(skill, key, value, is_secret)| SkillSettingRow {
+                skill,
+                key,
+                value,
+                is_secret: is_secret != 0,
+            })
+            .collect())
+    }
+
+    async fn skill_settings_all(&self) -> Result<Vec<SkillSettingRow>, StoreError> {
+        let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT skill, key, value, is_secret FROM skill_settings ORDER BY skill, key",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(skill, key, value, is_secret)| SkillSettingRow {
+                skill,
+                key,
+                value,
+                is_secret: is_secret != 0,
+            })
+            .collect())
+    }
+
+    async fn skill_setting_set(
+        &self,
+        skill: &str,
+        key: &str,
+        value: &str,
+        is_secret: bool,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO skill_settings (skill, key, value, is_secret, updated_at)
+             VALUES (?, ?, ?, ?, strftime('%s','now'))
+             ON CONFLICT (skill, key) DO UPDATE
+             SET value = excluded.value, is_secret = excluded.is_secret,
+                 updated_at = excluded.updated_at",
+        )
+        .bind(skill)
+        .bind(key)
+        .bind(value)
+        .bind(i64::from(is_secret))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn skill_setting_delete(&self, skill: &str, key: &str) -> Result<bool, StoreError> {
+        let res = sqlx::query("DELETE FROM skill_settings WHERE skill = ? AND key = ?")
+            .bind(skill)
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn skill_enabled_set(&self, skill: &str, enabled: bool) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO skill_state (skill, enabled) VALUES (?, ?)
+             ON CONFLICT (skill) DO UPDATE SET enabled = excluded.enabled",
+        )
+        .bind(skill)
+        .bind(i64::from(enabled))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn skills_disabled(&self) -> Result<Vec<String>, StoreError> {
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT skill FROM skill_state WHERE enabled = 0 ORDER BY skill",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(s,)| s).collect())
+    }
+
+    async fn admin_token_hash(&self) -> Result<Option<String>, StoreError> {
+        let row = sqlx::query_as::<_, (String,)>("SELECT token_hash FROM admin_auth WHERE id = 1")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(h,)| h))
+    }
+
+    async fn admin_token_hash_set(&self, hash: &str) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO admin_auth (id, token_hash) VALUES (1, ?)
+             ON CONFLICT (id) DO UPDATE SET token_hash = excluded.token_hash",
+        )
+        .bind(hash)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
 }
 
 // Tmp storage is documented as transient across restarts (see `crate::tmp`),
@@ -464,5 +570,75 @@ mod tests {
         assert!(store.delete_scheduled(id).await.unwrap());
         assert!(!store.delete_scheduled(id).await.unwrap());
         assert!(store.pop_due_events(5_000).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn skill_settings_roundtrip_and_upsert() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        store
+            .skill_setting_set("jeedom", "api_key", "abc", true)
+            .await
+            .unwrap();
+        store
+            .skill_setting_set("jeedom", "base_url", "http://x", false)
+            .await
+            .unwrap();
+        store
+            .skill_setting_set("jeedom", "api_key", "def", true)
+            .await
+            .unwrap(); // upsert
+
+        let rows = store.skill_settings_for("jeedom").await.unwrap();
+        assert_eq!(rows.len(), 2);
+        let key_row = rows.iter().find(|r| r.key == "api_key").unwrap();
+        assert_eq!(key_row.value, "def");
+        assert!(key_row.is_secret);
+
+        let all = store.skill_settings_all().await.unwrap();
+        assert_eq!(all.len(), 2);
+
+        assert!(
+            store
+                .skill_setting_delete("jeedom", "api_key")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .skill_setting_delete("jeedom", "api_key")
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.skill_settings_for("jeedom").await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn skill_enabled_flag_and_disabled_list() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        assert!(store.skills_disabled().await.unwrap().is_empty());
+        store.skill_enabled_set("timer", false).await.unwrap();
+        store.skill_enabled_set("weather", true).await.unwrap();
+        assert_eq!(
+            store.skills_disabled().await.unwrap(),
+            vec!["timer".to_string()]
+        );
+        store.skill_enabled_set("timer", true).await.unwrap(); // upsert back on
+        assert!(store.skills_disabled().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn admin_token_hash_single_row() {
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        assert!(store.admin_token_hash().await.unwrap().is_none());
+        store.admin_token_hash_set("h1").await.unwrap();
+        assert_eq!(
+            store.admin_token_hash().await.unwrap().as_deref(),
+            Some("h1")
+        );
+        store.admin_token_hash_set("h2").await.unwrap(); // replace
+        assert_eq!(
+            store.admin_token_hash().await.unwrap().as_deref(),
+            Some("h2")
+        );
     }
 }

@@ -3,7 +3,7 @@ use athena_voice_core::event::{Event, Outcome, Stage};
 use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 
 use crate::error::StoreError;
-use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow};
+use crate::models::{EventRow, SatelliteRow, ScheduledEvent, SessionRow, SkillSettingRow};
 use crate::tmp::TmpStore;
 
 #[async_trait]
@@ -69,4 +69,26 @@ pub trait Store: Send + Sync + TmpStore {
     ) -> Result<(), StoreError>;
 
     async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError>;
+
+    async fn skill_settings_for(&self, skill: &str) -> Result<Vec<SkillSettingRow>, StoreError>;
+
+    async fn skill_settings_all(&self) -> Result<Vec<SkillSettingRow>, StoreError>;
+
+    async fn skill_setting_set(
+        &self,
+        skill: &str,
+        key: &str,
+        value: &str,
+        is_secret: bool,
+    ) -> Result<(), StoreError>;
+
+    async fn skill_setting_delete(&self, skill: &str, key: &str) -> Result<bool, StoreError>;
+
+    async fn skill_enabled_set(&self, skill: &str, enabled: bool) -> Result<(), StoreError>;
+
+    async fn skills_disabled(&self) -> Result<Vec<String>, StoreError>;
+
+    async fn admin_token_hash(&self) -> Result<Option<String>, StoreError>;
+
+    async fn admin_token_hash_set(&self, hash: &str) -> Result<(), StoreError>;
 }

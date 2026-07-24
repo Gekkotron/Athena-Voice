@@ -44,12 +44,15 @@ async fn migrations_create_expected_tables() {
     assert_eq!(
         names,
         vec![
+            "admin_auth".to_string(),
             "errors".to_string(),
             "events".to_string(),
             "satellites".to_string(),
             "scheduled_events".to_string(),
             "sessions".to_string(),
             "skill_kv".to_string(),
+            "skill_settings".to_string(),
+            "skill_state".to_string(),
             "skill_tmp".to_string(),
         ]
     );

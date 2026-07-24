@@ -50,3 +50,12 @@ pub struct ScheduledEvent {
     pub payload: Vec<u8>,
     pub created_at_ms: i64,
 }
+
+/// One web-edited skill setting; overrides the same key from TOML.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSettingRow {
+    pub skill: String,
+    pub key: String,
+    pub value: String,
+    pub is_secret: bool,
+}
