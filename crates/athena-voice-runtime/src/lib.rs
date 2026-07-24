@@ -45,6 +45,19 @@ pub struct SkillsInit {
     pub locales: Vec<String>,
     /// Per-skill config keyed by skill name (wasm file stem).
     pub per_skill: HashMap<String, SkillConfig>,
+    /// Skills present in `dir` but disabled via the web UI; they are
+    /// unloaded right after the directory scan.
+    pub disabled: Vec<String>,
+}
+
+/// Live handle to the skill layer for the admin API: reload, remove,
+/// schema/name queries. `deps.per_skill` is the merged config snapshot from
+/// startup; the admin API overrides entries before each reload.
+#[derive(Clone)]
+pub struct SkillsHandle {
+    pub registry: Arc<SkillRegistry>,
+    pub deps: SkillDeps,
+    pub dir: PathBuf,
 }
 
 /// Top-level runtime handle. Constructed via `Runtime::spawn`. Drop to abort
@@ -53,6 +66,7 @@ pub struct Runtime {
     pub shutdown: CancellationToken,
     pub sessions: Arc<SessionManager>,
     pub event_bus: Arc<EventBus>,
+    pub skills: Option<SkillsHandle>,
     satellite_task: JoinHandle<()>,
     mqtt_pump_task: Option<JoinHandle<()>>,
 }
@@ -75,8 +89,10 @@ impl Runtime {
 
         // Load WASM skills when a skills dir is configured; otherwise start
         // with an empty rule index and no dispatcher (pure LLM fallback).
-        let (rules, dispatcher) = match skills.filter(|init| init.dir.is_dir()) {
+        let (rules, dispatcher, skills_handle) = match skills.filter(|init| init.dir.is_dir()) {
             Some(init) => {
+                let disabled = init.disabled;
+                let dir = init.dir.clone();
                 let deps = SkillDeps {
                     store: init.store,
                     mqtt: client.tx.clone(),
@@ -88,21 +104,32 @@ impl Runtime {
                     audio_event_tx: event_bus.sender(),
                 };
                 let registry = Arc::new(
-                    SkillRegistry::load_dir(&init.dir, &deps)
+                    SkillRegistry::load_dir(&dir, &deps)
                         .map_err(|e| RuntimeError::Config(format!("skill load: {e}")))?,
                 );
+                for name in &disabled {
+                    if registry.remove(name) {
+                        tracing::info!(skill = %name, "skill disabled via settings; unloaded");
+                    }
+                }
                 tracing::info!(
-                    dir = %init.dir.display(),
+                    dir = %dir.display(),
                     skills = ?registry.skill_names(),
                     "skills loaded"
                 );
                 let rules = registry.patterns_handle();
-                let (handle, _task) =
+                let handle = SkillsHandle {
+                    registry: registry.clone(),
+                    deps: deps.clone(),
+                    dir,
+                };
+                let (dispatcher_handle, _task) =
                     SkillDispatcher::spawn(registry, event_bus.sender(), shutdown.clone());
-                (rules, Some(handle))
+                (rules, Some(dispatcher_handle), Some(handle))
             }
             None => (
                 Arc::new(ArcSwap::from_pointee(intent::RuleIndex::new())),
+                None,
                 None,
             ),
         };
@@ -158,6 +185,7 @@ impl Runtime {
             shutdown,
             sessions,
             event_bus,
+            skills: skills_handle,
             satellite_task,
             mqtt_pump_task: Some(mirror),
         })

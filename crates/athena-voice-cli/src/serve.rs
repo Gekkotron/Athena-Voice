@@ -76,6 +76,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
                 )
             })
             .collect(),
+        disabled: vec![],
     });
 
     let runtime = Runtime::spawn(
