@@ -36,7 +36,7 @@ use tokio::sync::broadcast;
 use tracing::warn;
 
 use athena_voice_core::event::Event;
-use athena_voice_skill_sdk::{Intent, PatternRule, SkillError, SkillResponse};
+use athena_voice_skill_sdk::{ConfigSchema, Intent, PatternRule, SkillError, SkillResponse};
 use athena_voice_storage::Store;
 
 use crate::intent::{HostPatternRule, RuleIndex};
@@ -112,6 +112,10 @@ pub trait SkillPlugin: Send {
     fn handle(&mut self, intent: &Intent) -> Result<SkillResponse, SkillError>;
     /// Returns the `SkillCtx` if this plugin wraps a `ExtismSkillPlugin`.
     fn ctx(&self) -> Option<&SkillCtx> { None }
+    /// Parsed `config_schema` guest export, if the skill provides one.
+    fn config_schema(&mut self) -> Option<ConfigSchema> {
+        None
+    }
 }
 
 /// `SkillPlugin` backed by a live `extism::Plugin`. Guest exports are called
@@ -160,6 +164,20 @@ impl SkillPlugin for ExtismSkillPlugin {
     fn ctx(&self) -> Option<&SkillCtx> {
         self.ctx.as_ref()
     }
+
+    fn config_schema(&mut self) -> Option<ConfigSchema> {
+        if !self.plugin.function_exists("config_schema") {
+            return None;
+        }
+        let out = self.plugin.call::<&str, String>("config_schema", "").ok()?;
+        match serde_json::from_str(&out) {
+            Ok(schema) => Some(schema),
+            Err(e) => {
+                warn!(error = %e, "config_schema export returned invalid JSON; ignoring");
+                None
+            }
+        }
+    }
 }
 
 /// Rules a single plugin contributed to the aggregate index, keyed by
@@ -176,6 +194,8 @@ pub struct SkillRegistry {
     /// can be rebuilt cheaply when one plugin is removed or replaced.
     plugin_rules: Mutex<HashMap<String, PluginRules>>,
     patterns: Arc<ArcSwap<RuleIndex>>,
+    /// Config schema cached at install time, keyed by skill name.
+    schemas: RwLock<HashMap<String, ConfigSchema>>,
 }
 
 impl SkillRegistry {
@@ -185,6 +205,7 @@ impl SkillRegistry {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             plugin_rules: Mutex::new(HashMap::new()),
             patterns: Arc::new(ArcSwap::from_pointee(RuleIndex::new())),
+            schemas: RwLock::new(HashMap::new()),
         }
     }
 
@@ -266,6 +287,13 @@ impl SkillRegistry {
             this_rules.insert(locale.clone(), converted);
         }
 
+        let schema = {
+            let mut guard = plugin
+                .lock()
+                .expect("skill plugin mutex poisoned during install");
+            guard.config_schema()
+        };
+
         // Update the plugin map + per-plugin rule cache, then rebuild the
         // aggregate index atomically. The map lock is held only for the
         // insert; the ArcSwap store is what matters for observers.
@@ -279,6 +307,17 @@ impl SkillRegistry {
                 .lock()
                 .expect("plugin_rules lock poisoned");
             rules_map.insert(name.to_string(), this_rules);
+        }
+        {
+            let mut schemas = self.schemas.write().expect("schemas lock poisoned");
+            match schema {
+                Some(s) => {
+                    schemas.insert(name.to_string(), s);
+                }
+                None => {
+                    schemas.remove(name);
+                }
+            }
         }
         self.rebuild_index();
         Ok(())
@@ -299,10 +338,25 @@ impl SkillRegistry {
                 .expect("plugin_rules lock poisoned");
             rules_map.remove(name);
         }
+        self.schemas
+            .write()
+            .expect("schemas lock poisoned")
+            .remove(name);
         if existed {
             self.rebuild_index();
         }
         existed
+    }
+
+    /// Config schema cached at install time; `None` for skills without the
+    /// export (the UI falls back to a key/value editor).
+    #[must_use]
+    pub fn config_schema(&self, name: &str) -> Option<ConfigSchema> {
+        self.schemas
+            .read()
+            .expect("schemas lock poisoned")
+            .get(name)
+            .cloned()
     }
 
     /// Rebuild one plugin from a single file path and re-run [`install`].
@@ -453,13 +507,14 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use athena_voice_skill_sdk::{SlotKind, SlotSpec};
+    use athena_voice_skill_sdk::{ConfigField, ConfigSchema, FieldKind, SlotKind, SlotSpec};
 
     struct MockPlugin {
         rules_by_locale: HashMap<String, Vec<PatternRule>>,
         response: Result<SkillResponse, SkillError>,
         handle_calls: Arc<AtomicUsize>,
         last_intent: Arc<Mutex<Option<Intent>>>,
+        schema: Option<ConfigSchema>,
     }
 
     impl SkillPlugin for MockPlugin {
@@ -477,6 +532,9 @@ mod tests {
                 .as_ref()
                 .map(Clone::clone)
                 .map_err(|e| SkillError::Custom(e.to_string()))
+        }
+        fn config_schema(&mut self) -> Option<ConfigSchema> {
+            self.schema.clone()
         }
     }
 
@@ -505,6 +563,17 @@ mod tests {
             response: Ok(SkillResponse::empty()),
             handle_calls: Arc::new(AtomicUsize::new(0)),
             last_intent: Arc::new(Mutex::new(None)),
+            schema: None,
+        })
+    }
+
+    fn mock_plugin_with_schema(schema: Option<ConfigSchema>) -> Arc<Mutex<dyn SkillPlugin>> {
+        arc_mock(MockPlugin {
+            rules_by_locale: HashMap::new(),
+            response: Ok(SkillResponse::empty()),
+            handle_calls: Arc::new(AtomicUsize::new(0)),
+            last_intent: Arc::new(Mutex::new(None)),
+            schema,
         })
     }
 
@@ -522,6 +591,7 @@ mod tests {
             response: Ok(SkillResponse::empty()),
             handle_calls: Arc::new(AtomicUsize::new(0)),
             last_intent: Arc::new(Mutex::new(None)),
+            schema: None,
         };
         reg.install(
             "greeter",
@@ -547,6 +617,7 @@ mod tests {
             response: Ok(SkillResponse::speak("il est huit heures")),
             handle_calls: handle_calls.clone(),
             last_intent: last_intent.clone(),
+            schema: None,
         };
         reg.install("clock", arc_mock(mock), &[]).unwrap();
 
@@ -572,6 +643,7 @@ mod tests {
             response: Err(SkillError::HttpFailed("boom".into())),
             handle_calls: Arc::new(AtomicUsize::new(0)),
             last_intent: Arc::new(Mutex::new(None)),
+            schema: None,
         };
         reg.install("weather", arc_mock(mock), &[]).unwrap();
         let err = reg
@@ -751,5 +823,27 @@ mod tests {
             panic!("expected build error");
         };
         assert!(matches!(err, RegistryError::Build { ref skill, .. } if skill == "broken"));
+    }
+
+    #[test]
+    fn install_caches_config_schema() {
+        let schema = ConfigSchema {
+            fields: vec![ConfigField {
+                key: "api_key".into(),
+                label: "API key".into(),
+                kind: FieldKind::Secret,
+                required: true,
+                help: String::new(),
+                default: String::new(),
+                item_fields: vec![],
+            }],
+        };
+        let registry = SkillRegistry::new();
+        let plugin = mock_plugin_with_schema(Some(schema.clone()));
+        registry.install("jeedom", plugin, &["fr".into()]).unwrap();
+        assert_eq!(registry.config_schema("jeedom"), Some(schema));
+        assert_eq!(registry.config_schema("nope"), None);
+        registry.remove("jeedom");
+        assert_eq!(registry.config_schema("jeedom"), None);
     }
 }
