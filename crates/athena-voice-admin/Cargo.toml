@@ -1,0 +1,29 @@
+[package]
+name = "athena-voice-admin"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+argon2 = { workspace = true }
+axum = { workspace = true }
+include_dir = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+athena-voice-runtime = { workspace = true }
+athena-voice-skill-sdk = { workspace = true }
+athena-voice-storage = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true
