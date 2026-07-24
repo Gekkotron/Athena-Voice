@@ -50,6 +50,7 @@ Then, in another terminal:
 cargo run -p athena-voice-client -- --text "météo à Paris" --play
 cargo run -p athena-voice-client -- --text "what time is it" --locale en
 cargo run -p athena-voice-client -- --microphone --play --timeout-secs 30   # voice mode
+cargo run -p athena-voice-client -- --text "météo à Paris" --timing         # latency breakdown
 ```
 
 Linux note: the voice path currently lacks a TTS engine (`say` is macOS) —

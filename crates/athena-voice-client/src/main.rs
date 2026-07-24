@@ -83,6 +83,65 @@ struct Args {
     /// Sample rate assumed for `--play` (must match the TTS worker's).
     #[arg(long, default_value_t = 22_050)]
     rate: u32,
+
+    /// Print a per-stage latency breakdown after the session completes.
+    #[arg(long)]
+    timing: bool,
+}
+
+/// Per-stage timestamps, taken when the corresponding message arrives back
+/// from the broker (so every figure includes real MQTT round-trips).
+#[derive(Default)]
+struct Timing {
+    /// Our own input echoed back: text message, or the empty end-of-utterance
+    /// audio marker.
+    input_done: Option<std::time::Instant>,
+    /// First transcript from the runtime (STT output; echo-of-text for --text).
+    transcript: Option<std::time::Instant>,
+    /// First tts/text — the answer exists as text (intent + skill done).
+    answer_text: Option<std::time::Instant>,
+    first_audio: Option<std::time::Instant>,
+    last_audio: Option<std::time::Instant>,
+}
+
+impl Timing {
+    fn mark(slot: &mut Option<std::time::Instant>) {
+        if slot.is_none() {
+            *slot = Some(std::time::Instant::now());
+        }
+    }
+
+    fn print(&self, voice_input: bool) {
+        fn span(a: Option<std::time::Instant>, b: Option<std::time::Instant>) -> String {
+            match (a, b) {
+                (Some(a), Some(b)) if b >= a => format!("{:>6} ms", (b - a).as_millis()),
+                _ => "     — ".to_string(),
+            }
+        }
+        println!("⏱  timing:");
+        if voice_input {
+            println!(
+                "    audio end → transcript   : {}   (STT)",
+                span(self.input_done, self.transcript)
+            );
+        }
+        println!(
+            "    transcript → answer text : {}   (intent + skill)",
+            span(self.transcript, self.answer_text)
+        );
+        println!(
+            "    answer text → first audio: {}   (TTS synthesis)",
+            span(self.answer_text, self.first_audio)
+        );
+        println!(
+            "    first → last audio chunk : {}   (streaming)",
+            span(self.first_audio, self.last_audio)
+        );
+        println!(
+            "    input end → last audio   : {}   (TOTAL response)",
+            span(self.input_done, self.last_audio)
+        );
+    }
 }
 
 /// STT pipeline contract: s16le mono at 16 kHz.
@@ -133,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut started = false;
     let mut end_sent = false;
+    let mut timing = Timing::default();
     let mut tts_chunks: Vec<Vec<u8>> = Vec::new();
     let mut last_chunk_at = tokio::time::Instant::now();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(args.timeout_secs);
@@ -219,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(Event::Incoming(Packet::Publish(p))) => {
                 let chunks_before = tts_chunks.len();
-                if handle_publish(&base, &p.topic, &p.payload, &mut tts_chunks) {
+                if handle_publish(&base, &p.topic, &p.payload, &mut tts_chunks, &mut timing) {
                     break;
                 }
                 if tts_chunks.len() != chunks_before {
@@ -235,6 +295,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let sentence = print_speech(&tts_chunks);
+    if args.timing {
+        // In --text mode there is no STT stage; the injected text's echo
+        // doubles as the transcript timestamp.
+        if timing.transcript.is_none() {
+            timing.transcript = timing.input_done;
+        }
+        timing.print(audio.is_some());
+    }
 
     let _ = client
         .publish(format!("{base}/end"), QoS::AtLeastOnce, false, "")
@@ -395,12 +463,24 @@ fn speak(sentence: &str, voice: &str) {
 }
 
 /// Prints one incoming message; returns `true` when the session is done.
-fn handle_publish(base: &str, topic: &str, payload: &[u8], tts_chunks: &mut Vec<Vec<u8>>) -> bool {
+fn handle_publish(
+    base: &str,
+    topic: &str,
+    payload: &[u8],
+    tts_chunks: &mut Vec<Vec<u8>>,
+    timing: &mut Timing,
+) -> bool {
     if let Some(kind) = topic.strip_prefix(base).and_then(|s| s.strip_prefix('/')) {
         match kind {
             // Our own publishes, echoed back by the wildcard subscription.
-            "start" | "text" | "audio" | "end" => {}
-            "transcript" => println!("📝 {}", String::from_utf8_lossy(payload)),
+            // The echoed text / end-of-utterance marker stamps "input done".
+            "text" => Timing::mark(&mut timing.input_done),
+            "audio" if payload.is_empty() => Timing::mark(&mut timing.input_done),
+            "start" | "audio" | "end" => {}
+            "transcript" => {
+                Timing::mark(&mut timing.transcript);
+                println!("📝 {}", String::from_utf8_lossy(payload));
+            }
             "tts/meta" => println!("🎧 {}", String::from_utf8_lossy(payload)),
             "tts/text" => {
                 // The answer as text, published by the runtime alongside the
@@ -414,8 +494,13 @@ fn handle_publish(base: &str, topic: &str, payload: &[u8], tts_chunks: &mut Vec<
                     })
                     .unwrap_or_else(|| String::from_utf8_lossy(payload).into_owned());
                 println!("🗣  {text}");
+                Timing::mark(&mut timing.answer_text);
             }
-            "tts" => tts_chunks.push(payload.to_vec()),
+            "tts" => {
+                Timing::mark(&mut timing.first_audio);
+                timing.last_audio = Some(std::time::Instant::now());
+                tts_chunks.push(payload.to_vec());
+            }
             "done" => {
                 println!("✅ {}", String::from_utf8_lossy(payload));
                 return true;
