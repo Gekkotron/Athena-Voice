@@ -23,7 +23,7 @@
 
 ### Task 1: Secrets remediation (Part 0 of the spec)
 
-A Jeedom API key (beginning with `JJ5qGwlquxyayFlfqYc5…`) was committed and pushed to the public repo. The user rotates it in Jeedom (out of scope for you); this task removes every tracked occurrence and guards against recurrence. No history rewrite (decided in spec).
+The Jeedom API key was committed and pushed to the public repo. The user rotates it in Jeedom (out of scope for you); this task removes every tracked occurrence and guards against recurrence. No history rewrite (decided in spec).
 
 **Files:**
 - Modify: `athena.voice.toml` (the `[skills.jeedom]` section, currently lines 51–55)
@@ -31,11 +31,11 @@ A Jeedom API key (beginning with `JJ5qGwlquxyayFlfqYc5…`) was committed and pu
 - Possibly modify: any other tracked file the grep in Step 1 finds
 
 **Interfaces:**
-- Produces: a repo where `git grep JJ5qGwlquxyayFlfqYc5` returns nothing; later tasks assume the Jeedom section in `athena.voice.toml` is a comment-only placeholder.
+- Produces: a repo where `git grep JJ5qG[w]lquxyayFlfqYc5` returns nothing; later tasks assume the Jeedom section in `athena.voice.toml` is a comment-only placeholder.
 
 - [ ] **Step 1: Find every tracked occurrence of the key**
 
-Run: `git grep -l "JJ5qGwlquxyayFlfqYc5"`
+Run: `git grep -l "JJ5qG[w]lquxyayFlfqYc5"`
 Expected: `athena.voice.toml` (possibly others — Step 2 applies to all hits).
 
 - [ ] **Step 2: Replace the Jeedom section in `athena.voice.toml`**
@@ -66,7 +66,7 @@ Append to `.gitignore`:
 
 - [ ] **Step 4: Verify**
 
-Run: `git grep "JJ5qGwlquxyayFlfqYc5" || echo CLEAN`
+Run: `git grep "JJ5qG[w]lquxyayFlfqYc5" || echo CLEAN`
 Expected: `CLEAN`
 Run: `cargo run -p athena-voice-cli -- serve --config athena.voice.toml --dry-run`
 Expected: exits 0 (config still parses without the section).
@@ -2778,7 +2778,7 @@ Also update the README's Jeedom setup section: replace the "paste the key into `
 
 Run: `cargo test --workspace && cargo clippy --workspace --all-targets && cargo build --workspace`
 Expected: all green, no warnings.
-Run: `git grep "JJ5qGwlquxyayFlfqYc5" || echo CLEAN` → `CLEAN`.
+Run: `git grep "JJ5qG[w]lquxyayFlfqYc5" || echo CLEAN` → `CLEAN`.
 
 - [ ] **Step 5: Commit**
 
