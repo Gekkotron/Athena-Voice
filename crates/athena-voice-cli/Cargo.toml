@@ -25,6 +25,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+athena-voice-admin = { workspace = true }
 athena-voice-core = { path = "../athena-voice-core", version = "0.1" }
 athena-voice-providers = { path = "../athena-voice-providers", version = "0.1" }
 # The runtime's `audio` feature (local playback of skill audio via rodio)

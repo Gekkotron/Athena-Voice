@@ -1,5 +1,9 @@
 # Athena-Voice — example configuration.
 # Copy to `athena.toml` and adjust.
+#
+# Any value in this file can be overridden with environment variables:
+# ATHENA__SERVER__PORT=9090, ATHENA__MQTT__HOST=broker.local, etc.
+# (double underscore separates nesting levels).
 
 locales = ["fr", "en"]
 
@@ -7,7 +11,8 @@ locales = ["fr", "en"]
 # Close sessions with no inbound audio/text after this many seconds —
 # covers satellites that die without sending `end`. Default 120.
 # session_idle_secs = 120
-host = "0.0.0.0"
+host = "127.0.0.1"
+# Set to 0.0.0.0 to reach the web UI from your LAN (token still required).
 port = 8080
 
 [storage]
@@ -69,6 +74,8 @@ dir = "/etc/athena-voice/skills"
 # watcher (~250 ms) that emits `Event::SkillReloaded` / `SkillReloadFailed`
 # on change; a failed rebuild keeps the previous plugin loaded.
 hot_reload = false
+# Prebuilt skills offered by the web UI's install picker (optional).
+# bundled_dir = "/usr/share/athena-voice/bundled-skills"
 
 # Per-skill sub-tables carry three optional knobs:
 #

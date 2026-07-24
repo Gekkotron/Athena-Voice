@@ -42,6 +42,10 @@ pub struct SkillsConfig {
     /// false so production keeps a stable, snapshot-at-startup skill set.
     #[serde(default)]
     pub hot_reload: bool,
+    /// Directory of prebuilt `.wasm` artifacts offered by the web UI's
+    /// "install bundled skill" picker. Unset hides the picker.
+    #[serde(default)]
+    pub bundled_dir: Option<PathBuf>,
     #[serde(flatten, default)]
     pub per_skill: HashMap<String, PerSkillConfig>,
 }

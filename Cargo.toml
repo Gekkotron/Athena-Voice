@@ -81,6 +81,7 @@ axum = { version = "0.8", features = ["multipart"] }
 argon2 = { version = "0.5", features = ["std"] }
 include_dir = "0.7"
 athena-voice-skill-sdk = { path = "crates/athena-voice-skill-sdk" }
+athena-voice-admin = { path = "crates/athena-voice-admin" }
 
 # dev only
 assert_cmd = "2"
