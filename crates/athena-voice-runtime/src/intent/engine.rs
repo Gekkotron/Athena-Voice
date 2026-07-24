@@ -79,6 +79,23 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     let segments = split_phrase(phrase);
     let normalised_input = input.to_lowercase();
 
+    // Slot-less phrases are matched purely fuzzily: requiring the literal as
+    // an exact substring would make STT variations ("quel heure est-il" for
+    // "quelle heure est-il") unmatchable even at 90% similarity — the
+    // confidence threshold in `find_match` is the real gate.
+    if let [Segment::Literal(lit)] = segments.as_slice() {
+        let sim = normalized_damerau_levenshtein(&lit.to_lowercase(), &normalised_input);
+        #[allow(clippy::cast_possible_truncation)]
+        return Some(IntentMatch {
+            intent: Intent {
+                name: rule.intent.clone(),
+                slots: BTreeMap::new(),
+            },
+            skill: String::new(),
+            confidence: sim as f32,
+        });
+    }
+
     // Walk the segments, extracting slot values from the gaps.
     let mut cursor = 0usize;
     let mut slots: BTreeMap<String, serde_json::Value> = BTreeMap::new();
@@ -217,6 +234,22 @@ mod tests {
             idx.insert(locale.into(), r, skill.into());
         }
         idx
+    }
+
+    #[test]
+    fn stt_variation_of_slotless_phrase_still_matches() {
+        // Real transcript from whisper hearing a human say "quelle heure
+        // est-il" — close enough that the fuzzy threshold must accept it.
+        let idx = index_with(vec![(
+            rule("time.query", &["quelle heure est-il"], &[]),
+            "fr",
+            "clock",
+        )]);
+        let m = IntentMatcher::new()
+            .find_match("Quel heure est-il", "fr", &idx)
+            .expect("near-exact STT transcript must match");
+        assert_eq!(m.intent.name, "time.query");
+        assert!(m.confidence >= 0.85, "confidence {}", m.confidence);
     }
 
     #[test]
