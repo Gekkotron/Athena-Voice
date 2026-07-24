@@ -385,6 +385,19 @@ fn handle_publish(base: &str, topic: &str, payload: &[u8], tts_chunks: &mut Vec<
             "start" | "text" | "audio" | "end" => {}
             "transcript" => println!("📝 {}", String::from_utf8_lossy(payload)),
             "tts/meta" => println!("🎧 {}", String::from_utf8_lossy(payload)),
+            "tts/text" => {
+                // The answer as text, published by the runtime alongside the
+                // synthesized audio.
+                let text = serde_json::from_slice::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|v| {
+                        v.get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| String::from_utf8_lossy(payload).into_owned());
+                println!("🗣  {text}");
+            }
             "tts" => tts_chunks.push(payload.to_vec()),
             "done" => {
                 println!("✅ {}", String::from_utf8_lossy(payload));

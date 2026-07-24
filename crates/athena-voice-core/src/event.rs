@@ -135,6 +135,10 @@ AudioChunk {
 /// A skill requested a playback-volume change
 /// (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
 VolumeChanged { session: SessionId, level: f32 },
+/// The exact text handed to the TTS stage for synthesis — what the
+/// assistant is about to say. Mirrored to satellites so text-capable
+/// clients can display the answer alongside (or instead of) the audio.
+TtsText { session: SessionId, text: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -222,6 +222,11 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
     info!(session = %sid, "session opened");
 }
 
+enum EgressKind {
+    Transcript,
+    TtsText,
+}
+
 fn spawn_transcript_egress(
     mqtt: AsyncClient,
     event_tx: broadcast::Sender<Event>,
@@ -235,21 +240,32 @@ fn spawn_transcript_egress(
                 () = cancel.cancelled() => break,
                 ev = rx.recv() => match ev {
                     Ok(event) => {
-                        let (session, text, is_final) = match event {
-                            Event::TranscriptPartial { session, text } => (session, text, false),
-                            Event::TranscriptFinal   { session, text } => (session, text, true),
+                        let (session, topic_kind, payload) = match event {
+                            Event::TranscriptPartial { session, text } => (
+                                session,
+                                EgressKind::Transcript,
+                                json!({ "is_final": false, "text": text }).to_string(),
+                            ),
+                            Event::TranscriptFinal { session, text } => (
+                                session,
+                                EgressKind::Transcript,
+                                json!({ "is_final": true, "text": text }).to_string(),
+                            ),
+                            Event::TtsText { session, text } => (
+                                session,
+                                EgressKind::TtsText,
+                                json!({ "text": text }).to_string(),
+                            ),
                             _ => continue,
                         };
                         let sat_opt = sessions.get(session).map(|s| s.sat.clone());
                         if let Some(sat) = sat_opt {
-                            let payload = json!({ "is_final": is_final, "text": text }).to_string();
+                            let topic = match topic_kind {
+                                EgressKind::Transcript => topics::session_transcript(&sat, session),
+                                EgressKind::TtsText => topics::session_tts_text(&sat, session),
+                            };
                             let _ = mqtt
-                                .publish(
-                                    topics::session_transcript(&sat, session),
-                                    QoS::AtLeastOnce,
-                                    false,
-                                    payload,
-                                )
+                                .publish(topic, QoS::AtLeastOnce, false, payload)
                                 .await;
                         }
                     }

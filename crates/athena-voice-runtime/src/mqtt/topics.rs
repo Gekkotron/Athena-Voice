@@ -22,6 +22,13 @@ pub fn session_tts_meta(sat: &SatelliteId, sid: SessionId) -> String {
     format!("{ROOT}/sat/{sat}/session/{sid}/tts/meta")
 }
 
+/// The text being synthesized, published alongside the audio chunks so
+/// satellites can display the answer.
+#[must_use]
+pub fn session_tts_text(sat: &SatelliteId, sid: SessionId) -> String {
+    format!("{ROOT}/sat/{sat}/session/{sid}/tts/text")
+}
+
 #[must_use]
 pub fn session_done(sat: &SatelliteId, sid: SessionId) -> String {
     format!("{ROOT}/sat/{sat}/session/{sid}/done")

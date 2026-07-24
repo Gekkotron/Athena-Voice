@@ -89,6 +89,12 @@ async fn flush(
     event_tx: &broadcast::Sender<Event>,
     barge_rx: &mut broadcast::Receiver<Event>,
 ) -> u32 {
+    // Announce what is about to be spoken — satellites use this to show the
+    // answer as text.
+    let _ = event_tx.send(Event::TtsText {
+        session,
+        text: text.to_string(),
+    });
     let mut audio = match tts
         .synthesize(session, locale.clone(), text.to_string())
         .await
