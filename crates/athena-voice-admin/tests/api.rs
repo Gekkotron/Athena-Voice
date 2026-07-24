@@ -67,3 +67,52 @@ async fn index_is_served_without_token() {
     let res = app.oneshot(get("/", None)).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn skills_list_masks_secrets_and_shows_disabled() {
+    let (mut deps, token) = test_deps().await;
+    // Base TOML config for a skill that is not loaded (skills: None).
+    let mut base = HashMap::new();
+    base.insert(
+        "jeedom".to_string(),
+        athena_voice_runtime::wasm::registry::SkillConfig {
+            http_allowlist: vec!["192.168.1.91".into()],
+            config: HashMap::from([("base_url".into(), "http://toml".into())]),
+            ..Default::default()
+        },
+    );
+    deps.base_per_skill = base;
+    deps.store
+        .skill_setting_set("jeedom", "api_key", "s3cret", true)
+        .await
+        .unwrap();
+    deps.store
+        .skill_setting_set("jeedom", "base_url", "http://db", false)
+        .await
+        .unwrap();
+    deps.store.skill_enabled_set("jeedom", false).await.unwrap();
+
+    let app = router(deps);
+    let res = app.oneshot(get("/api/skills", Some(&token))).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        !body.to_string().contains("s3cret"),
+        "secret value must never be echoed"
+    );
+
+    let jeedom = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "jeedom")
+        .expect("jeedom listed even though unloaded");
+    assert_eq!(jeedom["enabled"], false);
+    assert_eq!(jeedom["loaded"], false);
+    assert_eq!(jeedom["config"]["api_key"]["kind"], "secret");
+    assert_eq!(jeedom["config"]["api_key"]["set"], true);
+    assert_eq!(jeedom["config"]["base_url"]["value"], "http://db"); // DB wins
+}

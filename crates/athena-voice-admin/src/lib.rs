@@ -1,6 +1,7 @@
 #![deny(warnings)]
 //! Admin web interface: token-protected JSON API + embedded static UI.
 
+pub(crate) mod api;
 pub mod auth;
 
 use std::collections::HashMap;
@@ -28,15 +29,12 @@ pub struct AdminDeps {
     pub bundled_dir: Option<PathBuf>,
 }
 
-// `store`, `base_per_skill`, and `bundled_dir` aren't read by any handler
-// yet — Task 7 only wires `/api/status`. Tasks 8-10 add the skills
-// list/config/enable/upload/bundled routes that read them.
+// `bundled_dir` isn't read by any handler yet — Task 10 adds the bundled
+// skill routes that read it.
 #[derive(Clone)]
 pub(crate) struct AppState {
-    #[allow(dead_code)]
     pub store: Arc<dyn Store>,
     pub skills: Option<SkillsHandle>,
-    #[allow(dead_code)]
     pub base_per_skill: Arc<HashMap<String, SkillConfig>>,
     pub token_hash: Arc<String>,
     #[allow(dead_code)]
@@ -55,7 +53,8 @@ pub fn router(deps: AdminDeps) -> Router {
     // outer router stays stateless — the asset handler needs no state.
     let api = Router::new()
         .route("/status", get(status))
-        // Task 8+ add: skills list/config/enable/upload/bundled routes here.
+        .route("/skills", get(api::list_skills))
+        // Task 9+ add: skill config/enable/upload/bundled routes here.
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .with_state(state);
     Router::new().nest("/api", api).fallback(get(static_asset))
