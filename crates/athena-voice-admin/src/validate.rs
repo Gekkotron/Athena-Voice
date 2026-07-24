@@ -219,7 +219,7 @@ mod tests {
         // not reject it just because the field is marked required. Any OTHER
         // required-but-blank field kind still errors (covered above).
         let s = jeedom_schema(); // api_key: Secret, required: true
-        let blank_secret = HashMap::from([("api_key".to_string(), "".to_string())]);
+        let blank_secret = HashMap::from([("api_key".to_string(), String::new())]);
         assert_eq!(
             validate(Some(&s), &blank_secret),
             Ok(()),
