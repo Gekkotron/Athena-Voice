@@ -1,194 +1,93 @@
 # Plan
 
-Currently executing **Plan 4 — WASM skill system**. Full task text lives at
-`docs/superpowers/plans/2026-07-13-athena-voice-skill-system.md`; each task
-below references the plan by number and gives the worker the acceptance
-criterion in one line so it can pick up without further prompting. Tasks
-1–4, 7, and 9 are already merged.
+Current state (2026-07-24): the text-driven voice loop works end to end and
+is verified live — MQTT satellite client → text-injection topic → intent
+matcher → WASM skills (time / weather / timer / home) → TTS over MQTT
+(`athena-voice-tts-worker`, macOS `say` engine) → PCM chunks → client
+playback via rodio. `cargo check --workspace --all-targets` is clean and
+`cargo nextest run --workspace` is green (184 tests). See `SHOWCASE.md` for
+the quick-start and `athena.local.toml` / `athena.say.toml` for runnable
+configs. The missing half is voice INPUT: audio capture and real STT.
+
+## Notes
+
+- The previous revision of this file listed Plans 6–9 as open Backlog while
+  their (broken) implementations were already committed, so ticks kept
+  re-dispatching finished work. Before adding a task here, check the code —
+  and before implementing one, verify its assumptions against the tree.
+- Ground rules learned the hard way, for every worker session: never invent
+  SDK/provider APIs (read the real ones first); run the affected crate's
+  tests plus `./SHOWCASE.sh` before claiming success; wasm skills live
+  OUTSIDE the host workspace (see `[workspace] exclude`); MQTT messages
+  above ~10 KiB need `set_max_packet_size` on every connection involved.
+- The `mqtt_tts` provider had three latent bugs (stream never terminated,
+  packet caps, route leak) — fixed in `mqtt_tts.rs`/`mqtt_client.rs`. The
+  STT twin was NOT audited; that is the first Backlog task.
 
 ## Backlog
 
-- [ ] Plan 6 — Hermetic skills persistence & retention
-Add `[skills.<name>.retention]` to `athena.toml`: `gc_after_sec = 3600` (optional per-skill TTL).
-Extend `athena_voice_storage::Store` with `skill_kv_gc(skill_name, now_sec)` — deletes keys whose timestamps exceed the TTL.
-In `SkillRegistry::dispatch`, inject `retention_gc_after_sec: Option<u64>` into `UserData`; `host_state_set` now takes monotonic `now_sec: u64` (queried via `std::time::SystemTime` at dispatch start).
-Guest SDK `HostCtx::state_set` transparently prepends `[u8; 8]` (LE `now_sec`) to the payload.
-Host deletes expired keys automatically on every state write.
-Unit tests: storage GC respects TTL; roundtrip prevails for fresh keys.
-Integration test: skills-smoke-test sets a key, waits 2 s (CI), asserts key gone after TTL=1.
-Document `[skills.<name>.retention]` in `athena.example.toml`.
-Success criteria: `retention.gc_after_sec` respected; skills persist across restart; storage contains only fresh keys; cloudsync (Plan 3) sees consistent KVs.
+- [ ] Audit the mqtt_stt provider against the fixed mqtt_tts patterns
+      Read `crates/athena-voice-providers/src/remote/mqtt_stt.rs` and compare with the fixes applied to `mqtt_tts.rs` and `mqtt_client.rs` (commit "Real TTS over MQTT").
+      Check: response handling terminates on the protocol's `done`/final marker and on timeout (never a hanging stream/future); large audio payloads fit the packet caps (requests carry base64 or raw audio — compute worst case for 10 s of s16le@16kHz); session routes are cleaned up; the wire format doc comment matches what the code actually sends.
+      Fix what deviates, mirroring the TTS-side patterns; extend the doc comment with the exact request/response JSON schema a worker must implement.
+      Success criteria: (a) `cargo nextest run -p athena-voice-providers` green; (b) the wire protocol is documented precisely enough to write a worker without reading the provider source; (c) no code path can block a session forever if the worker dies mid-request.
 
-- [ ] Plan 7 — Skill-driven audio playback
-Guest SDK gains `HostCtx::play_serialised_pcm(sample_rate, vec<f32>)` and `HostCtx::play_serialised_opus(vec<u8>)`.
-Host converts f32 → s16le → pipewire `AudioStream`, emits `Event::AudioChunk` → socket (Plan 5).
-Host registers `opus` host fn; native copy-to-stream without full decode.
-Sampled responses: `SkillResponse::SampledPcm { sample_rate, samples }` / `SampledOpus { opus_frames }`.
-Integration test: dispatch a `"joue un son"` intent → assert PCM emitted → assert TTS emitter creates gap.
-Volume control via `SkillResponse::Volume(f32)` (0.0–1.5).
-Success criteria: sampled sounds play coherently; volume applies; Opus decoding fast; skills can schedule sequential playback.
+- [ ] Whisper STT worker crate (athena-voice-stt-worker)
+      New workspace member `crates/athena-voice-stt-worker`, modeled on `crates/athena-voice-tts-worker` (same CLI shape: --host/--port/--name, pid-suffixed client id, `set_max_packet_size`).
+      Subscribe to `athena/providers/stt/<name>/request` and answer on `.../response` per the wire format documented by the audit task above.
+      Engine: shell out to the whisper.cpp CLI (`whisper-cli`/`main` binary; the submodule is at `./whisper.cpp`, models under `./models/` — note `ggml-small-french-q5_1.bin` there is a 29-byte placeholder, so the worker must take a `--model <path>` flag and fail with a clear message when the file is not a real model). Convert incoming PCM to a temp WAV with `hound`, run whisper with `-l fr`, return the transcript text.
+      Add `athena.voice.toml` (or extend `athena.say.toml`) with `stt = { mqtt_stt = { name = "whisper" } }` and a header documenting the 4-process setup (broker, stt worker, tts worker, serve).
+      Success criteria: (a) worker + serve + client run locally; (b) feeding a WAV with French speech through the pipeline produces a transcript event and a skill answer; (c) worker absence degrades to a timeout, not a hang; (d) unit test for the PCM→WAV conversion.
 
-- [ ] Plan 8 — Skill-friendly INI-style config
-Add `[skills] config_file = "/etc/athena-voice/skills.ini"` (INI-compatible).
-Guest SDK `host_config_get` parses INI slice via `ini` crate.
-Skills receive `config = IniSlice` in host functions.
-Integration: smoke-test reads `config.default_volume = 0.7` from INI.
-Tests: INI parsing roundtrips; compat with extant TOML.
-Success criteria: INI config works alongside TOML; no regression on TOML-only skills.
+- [ ] Client --microphone mode (voice input from the Mac)
+      Extend `crates/athena-voice-client` with a `--microphone` mode: capture from the default input device via `cpal`, downmix to mono s16le at 16 kHz (or the rate the STT worker expects — align the two flags), and publish frames to `athena/sat/<sat>/session/<sid>/audio` in ~100 ms chunks.
+      Session flow: start session, stream audio while a key is held or until `--duration-secs` elapses, publish `end`, then print/play the response like the --text mode does.
+      Keep --text mode untouched; --microphone and --text are mutually exclusive arguments.
+      The runtime's ingest→vad→stt actors already exist; verify the vad actor's frame expectations (25 ms at what rate — read `pipeline/vad.rs` and `pipeline/ingest.rs` first) and resample client-side to match.
+      Success criteria: (a) speaking "quelle heure est-il" into the mic yields a transcript event from the STT worker and a spoken answer with --play; (b) works together with the whisper worker task above; (c) graceful error when no input device exists.
 
-- [ ] Plan 9 — Skill-local short-lived tmpfs
-Guest SDK gains `HostCtx::tmp_store(key, val: &[u8], expires_sec: u64)` → RAM-only backing.
-RAM index survives skill restart but NOT runtime restart.
-Automatic GC on every write.
-Unit: tmp keys disappear after expiry.
-Integration: smoke-test stores tmp key → runtime restart → key gone.
-Success criteria: skills have transient storage without touching SQLite.
+- [ ] Verify the Ollama LLM fallback end to end
+      `crates/athena-voice-providers/src/remote/ollama.rs` exists but has never been exercised. Configure `llm = { ollama = { base_url = "http://localhost:11434", model = "<small local model>" } }` in a config variant and drive an unmatched utterance ("raconte-moi une blague") through the client.
+      Audit ollama.rs the same way as the MQTT providers: token stream termination, timeouts, error surfaces (connection refused must yield a spoken apology or clean LlmFallback failure, not a hang).
+      Document in the config header that Ollama must be installed and which model was tested.
+      Success criteria: (a) unmatched intents produce an LLM-generated spoken answer when Ollama runs; (b) with Ollama down, the session still completes with a clean failure path; (c) any bugs found are fixed with tests.
 
-- [ ] Plan 10 — Skill HTTP OAuth2 helper
-Guest SDK: `HostCtx::request_oauth2_device_code(client_id, client_secret) → DeviceCodeResponse`.
-Host polls `/token` endpoint, caches tokens in plain-text file.
-Config: `[skills.<name>.oauth]` section for client_id/client_secret.
-Unit: mock server → assert SDK extracts `device_code` → polling.
-Integration: skills-smoke-test queries to a real OAuth provider.
-Success criteria: OAuth-secured APIs usable by skills.
+- [ ] Piper engine option for the TTS worker
+      Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
+      Piper CLI outputs WAV at the model's native rate; resample or pass the actual rate in the response if it differs from --rate (keep it simple: require the worker's --rate to match the model and validate at startup).
+      Do NOT vendor models; document where to fetch a French voice (e.g. fr_FR-siwis-medium) and add the paths to the config header.
+      Success criteria: (a) with a downloaded Piper voice the full loop speaks with the Piper voice on Linux and macOS; (b) `say` remains the default with unchanged behavior; (c) startup fails fast with a clear message when the binary/model paths are wrong.
 
-- [ ] Plan 11 — Skill fine-grained permission DSL
-`[skills.<name>.grants]`: `audio_playback`, `mqtt.topic:home/#`,
-`http.host:api.open-meteo.com`, `oauth.client_id:123`, `tmpfs.mib:50`.
-Host validates grants on every host call.
-Integration: smoke-test blocked on all host functions without grants.
-Success criteria: host blocks ungranted calls; grants documented in `athena.example.toml`.
+- [ ] Honest audio format metadata in tts/meta
+      `pipeline/sink.rs` hardcodes `{codec: "opus", sample_rate: 24000}` in the session `tts/meta` message while the actual stream today is s16le at the worker's rate.
+      Thread real format info: extend the TTS provider trait (or wrap AudioStream) so synthesize returns format metadata alongside chunks; FakeTts reports a `text` pseudo-codec, MqttTts forwards what the worker declares (add optional `format`/`sample_rate` fields to the worker's first response message; missing fields default to s16le/22050 for compatibility).
+      Update the satellite client to honor tts/meta instead of the --rate flag when metadata is present (keep --rate as override).
+      Success criteria: (a) client plays correctly with no --rate flag against both fake and say-worker configs; (b) meta reflects reality for each provider; (c) runtime + provider tests green.
 
-- [ ] Plan 12 — Skill install manager
-New crate `crates/athena-voice-installer`.
-WASM loader now accepts signed modules via minisig
-n.
-Per-user skills under `~/.athena-voice/skills/*.wasm`.
-Install command: `athena-voice-installer install skills-weather/weather.wasm minisign.pub`.
-Workflow: download → verify → copy to `[skills].dir`.
-Integration: publish skills-smoke-test minisign keypair → assert install succeeds.
-Success criteria: CLI installs skills from signed bundles.
+## In progress
 
 ## Done
 
-- [x] Plan 5 — Socket-compatible runner for VAD → hotword → ASR → intent → TTS cycle
-Split `athena-voice` binary into:
-  1. Socket server (`athena-voice-server`) — accepts byte streams on `unix://athena/audio.sock` (VAD → ASR), emits `Event::FinalTranscript` to `unix://athena/events.sock` and `Event::AudioChunk` back to the socket.
-  2. CLI client (`athena-voice-client`) — replays .wav files or real mic → socket; displays ASR transcript real-time + TTS playback.
-VAD: use WebRTC `webrtcvad` crate (safe wrapper over C++); configurable aggressiveness.
-Hotword: implement `"Athéna"` (Whisper small FR tuned) via a tiny secondary ASR on raw audio chunks (always active, no VAD).
-ASR: Whisper.cpp via `tract-onnx` binding (FR-optimized `ggml-small`); runs in a scope thread; STATELESS — no per-session model instance.
-TTS: Piper FR (`bl lightspeed`) via `tract-onnx`; configured voice/model via `[tts] config = { voice = "bl_lightspeed", sample_rate = 22050 }`; emissions sent socket → client for playback.
-Socket protocol (all lengths BE `u16`): `[header=0xAE, op=Audio, payload_len, audio_bytes]` / `[header=0xAE, op=Transcript, payload_len, utf8_json { "session": "<uuid>", "text": "…", "final": bool }]` / `[header=0xAE, op=Audio, payload_len, s16le_pcm]`.
-Hermetic packaging:
-- Downloaded models live in `/var/lib/athena/models/` (ghost cache, SQLite indexed).
-- Models fetched via `Downloader` trait implementing IPFS + HTTP fallback.
-- SHA-256 pinned in `[models] <name> = { url = "…", sha256 = "…", exact_size = … }`.
-- Progress printed on stderr.
-- Single-file model packs (`tar.zst`) for easy manual drop-in.
-Integration test (`crates/athena-voice-server/tests/soak.rs`):
-- For 24 h:
-  - start server (test tempdir).
-  - use `cpal` to record 48 kHz stereo float → separate thread that VAD chunks → socket.
-  - assert `transcript == expected` for each utterance.
-  - assert TTS audio → CLI TTS `[op=Audio]` arrives within 300 ms after `SkillResponse::Speak`.
-- Test hotword: feed a clip containing `"Athéna"` → assert `Event::HotwordDetected` emitted.
-Success criteria: `athena-voice-server` and `athena-voice-client` crates split; 24 h soak test green; Model downloads work; CLI replays mic .wav files; Integration with existing skills (weather/timer/home) via the socket event loop.
+- [x] Repair generated-code corruption across SDK, storage, runtime, server (2026-07-23/24)
+      Rewrote skill SDK host bindings; storage retention on timestamp_sec column; restored Runtime::spawn; fixed manifests, vendored webrtcvad stub, honest server tests; workspace check and 184 workspace tests green. Commit "Repair generated-code corruption; wire the full skill voice loop".
 
-## Done
+- [x] Satellite text-injection topic + skill loading in serve (2026-07-24)
+      New `athena/sat/<sat>/session/<sid>/text` ingress bypassing STT; `Runtime::spawn` loads skills + dispatcher from `[skills]` config; per-pid MQTT client ids.
 
-- [x] Task E — Weather skill (Open-Meteo)
-      New crate at repo root `skills-weather/` (same layout as `skills-home/`/`skills-timer/`: `crate-type = ["cdylib"]`, edition 2024, Gekkotron author, NOT in workspace, release LTO/opt-z/strip).
-      Provider: Open-Meteo — no API key required. Two endpoints: geocoding `https://geocoding-api.open-meteo.com/v1/search?name={city}&language=fr&count=1`; forecast `https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto`.
-      Per-skill config in `[skills.weather]`: `http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]`; `config = { default_city = "Paris", units = "celsius" }`. Add a commented `[skills.weather]` example to `athena.example.toml`.
-      FR patterns (EN deferred): `"quel temps fait-il"` → `weather.now` (no slots — uses `default_city`); `"quel temps fait-il à {city}"` → `weather.now`, slot `city: SlotKind::String`; `"météo à {city}"` → `weather.now`; `"quel temps fera-t-il demain"` → `weather.tomorrow`; `"quel temps fera-t-il demain à {city}"` → `weather.tomorrow`.
-      Handler logic in `skills-weather/src/lib.rs`: (1) resolve city: slot > `config_get("default_city")` > hard-coded `"Paris"`. (2) Cache geocoding via `state_get/set("geo/{city_lowercase}")` (compact `{lat, lon, name}` JSON; TTL/refresh is a Plan 5 concern — call out in code comment). (3) Call forecast; parse `current.temperature_2m` + `current.weather_code` for `weather.now`; parse `daily[0]` for `weather.tomorrow`. (4) `weather_code` → FR phrase via `weather_code.rs` module (all WMO codes → short FR: `0 => "temps clair"`, `1..=3 => "quelques nuages"`, `61..=65 => "de la pluie"`, `71..=75 => "de la neige"`, `95..=99 => "un orage"`; unknown code → `"un temps particulier"`; unit-tested for every documented code range). (5) Respond `SkillResponse::Speak("il fait <temp> degrés à <name>, <phrase>")` for `weather.now`; `SkillResponse::Speak("demain à <name>, il fera entre <min> et <max> degrés avec <phrase>")` for `weather.tomorrow`.
-      Error paths: geocoding returns empty results → `SkillResponse::Speak("désolé, je ne trouve pas <city>")` and NO forecast call; HTTP error → `SkillResponse::Speak("désolé, le service météo est indisponible")`; JSON parse error → same message + `log("error", ...)`.
-      Integration test `crates/athena-voice-runtime/tests/weather_end_to_end.rs`: add `wiremock` to workspace dev-deps; spin up two mock endpoints on deterministic ports; per-skill `http_allowlist = ["127.0.0.1"]`; skill reads a `base_url` from `config_get` (default = the real endpoints) so tests can override to the wiremock host. Cases: (1) `"quel temps fait-il à Lyon"` — geocoding returns `Lyon (45.75, 4.85)`, forecast returns `temp=18.0, weather_code=1` → TTS contains `"il fait 18 degrés à Lyon, quelques nuages"`. (2) `"quel temps fera-t-il demain"` (default_city=Paris) — geocoding returns Paris, forecast daily returns `min=8, max=15, weather_code=61` → TTS contains `"demain à Paris, il fera entre 8 et 15 degrés avec de la pluie"`. (3) `"quel temps fait-il à Zzzz"` — geocoding returns empty results → TTS `"désolé, je ne trouve pas Zzzz"` AND wiremock forecast endpoint `.expect(0)` (never called).
-      Success criteria: `cargo nextest run --workspace` green including all weather_code unit tests + 3 integration cases; smoke-test/timer/home integration tests still green (regression pin); clippy + fmt clean; `skills-weather.wasm` builds via `cargo build --target wasm32-wasip1 --manifest-path skills-weather/Cargo.toml`; `athena.example.toml` shows `[skills.weather]` example.
+- [x] MQTT satellite client (2026-07-24)
+      `athena-voice-client` rewritten: --text injection, session lifecycle, --speak (macOS say), --play (rodio PCM playback).
 
-- [x] Task D — Home automation (MQTT) skill
-      Extend `SkillConfig` in `wasm/registry.rs` with `pub mqtt_publish_allowlist: Vec<String>` (glob-style MQTT prefixes: `home/salon/light/set`, `home/+/light/set`, `home/#`). Default empty. Plumb through `SkillCtx` into `host_fns.rs`.
-      Broaden `host_mqtt_publish` topic check: allow iff topic matches built-in `athena/skills/<name>/*` OR any prefix in `mqtt_publish_allowlist`. Implement `mqtt_topic_matches(pattern, topic)` with real MQTT wildcard semantics (`+` matches one level, `#` matches the tail). Unit tests: `home/+/light/set` matches `home/salon/light/set` but not `home/salon/kitchen/light/set`; `home/#` matches any tail; empty allowlist leaves the default ACL untouched (regression pin for smoke test).
-      Update `athena.example.toml` to document `mqtt_publish_allowlist` under a per-skill section, with a commented `[skills.home]` example.
-      New crate at repo root `skills-home/` (mirrors `skills-timer/`/`skills-smoke-test/`: `crate-type = ["cdylib"]`, edition 2024, Gekkotron author, NOT in workspace, release profile with LTO/opt-z/strip).
-      Entities declared as one stringified JSON value in `[skills.home] config = { entities = "…" }` (since `config` is `HashMap<String, String>`). Schema: `[{ "name": "lumière du salon", "room": "salon", "kind": "light|switch", "set_topic": "home/salon/light/set", "on_payload": "ON", "off_payload": "OFF" }, …]`. The skill parses it lazily on first `handle` and caches in a `static OnceCell`.
-      FR patterns (EN deferred): `"allume la lumière du {room}"` → `home.light.on`; `"éteins la lumière du {room}"` → `home.light.off`; `"allume {device}"` → `home.device.on`; `"éteins {device}"` → `home.device.off`. Slot kinds: `SlotKind::String`.
-      Resolution: for `home.light.{on,off}` — find entity with `kind == "light" && room == slot.room`; for `home.device.{on,off}` — find entity whose `name` fuzzy-matches `slot.device` via `strsim::normalized_damerau_levenshtein ≥ 0.75` (SDK re-exports it — worker confirms). Multiple matches → highest similarity wins; log all considered names at debug level.
-      Resolved match: publish `entity.set_topic` with `entity.on_payload`/`entity.off_payload`; respond `SkillResponse::Speak("d'accord")`. Unknown entity: NO publish + `SkillResponse::Speak("désolé, je ne connais pas <name>")`. Publish error: `SkillResponse::Speak("je n'ai pas pu envoyer la commande")`.
-      Integration test `crates/athena-voice-runtime/tests/home_end_to_end.rs`: in-memory `SqliteStore` + `skills-home.wasm` + per-skill config with entities (`lumière du salon` → `home/salon/light/set`, `prise du bureau` → `home/bureau/switch/set`); fake MQTT client capturing publishes; per-skill `mqtt_publish_allowlist = ["home/+/light/set", "home/+/switch/set"]`. Cases: (1) `"allume la lumière du salon"` → `home/salon/light/set: ON` captured + TTS `"d'accord"`; (2) `"éteins la prise du bureau"` → `home/bureau/switch/set: OFF` captured + TTS `"d'accord"`; (3) `"allume la lumière de la piscine"` → NO publish + TTS `"désolé"`.
-      Add a `host_fns.rs` test proving the smoke-test skill still can't publish to `home/#` when its allowlist is empty (permission regression).
-      Success criteria: `cargo nextest run --workspace` green including 3 new host_fn wildcard tests + 3 integration cases + regression pin; smoke-test integration still green; clippy + fmt clean; `skills-home.wasm` builds via `cargo build --target wasm32-wasip1 --manifest-path skills-home/Cargo.toml`.
+- [x] Real TTS over MQTT (2026-07-24)
+      `athena-voice-tts-worker` (say engine) speaking the mqtt_tts protocol; fixed provider stream termination, packet caps, route leak; `athena.say.toml`; verified live (spoken time and weather answers).
 
-- [x] Task C — Timer / reminder skill + host scheduler
-      New storage migration `0002_scheduled_events.sql`: `scheduled_events(id INTEGER PRIMARY KEY, skill TEXT NOT NULL, fires_at_ms INTEGER NOT NULL, mqtt_topic TEXT NOT NULL, payload BLOB NOT NULL, created_at_ms INTEGER NOT NULL)`, index on `(fires_at_ms)`.
-      Extend `Store` with `schedule_event(skill, fires_at_ms, topic, payload) -> i64`, `pop_due_events(now_ms) -> Vec<ScheduledEvent>` (transactional SELECT + DELETE by id), `delete_scheduled(id)`. Full test coverage (empty, single-due, multiple-due, delete-by-id).
-      New host function `host_schedule_mqtt(fires_at_ms: i64, topic: String, payload: Vec<u8>) -> Result<i64, SkillError>`. Same ACL as `host_mqtt_publish` (topic must start with `athena/skills/<skill_name>/`). Add `HostCtx::schedule_mqtt` in the guest SDK (Extism binding + `for_testing` stub). Extend the ABI header comment in `wasm/registry.rs`.
-      Add `Event::ScheduledFired { skill, id }` to `athena-voice-core/src/event.rs`.
-      New `wasm/scheduler.rs`: `SchedulerTask` — tokio task that ticks every 1 s, calls `pop_due_events(Utc::now().timestamp_millis())`, publishes each event via the MQTT client, emits `Event::ScheduledFired`.
-      New crate at repo root `skills-timer/` (mirrors `skills-smoke-test/`: `crate-type = ["cdylib"]`, edition 2024, Gekkotron author, NOT in workspace, `[profile.release] lto = true, opt-level = "z", strip = "symbols"`).
-      FR patterns (EN deferred): `"mets un minuteur de {duration}"`, `"minuteur {duration}"`, `"réveille-moi dans {duration}"`. Slot `duration: SlotKind::String`. Guest-side `parse_fr_duration` (in `skills-timer/src/duration.rs`, unit-tested) handles seconds/minutes/hours + `un/une/deux/trois/quatre/cinq/six/sept/huit/neuf/dix`. Reject > 24 h with `SkillResponse::Speak("désolé, je ne gère que les minuteurs de moins de vingt-quatre heures")`.
-      `handle`: compute `fires_at_ms = now_ms + parsed_ms`; call `ctx.schedule_mqtt(fires_at_ms, "athena/skills/timer/expired", <compact-JSON {seconds}>)`; `state_set("timer/{returned_id}", <duration_seconds_le_bytes>)`; respond `SkillResponse::Speak("d'accord, minuteur de <duration> lancé")`.
-      Runtime wiring for the expired-notification: `wasm/scheduler.rs` emits `Event::SkillNotify { session, skill, text }` directly (rather than round-tripping through an MQTT subscribe on `athena/skills/+/expired`); a small `spawn_skill_notify_forwarder` task subscribes to the event bus and forwards `SkillNotify.text` into the router's TTS token channel, bypassing the intent matcher without threading a new dependency through `RouterDeps`.
-      Integration test `crates/athena-voice-runtime/tests/timer_end_to_end.rs`: in-memory `SqliteStore` + `skills-timer.wasm` + fake MQTT client that captures publishes; feed `"mets un minuteur de deux secondes"` as a final transcript; assert `Event::IntentMatched(timer.set)` + `SkillInvoked` + a TTS chunk containing `"d'accord, minuteur"`; sleep past the two-second duration in real wall-clock time (tokio's paused-clock utilities only mock tokio's own timer, not `chrono::Utc::now()`, which both the guest and the scheduler read); assert `Event::ScheduledFired` AND a follow-up TTS chunk with the expiration announce.
-      Success criteria: `cargo test --workspace` green including migration test + new store tests + integration test; existing smoke-test integration test still green (regression pin); clippy + fmt clean; `skills-timer.wasm` builds via `cargo build --target wasm32-wasip1 --manifest-path skills-timer/Cargo.toml`.
+- [x] host_local_time host function + real time skill (2026-07-24)
+      Host serves epoch + UTC offset; SDK exposes LocalTime; smoke-test skill speaks actual local time.
 
-- [x] Task B — Skill hot-reload (dev mode)
-      Add `[skills].hot_reload = false` (default false) to `athena.example.toml` and the config loader. When true, the runtime spawns a filesystem watcher on `[skills].dir`.
-      New `wasm/watcher.rs`: uses the `notify` crate via `notify-debouncer-full` (~250 ms debounce) on the skills dir; emits `WatchEvent { path, kind: Added | Modified | Removed }` via internal `mpsc`. Add `notify` + `notify-debouncer-full` to workspace deps.
-      Refactor `SkillRegistry` to hold `patterns: Arc<ArcSwap<RuleIndex>>` and `plugins: Arc<RwLock<HashMap<String, Arc<Mutex<dyn SkillPlugin>>>>>`. Add `arc-swap` to workspace deps. `RouterDeps.rules` and `SkillDispatcherHandle`'s lookup path become `Arc<ArcSwap<RuleIndex>>` / RwLock-guarded so a swap under a name is visible to the next dispatch without router restart.
-      `SkillRegistry::reload_path(path, deps)`: rebuilds a plugin for a single file and re-runs `install`. On failure, log at `warn` and keep the previous plugin (never a half-loaded state). Emit `Event::SkillReloaded { name }` on success; `Event::SkillReloadFailed { name, reason }` on error. Add both variants to `athena-voice-core/src/event.rs`.
-      `SkillRegistry::remove(name)`: drops the plugin and rebuilds the aggregate `RuleIndex` from what remains, then `patterns.store(Arc::new(new_index))`.
-      New tokio task `spawn_hot_reload_task(watcher_rx, registry, deps)` in `wasm/mod.rs`. `Runtime::spawn` conditionally starts it when the flag is on.
-      Tests (`wasm/registry.rs` + new `wasm/watcher.rs`): (1) `install → remove` clears both the plugin map and the rule index for that name; (2) `install → install` (same name) replaces the plugin and re-populates its rules only; (3) `reload_path` on a broken plugin returns error, emits `SkillReloadFailed`, leaves prior plugin intact; (4) tempdir watcher test — creating, modifying, removing a fixture `.wasm` yields exactly one Added / one Modified / one Removed event within 500 ms.
-      Deferred: signature verification on reload (lands with the future signed-WASM task).
-      Success criteria: `cargo nextest run --workspace` green including the 4 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean; `athena.example.toml` documents `hot_reload`.
+- [x] Cross-platform audio sink (2026-07-24)
+      rodio-based AudioSink behind feature `audio` (replaces Linux-only pipewire); AudioChunk carries sample_rate; VolumeChanged event applied by the sink.
 
-- [x] Task A — Barge-in on new final transcript
-      Add `Event::BargeIn { session, reason: BargeInReason }` (`NewFinalTranscript`, `VadSpeechStart` reserved) and `Event::SkillCancelled { session, skill }` to `athena-voice-core/src/event.rs`.
-      In `pipeline/router.rs`, keep a per-session `utterance_epoch: u64`; bump on every final transcript. Snapshot the epoch before awaiting `dispatcher.call(...)`; if it has moved on when the call resolves, emit `Event::SkillCancelled` and drop the `SkillResponse::Speak/AskLlm` instead of forwarding to TTS/LLM.
-      Emit `Event::BargeIn { reason: NewFinalTranscript }` whenever a final transcript arrives while a prior utterance's dispatch or TTS is still in flight (epoch > 0 with pending work).
-      `pipeline/tts.rs` (and `sink.rs` if it buffers) subscribe to `Event::BargeIn` and flush queued/streaming speech tokens so the previous response stops playing.
-      Add a `CancellationToken` per dispatch so the awaiting side of `SkillDispatcherHandle::call` can bail out immediately; the `spawn_blocking` WASM task finishes naturally and its result is dropped (Extism can't be interrupted mid-call).
-      Tests in `pipeline/router.rs`: (1) two rapid final transcripts — first dispatch's speech is dropped, only second reaches `tts_tok_tx`, `Event::SkillCancelled` + `Event::BargeIn` observed; (2) single final transcript — no `BargeIn`/`SkillCancelled` (regression); (3) a mock TTS observing `Event::BargeIn` flushes its buffer.
-      Deferred (do NOT scope here): VAD-driven barge-in on `VadSpeechStart`. That requires a real VAD upgrade and lands in a separate task.
-      Success criteria: `cargo nextest run --workspace` green including the 3 new tests; `cargo clippy --workspace --all-features --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean.
+## Manual checklist (human, not the orchestrator)
 
-- [x] Plan 4 Task 12 — Config + docs + CI
-      Add `[skills]` section to `athena.toml`: `dir = "/etc/athena-voice/skills"` (empty by default). Per-skill config: `[skills.<name>] http_allowlist = [ … ] config = { … }`.
-      Update `athena.example.toml`, run `cargo fmt --all`, run `cargo clippy --workspace --all-features --all-targets -- -D warnings`.
-      Update CI (GitHub Actions) to install the `wasm32-wasip1` target since the smoke-test crate is built there.
-      Push + verify CI green.
-      Success criteria: Task 12 in the Plan 4 doc satisfied; CI green on the resulting PR.
-
-- [x] Plan 4 Task 11 — Integration test: end-to-end skill dispatch
-      Add `crates/athena-voice-runtime/tests/skill_dispatch.rs`: spawn runtime with the smoke-test .wasm; simulate a final transcript matching the FR pattern; assert `Event::IntentMatched` + `Event::SkillInvoked` + a TTS chunk carrying the expected speech; assert no `Event::LlmFallback`.
-      Success criteria: `cargo nextest run --workspace` green including the new integration test.
-
-- [x] Plan 4 Task 10 — `skills-smoke-test` WASM skill
-      New `skills-smoke-test/` crate (excluded from workspace; targets `wasm32-wasip1` with `[lib] crate-type = ["cdylib"]`; depends on `athena-voice-skill-sdk`).
-      `src/lib.rs`: implements `Skill`, returns one FR pattern `"quelle heure est-il"` → intent `time.query`. `handle` calls every host function (log, config_get, state_set/get, mqtt_publish, http_get_json with a mocked-in-test allowed host), then returns `SkillResponse::Speak("il est … heure")`.
-      Build: `cargo build --target wasm32-wasip1 --manifest-path skills-smoke-test/Cargo.toml`. Rebuild in a `build.rs` and load from `CARGO_TARGET_DIR` (preferred over committing the .wasm).
-      Success criteria: Task 10 in the Plan 4 doc satisfied.
-
-- [x] Plan 4 Task 8 — WASM host + guest ABI
-      Wire Task 3's `HostCtx` methods through `extism_pdk::host_fn` bindings on the guest side; compile the SDK to `wasm32-wasip1` in a smoke build.
-      Host-side `SkillDispatcher` (`wasm/dispatcher.rs`) is a tokio actor that receives `(session_id, intent)` and calls `SkillRegistry::dispatch`, emitting `Event::SkillInvoked`/`Event::SkillPanicked`.
-      Extism invocation is CPU-bound and blocking — dispatcher uses `tokio::task::spawn_blocking`.
-      Success criteria: Task 8 in the Plan 4 doc satisfied; workspace tests + clippy green; guest SDK compiles to `wasm32-wasip1`.
-
-- [x] Plan 4 Task 6 — Skill registry + loader in `wasm/registry.rs`
-      Implement `SkillRegistry { plugins, patterns }` with `load_dir(dir, deps)` that iterates `*.wasm` files, loads each with Extism, calls the exported `pattern_rules` fn to populate the pattern index.
-      Add `SkillRegistry::dispatch(skill, intent) -> Result<SkillResponse, SkillError>`.
-      Tests: fixture wasm file OR mocked plugin.
-      Success criteria: Task 6 in the Plan 4 doc satisfied; workspace tests + clippy green.
-
-- [x] Plan 4 Task 5 — Host functions in `wasm/host_fns.rs`
-      Register Extism host functions for `host_log`, `host_config_get`,
-      `host_state_get/set` (via `athena_voice_storage::Store`),
-      `host_mqtt_publish` (ACL: topic must start with `athena/skills/<skill_name>/`),
-      and `host_http_get_json` (allowlist per skill).
-      Each takes a `UserData` payload carrying the skill's name, store,
-      mqtt client, allowlist, and config.
-      Tests: mock the WASM plugin side, verify host-fn dispatch AND ACL/allowlist enforcement.
-      Success criteria: full task text in `docs/superpowers/plans/2026-07-13-athena-voice-skill-system.md` Task 5 satisfied; `cargo nextest run --workspace` green; `cargo clippy --workspace --all-features -- -D warnings` clean.
+- [ ] Decide the fate of `athena-voice-server`: its socket-based VAD→hotword→ASR path duplicates the runtime's MQTT satellite pipeline and is mostly stubs (audio socket unimplemented, Piper tokenizer TODO, placeholder models). Consolidate on the MQTT path, or invest in the socket path — don't let both drift.
+- [ ] Download a real whisper ggml model and a Piper French voice into `models/` (the current files are byte-sized placeholders).
+- [ ] Consider enabling `[skills] hot_reload = true` in dev configs now that the watcher is deflaked.
