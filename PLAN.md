@@ -51,6 +51,11 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
       Update the satellite client to honor tts/meta instead of the --rate flag when metadata is present (keep --rate as override).
       Success criteria: (a) client plays correctly with no --rate flag against both fake and say-worker configs; (b) meta reflects reality for each provider; (c) runtime + provider tests green.
 
+- [ ] Idle-session reaper in the runtime
+      A satellite that crashes mid-session (or loses connectivity before publishing `end`) leaks its session until server shutdown: the DAG actors stay parked and the session map grows. Add a reaper task that closes sessions with no inbound activity (audio/text) for a configurable idle timeout (default 120 s, `[server] session_idle_secs`); closing must emit the normal `done`/`SessionEnded` path so observability stays consistent.
+      Track last-activity per session in SessionManager (updated by the ingress on audio/text); reaper ticks every ~10 s.
+      Success criteria: (a) unit test: an inactive session is closed after the timeout and `SessionEnded` fires; (b) active sessions are never reaped (activity refreshes the deadline); (c) config documented in athena.example.toml.
+
 ## In progress
 
 ## Done

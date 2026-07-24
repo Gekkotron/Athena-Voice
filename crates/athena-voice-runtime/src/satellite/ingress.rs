@@ -81,6 +81,20 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
             }
         }
         deps.session_manager.cancel_all();
+        // Cancelled sessions' sinks publish a final `done`; keep the event
+        // loop alive briefly so those publishes flush instead of dying with
+        // "failed to send mqtt requests to eventloop" warnings.
+        let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+        while tokio::time::Instant::now() < drain_deadline {
+            let mut guard = deps.event_loop.lock().await;
+            if tokio::time::timeout(std::time::Duration::from_millis(100), guard.poll())
+                .await
+                .is_err()
+            {
+                // Quiet for 100 ms — outgoing queue is flushed.
+                break;
+            }
+        }
         egress_task.abort();
     })
 }

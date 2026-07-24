@@ -162,6 +162,10 @@ async fn main() -> anyhow::Result<()> {
                 let _ = client
                     .publish(format!("{base}/end"), QoS::AtLeastOnce, false, "")
                     .await;
+                // The publish above only ENQUEUES — without polling the
+                // event loop it never reaches the broker and the session
+                // leaks server-side until shutdown.
+                flush_eventloop(&mut eventloop).await;
                 // process::exit skips buffered-stdout flushing (lines are
                 // block-buffered when piped) — flush or lose the session log.
                 let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -235,8 +239,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = client
         .publish(format!("{base}/end"), QoS::AtLeastOnce, false, "")
         .await;
-    // Give the final publish a beat to flush before dropping the event loop.
-    let _ = tokio::time::timeout(Duration::from_millis(300), eventloop.poll()).await;
+    flush_eventloop(&mut eventloop).await;
 
     if args.speak {
         match &sentence {
@@ -258,6 +261,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Polls the event loop until queued publishes (the session `end`) are
+/// acknowledged or ~500 ms passes — publishing only enqueues; without this
+/// the final message never leaves the process.
+async fn flush_eventloop(eventloop: &mut rumqttc::EventLoop) {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(100), eventloop.poll()).await {
+            Ok(Ok(Event::Incoming(Packet::PubAck(_)))) => return,
+            Ok(_) => {}
+            Err(_) => return,
+        }
+    }
 }
 
 /// Reads any WAV file and converts it to the STT contract: s16le mono 16 kHz.
