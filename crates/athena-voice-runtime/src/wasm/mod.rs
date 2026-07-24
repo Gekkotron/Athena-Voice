@@ -18,6 +18,7 @@ pub mod error;
 pub mod host_fns;
 pub mod registry;
 pub mod scheduler;
+pub mod settings;
 pub mod watcher;
 
 use std::sync::Arc;
