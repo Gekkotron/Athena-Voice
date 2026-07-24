@@ -109,6 +109,19 @@ Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
 
 `athena/events/#` mirrors the runtime's full event bus for observability.
 
+## Troubleshooting
+
+- **Skills can reach the internet but not LAN devices (Jeedom, MQTT
+  workers on another host) and the log says the HTTP call failed**: on
+  macOS 15+, the app your terminal runs in needs the **Local Network**
+  permission (System Settings → Privacy & Security → Local Network).
+  Embedded terminals inside other apps often can't be granted it — run
+  the stack from the plain Terminal.app instead. Diagnostic tell: `nc -z
+  <host> <port>` succeeds while `curl` to the same host fails instantly.
+- **Two servers answering everything twice**: only run one `serve` (or
+  quickstart) at a time; any stray instance also subscribes to the
+  satellite topics.
+
 ## Development
 
 ```bash
