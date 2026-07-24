@@ -174,6 +174,26 @@ async fn known_sensor_speaks_value_with_unit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn natural_phrasing_with_stt_slip_reads_the_sensor() {
+    // Real mic interaction: "quelle est la température du salon" transcribed
+    // as "…du salaud". The per-sensor literal rule must catch it.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/core/api/jeeApi.php"))
+        .and(query_param("id", "123"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("21.5"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let spoken = drive_utterance(&server.uri(), "Quelle est la température du salaud").await;
+    assert!(
+        spoken.contains("21.5") && spoken.contains("température du salon"),
+        "spoken: {spoken:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unknown_sensor_apologises_without_calling_jeedom() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

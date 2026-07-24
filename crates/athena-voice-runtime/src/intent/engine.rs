@@ -22,12 +22,21 @@ use super::rule::{HostPatternRule, HostSlotKind};
 
 pub const MATCH_THRESHOLD: f32 = 0.8;
 
+/// Confidence band inside which two candidates count as tied, letting the
+/// more specific phrase win (see [`IntentMatcher::find_match`]).
+const SPECIFICITY_EPSILON: f32 = 0.05;
+
 /// The outcome of a successful match: the intent to dispatch + the skill that owns it.
 #[derive(Debug, Clone)]
 pub struct IntentMatch {
     pub intent: Intent,
     pub skill: String,
     pub confidence: f32,
+    /// Word count of the matched phrase — used to prefer the more specific
+    /// pattern when two rules score within a whisker of each other
+    /// ("quelle est la température du salon" must beat the generic
+    /// "quelle est la température" on near-ties).
+    pub specificity: usize,
 }
 
 pub struct IntentMatcher {
@@ -41,7 +50,8 @@ impl IntentMatcher {
     }
 
     /// Runs the matcher against `text` for `locale`, returning the best match
-    /// above `MATCH_THRESHOLD`, if any.
+    /// above `MATCH_THRESHOLD`, if any. On near-ties (within
+    /// `SPECIFICITY_EPSILON`) the more specific — longer — phrase wins.
     #[must_use]
     pub fn find_match(&self, text: &str, locale: &str, index: &RuleIndex) -> Option<IntentMatch> {
         let rules = index.for_locale(locale)?;
@@ -55,11 +65,20 @@ impl IntentMatcher {
                         intent: candidate.intent,
                         skill: skill.clone(),
                         confidence: candidate.confidence,
+                        specificity: candidate.specificity,
                     };
-                    if best
-                        .as_ref()
-                        .is_none_or(|b| with_skill.confidence > b.confidence)
-                    {
+                    let better = match &best {
+                        None => true,
+                        Some(b) => {
+                            let diff = with_skill.confidence - b.confidence;
+                            if diff.abs() <= SPECIFICITY_EPSILON {
+                                with_skill.specificity > b.specificity
+                            } else {
+                                diff > 0.0
+                            }
+                        }
+                    };
+                    if better {
                         best = Some(with_skill);
                     }
                 }
@@ -99,6 +118,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
             },
             skill: String::new(),
             confidence: sim as f32,
+            specificity: lit_lower.split_whitespace().count(),
         });
     }
 
@@ -167,6 +187,7 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
         },
         skill: String::new(), // populated by IntentMatcher::find_match
         confidence,
+        specificity: filled_phrase.split_whitespace().count(),
     })
 }
 
@@ -264,6 +285,40 @@ mod tests {
             idx.insert(locale.into(), r, skill.into());
         }
         idx
+    }
+
+    #[test]
+    fn specific_sensor_phrase_beats_generic_weather_on_near_tie() {
+        // Real interaction: weather owns the generic "quelle est la
+        // température"; a configured Jeedom sensor generates the literal
+        // "quelle est la température du salon". Whisper misheard the room
+        // as "salaud" — the specific phrase must still win.
+        let idx = index_with(vec![
+            (
+                rule("weather.now", &["quelle est la température"], &[]),
+                "fr",
+                "weather",
+            ),
+            (
+                rule(
+                    "jeedom.read",
+                    &["quelle est la température du salon"],
+                    &[],
+                ),
+                "fr",
+                "jeedom",
+            ),
+        ]);
+        let m = IntentMatcher::new()
+            .find_match("Quelle est la température du salaud", "fr", &idx)
+            .expect("must match");
+        assert_eq!(m.skill, "jeedom", "specific phrase must win the tie");
+
+        // Without a room, the generic weather phrase still wins outright.
+        let m = IntentMatcher::new()
+            .find_match("quelle est la température", "fr", &idx)
+            .expect("must match");
+        assert_eq!(m.skill, "weather");
     }
 
     #[test]

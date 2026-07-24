@@ -66,10 +66,11 @@ impl Skill for JeedomSkill {
         // No sensors configured → no patterns: installs without a
         // [skills.jeedom] config must not capture "donne-moi la …"
         // utterances just to apologise about unknown sensors.
-        if sensors(&HostCtx::for_testing()).is_empty() {
+        let configured = sensors(&HostCtx::for_testing());
+        if configured.is_empty() {
             return Vec::new();
         }
-        let phrases: Vec<String> = match locale {
+        let mut phrases: Vec<String> = match locale {
             "fr" => vec![
                 "capteur {sensor}".into(),
                 "valeur du capteur {sensor}".into(),
@@ -84,18 +85,56 @@ impl Skill for JeedomSkill {
             ],
             _ => return Vec::new(),
         };
-        vec![PatternRule {
+        let mut rules = vec![PatternRule {
             intent: "jeedom.read".into(),
-            phrases,
+            phrases: std::mem::take(&mut phrases),
             slots: vec![SlotSpec {
                 name: "sensor".into(),
                 kind: SlotKind::String,
             }],
-        }]
+        }];
+        // Each configured sensor also contributes literal phrasings built
+        // from its own name — "quelle est la température du salon" must
+        // route here rather than to the weather skill's generic
+        // "quelle est la température" (the matcher prefers the more
+        // specific phrase on near-ties, which also absorbs STT slips).
+        // The sensor id rides in the intent name since literals have no slot.
+        for sensor in configured {
+            let name = &sensor.name;
+            let literal_phrases: Vec<String> = match locale {
+                "fr" => vec![
+                    format!("quelle est la {name}"),
+                    format!("quel est le niveau de {name}"),
+                ],
+                "en" => vec![
+                    format!("what is the {name}"),
+                    format!("what's the {name}"),
+                ],
+                _ => Vec::new(),
+            };
+            rules.push(PatternRule {
+                intent: format!("jeedom.read.{}", sensor.id),
+                phrases: literal_phrases,
+                slots: Vec::new(),
+            });
+        }
+        rules
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
         let en = intent.locale.starts_with("en");
+
+        // Per-sensor literal rules carry the id in the intent name.
+        if let Some(id) = intent
+            .name
+            .strip_prefix("jeedom.read.")
+            .and_then(|id| id.parse::<u64>().ok())
+        {
+            if let Some(sensor) = sensors(ctx).iter().find(|s| s.id == id) {
+                return speak_reading(ctx, sensor, en);
+            }
+        }
+
         let asked = intent
             .slots
             .get("sensor")
@@ -119,25 +158,30 @@ impl Skill for JeedomSkill {
             }));
         };
 
-        match read_value(ctx, sensor) {
-            Ok(value) => {
-                let unit = if sensor.unit.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", sensor.unit)
-                };
-                Ok(SkillResponse::speak(if en {
-                    format!("the {} is {value}{unit}", sensor.name)
-                } else {
-                    format!("la {} est de {value}{unit}", sensor.name)
-                }))
-            }
-            Err(()) => Ok(SkillResponse::speak(if en {
-                "sorry, I can't reach Jeedom right now"
+        speak_reading(ctx, sensor, en)
+    }
+}
+
+/// Reads the sensor and phrases the answer in the session's language.
+fn speak_reading(ctx: &HostCtx, sensor: &Sensor, en: bool) -> Result<SkillResponse, SkillError> {
+    match read_value(ctx, sensor) {
+        Ok(value) => {
+            let unit = if sensor.unit.is_empty() {
+                String::new()
             } else {
-                "désolé, je n'arrive pas à joindre Jeedom"
-            })),
+                format!(" {}", sensor.unit)
+            };
+            Ok(SkillResponse::speak(if en {
+                format!("the {} is {value}{unit}", sensor.name)
+            } else {
+                format!("la {} est de {value}{unit}", sensor.name)
+            }))
         }
+        Err(()) => Ok(SkillResponse::speak(if en {
+            "sorry, I can't reach Jeedom right now"
+        } else {
+            "désolé, je n'arrive pas à joindre Jeedom"
+        })),
     }
 }
 

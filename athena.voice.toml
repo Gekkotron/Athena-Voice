@@ -50,6 +50,6 @@ config = { default_city = "Strasbourg" }
 
 # Jeedom sensors — dormant until configured; see README "Enabling the
 # Jeedom skill" for where to find command ids and the API key.
-# [skills.jeedom]
-# http_allowlist = ["jeedom.local"]
-# config = { base_url = "http://jeedom.local", api_key = "YOUR_KEY", sensors = '[{"name":"température du salon","id":123,"unit":"degrés"}]' }
+[skills.jeedom]
+http_allowlist = ["geekoma5.local"]
+config = { base_url = "http://geekoma5.local", api_key = "JJ5qGwlquxyayFlfqYc5COM9Ee5IQZJpQD3T0O8V6yEwZ9dMAvYSu4JetQJPLn4b", sensors = '[{"name":"température du salon","id":142,"unit":"degrés"}]' }
