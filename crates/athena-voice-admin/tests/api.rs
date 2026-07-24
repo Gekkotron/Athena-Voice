@@ -177,3 +177,57 @@ async fn put_config_rejects_reserved_key_before_persisting() {
         "reserved-key write must be rejected before anything is persisted"
     );
 }
+
+fn post(uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn enable_disable_toggles_state() {
+    let (deps, token) = test_deps().await;
+    let store = deps.store.clone();
+    let app = router(deps);
+    let res = app
+        .clone()
+        .oneshot(post("/api/skills/timer/disable", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        store.skills_disabled().await.unwrap(),
+        vec!["timer".to_string()]
+    );
+    let res = app
+        .oneshot(post("/api/skills/timer/enable", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(store.skills_disabled().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upload_rejects_bad_names() {
+    let (deps, token) = test_deps().await;
+    let app = router(deps);
+    let body = concat!(
+        "--BOUND\r\n",
+        "Content-Disposition: form-data; name=\"file\"; filename=\"../evil.wasm\"\r\n",
+        "Content-Type: application/wasm\r\n\r\n",
+        "AGFzbQ\r\n",
+        "--BOUND--\r\n",
+    );
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/skills/upload")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}

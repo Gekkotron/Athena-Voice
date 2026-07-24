@@ -30,15 +30,12 @@ pub struct AdminDeps {
     pub bundled_dir: Option<PathBuf>,
 }
 
-// `bundled_dir` isn't read by any handler yet — Task 10 adds the bundled
-// skill routes that read it.
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub store: Arc<dyn Store>,
     pub skills: Option<SkillsHandle>,
     pub base_per_skill: Arc<HashMap<String, SkillConfig>>,
     pub token_hash: Arc<String>,
-    #[allow(dead_code)]
     pub bundled_dir: Option<PathBuf>,
 }
 
@@ -56,8 +53,22 @@ pub fn router(deps: AdminDeps) -> Router {
         .route("/status", get(status))
         .route("/skills", get(api::list_skills))
         .route("/skills/{name}/config", axum::routing::put(api::put_config))
-        // Task 10+ add: skill enable/upload/bundled routes here.
+        .route(
+            "/skills/{name}/enable",
+            axum::routing::post(api::enable_skill),
+        )
+        .route(
+            "/skills/{name}/disable",
+            axum::routing::post(api::disable_skill),
+        )
+        .route("/skills/upload", axum::routing::post(api::upload_skill))
+        .route("/bundled", get(api::list_bundled))
+        .route(
+            "/bundled/{name}/install",
+            axum::routing::post(api::install_bundled),
+        )
         .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state);
     Router::new().nest("/api", api).fallback(get(static_asset))
 }

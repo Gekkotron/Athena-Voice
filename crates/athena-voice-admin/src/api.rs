@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -268,4 +268,145 @@ pub(crate) async fn reload_skill(state: &AppState, name: &str) -> Result<(), Str
         .await
         .map_err(|e| e.to_string())?;
     res.map(|_| ()).map_err(|e| e.to_string())
+}
+
+pub(crate) async fn enable_skill(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    if let Err(e) = state.store.skill_enabled_set(&name, true).await {
+        return internal_error(e);
+    }
+    let reload_error = reload_skill(&state, &name).await.err();
+    Json(serde_json::json!({"ok": true, "reload_error": reload_error})).into_response()
+}
+
+pub(crate) async fn disable_skill(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    if let Err(e) = state.store.skill_enabled_set(&name, false).await {
+        return internal_error(e);
+    }
+    if let Some(handle) = &state.skills {
+        handle.registry.remove(&name);
+    }
+    Json(serde_json::json!({"ok": true, "reload_error": null})).into_response()
+}
+
+/// `[a-z0-9_-]+` — the only path-safety guard between a user-supplied skill
+/// name and the filesystem. Applied to every name that ends up in a
+/// `dir.join(...)` call below (upload and bundled install).
+fn valid_skill_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+pub(crate) async fn upload_skill(State(state): State<AppState>, mut parts: Multipart) -> Response {
+    while let Ok(Some(field)) = parts.next_field().await {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let file_name = field.file_name().unwrap_or_default().to_string();
+        let Some(name) = file_name.strip_suffix(".wasm") else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "file name must end in .wasm"})),
+            )
+                .into_response();
+        };
+        // Validate the name BEFORE checking whether a skills directory is
+        // even configured: a malformed/traversal name is a client error
+        // (400) regardless of server config, and must never reach the
+        // filesystem check below either way.
+        if !valid_skill_name(name) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "skill name must match [a-z0-9_-]+"})),
+            )
+                .into_response();
+        }
+        let Some(handle) = state.skills.clone() else {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "no skills directory configured"})),
+            )
+                .into_response();
+        };
+        let bytes = match field.bytes().await {
+            Ok(b) => b,
+            Err(e) => return internal_error(e),
+        };
+        let dest = handle.dir.join(format!("{name}.wasm"));
+        if let Err(e) = tokio::fs::write(&dest, &bytes).await {
+            return internal_error(e);
+        }
+        // Mark enabled (an upload is an explicit install) and load it.
+        if let Err(e) = state.store.skill_enabled_set(name, true).await {
+            return internal_error(e);
+        }
+        let reload_error = reload_skill(&state, name).await.err();
+        return Json(serde_json::json!({"ok": true, "name": name, "reload_error": reload_error}))
+            .into_response();
+    }
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({"error": "missing multipart field `file`"})),
+    )
+        .into_response()
+}
+
+pub(crate) async fn list_bundled(State(state): State<AppState>) -> Response {
+    let mut out = Vec::new();
+    if let Some(dir) = &state.bundled_dir
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("wasm")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                out.push(serde_json::json!({"name": stem}));
+            }
+        }
+    }
+    Json(out).into_response()
+}
+
+pub(crate) async fn install_bundled(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    if !valid_skill_name(&name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "skill name must match [a-z0-9_-]+"})),
+        )
+            .into_response();
+    }
+    let (Some(bundled), Some(handle)) = (state.bundled_dir.clone(), state.skills.clone()) else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "bundled skills not configured"})),
+        )
+            .into_response();
+    };
+    let src = bundled.join(format!("{name}.wasm"));
+    if !src.is_file() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "unknown bundled skill"})),
+        )
+            .into_response();
+    }
+    if let Err(e) = tokio::fs::copy(&src, handle.dir.join(format!("{name}.wasm"))).await {
+        return internal_error(e);
+    }
+    if let Err(e) = state.store.skill_enabled_set(&name, true).await {
+        return internal_error(e);
+    }
+    let reload_error = reload_skill(&state, &name).await.err();
+    Json(serde_json::json!({"ok": true, "reload_error": reload_error})).into_response()
 }
