@@ -12,14 +12,17 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use include_dir::{Dir, include_dir};
 
 use athena_voice_runtime::SkillsHandle;
 use athena_voice_runtime::wasm::registry::SkillConfig;
 use athena_voice_storage::Store;
+
+static ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
 
 pub struct AdminDeps {
     pub store: Arc<dyn Store>,
@@ -107,12 +110,17 @@ async fn status(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
-/// Placeholder until Task 12 embeds the real UI: serve a stub index so the
-/// root URL is 200 from day one.
-async fn static_asset() -> Response {
-    (
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        "<!doctype html><title>Athena-Voice</title><p>Admin UI comes in a later task.</p>",
-    )
-        .into_response()
+async fn static_asset(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+    let Some(file) = ASSETS.get_file(path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mime = match path.rsplit('.').next() {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    ([(header::CONTENT_TYPE, mime)], file.contents()).into_response()
 }

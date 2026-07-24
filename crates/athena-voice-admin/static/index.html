@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Athena-Voice</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Athena-Voice</h1>
+    <span id="status"></span>
+  </header>
+  <main id="app"><!-- rendered by app.js --></main>
+  <template id="tpl-token">
+    <section class="card">
+      <h2 data-i18n="token_title"></h2>
+      <p data-i18n="token_help"></p>
+      <input id="token-input" type="password" autocomplete="off">
+      <button id="token-save" data-i18n="save"></button>
+      <p class="error" id="token-error"></p>
+    </section>
+  </template>
+  <script src="/app.js"></script>
+</body>
+</html>

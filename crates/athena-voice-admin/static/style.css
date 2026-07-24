@@ -1,0 +1,38 @@
+:root {
+  --bg: #f6f7f9; --card: #fff; --ink: #1c2733; --muted: #6b7a8c;
+  --accent: #2563eb; --danger: #b91c1c; --ok: #15803d; --line: #e3e8ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #10161d; --card: #1a222c; --ink: #e8edf2; --muted: #93a3b4;
+    --accent: #60a5fa; --danger: #f87171; --ok: #4ade80; --line: #2a3542;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+header { display: flex; align-items: baseline; gap: 1rem; padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); }
+h1 { font-size: 1.1rem; margin: 0; }
+#status { color: var(--muted); font-size: .85rem; }
+main { max-width: 720px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.25rem; }
+.card h2 { margin: 0 0 .5rem; font-size: 1rem; }
+.skill-row { display: flex; align-items: center; gap: .75rem; padding: .5rem 0; border-top: 1px solid var(--line); }
+.skill-row:first-of-type { border-top: 0; }
+.skill-row .name { font-weight: 600; flex: 1; cursor: pointer; }
+.badge { font-size: .75rem; padding: .1rem .5rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.badge.ok { color: var(--ok); border-color: var(--ok); }
+.badge.off { color: var(--danger); border-color: var(--danger); }
+label { display: block; margin: .75rem 0 .25rem; font-weight: 600; font-size: .85rem; }
+.help { color: var(--muted); font-size: .8rem; margin: .1rem 0 0; }
+input[type=text], input[type=password], input[type=number] {
+  width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--ink);
+}
+button { padding: .45rem .9rem; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+button.quiet { background: transparent; color: var(--accent); }
+button.danger { background: var(--danger); }
+table { width: 100%; border-collapse: collapse; margin-top: .25rem; }
+td, th { padding: .25rem .4rem; border: 1px solid var(--line); font-size: .85rem; }
+.error { color: var(--danger); min-height: 1.2em; }
+.notice { color: var(--ok); }
+.secret-set { color: var(--muted); font-size: .8rem; }

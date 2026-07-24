@@ -314,3 +314,28 @@ async fn install_bundled_conflict_when_unconfigured() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn static_assets_served_with_mime() {
+    let (deps, _) = test_deps().await;
+    let app = router(deps);
+    for (path, mime) in [
+        ("/", "text/html; charset=utf-8"),
+        ("/app.js", "text/javascript; charset=utf-8"),
+        ("/style.css", "text/css; charset=utf-8"),
+    ] {
+        let res = app.clone().oneshot(get(path, None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            res.headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            mime,
+            "{path}"
+        );
+    }
+    let missing = app.oneshot(get("/nope.png", None)).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+}
