@@ -22,7 +22,7 @@ const T = {
     saved: 'Enregistré.', reload_failed: 'Enregistré, mais rechargement échoué : ',
     secret_set: 'Une valeur est enregistrée. Laissez vide pour la conserver.',
     upload_title: 'Installer une compétence', upload_help: 'Déposez un fichier .wasm ou choisissez une compétence fournie.',
-    install: 'Installer', no_settings: 'Cette compétence n'a aucun réglage.',
+    install: 'Installer', no_settings: 'Cette compétence n’a aucun réglage.',
     needs_config: 'à configurer', key: 'Clé', value: 'Valeur',
   },
 };
@@ -33,11 +33,20 @@ const app = document.getElementById('app');
 let token = localStorage.getItem('athena-admin-token') || '';
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      ...opts,
+      headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+    });
+  } catch {
+    document.getElementById('status').textContent = 'API unreachable';
+    throw new Error('network error');
+  }
   if (res.status === 401) { renderTokenPrompt(true); throw new Error('unauthorized'); }
+  if (!res.ok && res.status >= 500) {
+    document.getElementById('status').textContent = `API error ${res.status}`;
+  }
   return res;
 }
 
