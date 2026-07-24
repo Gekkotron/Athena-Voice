@@ -82,9 +82,14 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     // Slot-less phrases are matched purely fuzzily: requiring the literal as
     // an exact substring would make STT variations ("quel heure est-il" for
     // "quelle heure est-il") unmatchable even at 90% similarity — the
-    // confidence threshold in `find_match` is the real gate.
+    // confidence threshold in `find_match` is the real gate. Real speech is
+    // also padded ("dis-moi quelle heure est-il", hallucinated trailing
+    // fragments), so the best contiguous word-window is scored too, at a
+    // slight discount so exact whole-utterance matches win ties.
     if let [Segment::Literal(lit)] = segments.as_slice() {
-        let sim = normalized_damerau_levenshtein(&lit.to_lowercase(), &normalised_input);
+        let lit_lower = lit.to_lowercase();
+        let whole = normalized_damerau_levenshtein(&lit_lower, &normalised_input);
+        let sim = whole.max(best_window_similarity(&lit_lower, &normalised_input) * 0.95);
         #[allow(clippy::cast_possible_truncation)]
         return Some(IntentMatch {
             intent: Intent {
@@ -165,6 +170,29 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     })
 }
 
+/// Highest similarity between `phrase` and any contiguous word window of
+/// `input` sized within ±1 word of the phrase. Only meaningful when the
+/// input is longer than the phrase (the whole-string comparison covers the
+/// rest).
+fn best_window_similarity(phrase: &str, input: &str) -> f64 {
+    let words: Vec<&str> = input.split_whitespace().collect();
+    let n = phrase.split_whitespace().count();
+    if n == 0 || words.len() <= n {
+        return 0.0;
+    }
+    let mut best = 0.0f64;
+    for size in [n.saturating_sub(1).max(1), n, n + 1] {
+        if size > words.len() {
+            continue;
+        }
+        for start in 0..=(words.len() - size) {
+            let window = words[start..start + size].join(" ");
+            best = best.max(normalized_damerau_levenshtein(phrase, &window));
+        }
+    }
+    best
+}
+
 fn slot_matches_kind(raw: &str, rule: &HostPatternRule, slot_name: &str) -> bool {
     let Some(spec) = rule.slots.iter().find(|s| s.name == slot_name) else {
         return true; // no spec = any value accepted
@@ -236,6 +264,33 @@ mod tests {
             idx.insert(locale.into(), r, skill.into());
         }
         idx
+    }
+
+    #[test]
+    fn padded_utterance_matches_embedded_phrase() {
+        // Real mic transcript: whisper appended a hallucinated fragment.
+        let idx = index_with(vec![(
+            rule("time.query", &["quelle heure est-il"], &[]),
+            "fr",
+            "clock",
+        )]);
+        let m = IntentMatcher::new()
+            .find_match("Quelle heure est-il ? La nuit", "fr", &idx)
+            .expect("padded utterance must still match");
+        assert_eq!(m.intent.name, "time.query");
+
+        // Polite framing around the phrase.
+        let m = IntentMatcher::new()
+            .find_match("dis-moi quelle heure est-il s'il te plaît", "fr", &idx)
+            .expect("polite padding must still match");
+        assert_eq!(m.intent.name, "time.query");
+
+        // Unrelated long text must NOT match.
+        assert!(
+            IntentMatcher::new()
+                .find_match("la nuit tous les chats sont gris vraiment", "fr", &idx)
+                .is_none()
+        );
     }
 
     #[test]
