@@ -252,7 +252,23 @@ impl SkillRegistry {
             if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
                 continue;
             }
-            let (name, plugin, _retention_gc_after_sec) = build_plugin_from_file(&path, deps)?;
+            // A single unbuildable skill must not brick every OTHER skill's
+            // startup (and, transitively, the whole process): warn and move
+            // on to the next file instead of propagating. Io/read_dir errors
+            // above stay fatal — those indicate the skills dir itself is
+            // unusable, not a problem with one file in it.
+            let (name, plugin, _retention_gc_after_sec) = match build_plugin_from_file(&path, deps)
+            {
+                Ok(built) => built,
+                Err(e) => {
+                    let name = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("<unknown>");
+                    warn!(skill = %name, error = %e, "failed to build skill; skipping");
+                    continue;
+                }
+            };
             registry.install(&name, plugin, &deps.locales)?;
         }
         Ok(registry)
@@ -813,16 +829,36 @@ mod tests {
     }
 
     #[test]
-    fn load_dir_reports_build_error_on_invalid_wasm() {
+    fn load_dir_skips_invalid_wasm_and_continues() {
+        // A single unbuildable .wasm must not kill startup for the whole
+        // directory: load_dir logs a warning and moves on to the next file,
+        // returning `Ok` with whatever skills DID load successfully.
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("broken.wasm"), b"not really wasm").unwrap();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let deps = make_deps(&rt, "registry-test-2");
-        let Err(err) = SkillRegistry::load_dir(dir.path(), &deps) else {
-            panic!("expected build error");
-        };
-        assert!(matches!(err, RegistryError::Build { ref skill, .. } if skill == "broken"));
+        let reg = SkillRegistry::load_dir(dir.path(), &deps)
+            .expect("a broken file must not fail the whole directory load");
+        assert!(!reg.skill_names().contains(&"broken".to_string()));
+    }
+
+    #[test]
+    fn load_dir_skips_invalid_wasm_but_loads_valid_skill() {
+        // One garbage file alongside one real, buildable skill: the registry
+        // must come back with the valid skill loaded and no error, proving
+        // the tolerant loop doesn't stop at (or get confused by) the bad file.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("broken.wasm"), b"not really wasm").unwrap();
+        std::fs::copy(env!("SMOKE_TEST_WASM"), dir.path().join("smoke-test.wasm"))
+            .expect("copy smoke-test.wasm fixture built by this crate's build.rs");
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let deps = make_deps(&rt, "registry-test-3");
+        let reg = SkillRegistry::load_dir(dir.path(), &deps)
+            .expect("valid skills must still load despite one broken file");
+        assert!(reg.skill_names().contains(&"smoke-test".to_string()));
+        assert!(!reg.skill_names().contains(&"broken".to_string()));
     }
 
     #[test]

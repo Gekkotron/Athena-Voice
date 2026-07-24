@@ -15,7 +15,11 @@ pub(crate) fn validate(
             continue;
         };
         if raw.trim().is_empty() {
-            if f.required {
+            // Fix 3: a blank secret submission means "leave unchanged" (the
+            // UI never shows the stored value back), so it must not trip
+            // `required` here — put_config skips persisting it and the
+            // previously-stored value (if any) survives untouched.
+            if f.required && !f.is_secret() {
                 return Err(format!("`{}` is required", f.key));
             }
             continue;
@@ -205,6 +209,21 @@ mod tests {
         assert!(
             validate(Some(&host_schema), &bad_host).is_err(),
             "host must be bare"
+        );
+    }
+
+    #[test]
+    fn required_secret_blank_value_is_not_rejected() {
+        // A blank secret submission means "leave unchanged" (see Fix 3 in
+        // api.rs::put_config, which skips persisting it) — validation must
+        // not reject it just because the field is marked required. Any OTHER
+        // required-but-blank field kind still errors (covered above).
+        let s = jeedom_schema(); // api_key: Secret, required: true
+        let blank_secret = HashMap::from([("api_key".to_string(), "".to_string())]);
+        assert_eq!(
+            validate(Some(&s), &blank_secret),
+            Ok(()),
+            "blank required secret must pass validation; put_config skips persisting it"
         );
     }
 

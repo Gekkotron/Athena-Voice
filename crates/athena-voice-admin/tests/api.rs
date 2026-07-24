@@ -591,3 +591,228 @@ async fn put_config_rejects_invalid_schema_value_without_persisting() {
         "invalid schema value must be rejected before persisting"
     );
 }
+
+// ---------------------------------------------------------------------
+// Fix 2: reload must not resurrect a disabled skill.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn put_config_does_not_resurrect_disabled_skill() {
+    // jeedom.wasm sits on disk (as if previously installed) but the skill
+    // was disabled before ever being loaded into THIS registry — e.g. the
+    // process started with it already disabled. A config PUT must save the
+    // value without reloading the skill: reload_skill's `wasm.is_file()`
+    // check alone can't tell "disabled" from "installed and enabled", so it
+    // must consult `skills_disabled()` before touching the registry.
+    let (store, token) = store_with_token().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        athena_voice_runtime::test_support::JEEDOM_TEST_WASM,
+        skills_dir.path().join("jeedom.wasm"),
+    )
+    .expect("copy jeedom.wasm into the skills dir fixture");
+    store.skill_enabled_set("jeedom", false).await.unwrap();
+
+    let deps = admin_deps(
+        store.clone(),
+        Arc::new(SkillRegistry::new()), // fresh, never loaded jeedom
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    )
+    .await;
+    let registry = deps.skills.as_ref().unwrap().registry.clone();
+    let app = router(deps);
+
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/jeedom/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"values":{"base_url":"http://192.168.1.91"}}"#,
+        ))
+        .unwrap();
+    let res = app.oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    assert!(
+        !registry.skill_names().contains(&"jeedom".to_string()),
+        "disabled skill must not be reloaded into the registry by a config write"
+    );
+    let rows = store.skill_settings_for("jeedom").await.unwrap();
+    assert_eq!(
+        rows[0].value, "http://192.168.1.91",
+        "config is still saved"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Fix 3: blank value must never overwrite a stored secret.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn put_config_blank_value_does_not_clobber_stored_secret_without_schema() {
+    let (deps, token) = test_deps().await;
+    let store = deps.store.clone();
+    store
+        .skill_setting_set("jeedom", "api_key", "real", true)
+        .await
+        .unwrap();
+    let app = router(deps);
+
+    let put = Request::builder()
+        .method("PUT")
+        .uri("/api/skills/jeedom/config")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"values":{"api_key":""}}"#))
+        .unwrap();
+    let res = app.oneshot(put).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    let rows = store.skill_settings_for("jeedom").await.unwrap();
+    let row = rows.iter().find(|r| r.key == "api_key").unwrap();
+    assert_eq!(row.value, "real", "blank value must not clobber the secret");
+    assert!(row.is_secret, "is_secret must remain true");
+}
+
+// ---------------------------------------------------------------------
+// Fix 1: a failed upload/install must not brick the next restart.
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn upload_quarantines_file_when_first_install_fails() {
+    // No prior file for this name: a failed reload means the just-written
+    // file must be deleted so a bad upload can't survive to the next
+    // startup, where `load_dir` would otherwise trip over it again.
+    let (store, token) = store_with_token().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    let deps = admin_deps(
+        store,
+        Arc::new(SkillRegistry::new()),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    )
+    .await;
+    let app = router(deps);
+
+    let mut body = Vec::new();
+    body.extend_from_slice(b"--BOUND\r\nContent-Disposition: form-data; name=\"file\"; filename=\"badskill.wasm\"\r\nContent-Type: application/wasm\r\n\r\n");
+    body.extend_from_slice(b"not really wasm");
+    body.extend_from_slice(b"\r\n--BOUND--\r\n");
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/skills/upload")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        !out["reload_error"].is_null(),
+        "expected a reload error: {out}"
+    );
+    assert_eq!(out["removed"], true);
+    assert!(
+        !skills_dir.path().join("badskill.wasm").exists(),
+        "failed first install must not leave a file behind for the next startup"
+    );
+}
+
+#[tokio::test]
+async fn upload_keeps_file_when_overwrite_of_working_skill_fails() {
+    // A working skill is already installed; a failed re-upload must NOT
+    // delete the file out from under the running process — only the
+    // never-previously-loaded case gets quarantined.
+    let (store, token) = store_with_token().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        athena_voice_runtime::test_support::SMOKE_TEST_WASM,
+        skills_dir.path().join("smoke-test.wasm"),
+    )
+    .unwrap();
+    let load_deps = test_skill_deps(store.clone());
+    let registry = SkillRegistry::load_dir(skills_dir.path(), &load_deps).unwrap();
+    let deps = admin_deps(
+        store,
+        Arc::new(registry),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    )
+    .await;
+    let app = router(deps);
+
+    let mut body = Vec::new();
+    body.extend_from_slice(b"--BOUND\r\nContent-Disposition: form-data; name=\"file\"; filename=\"smoke-test.wasm\"\r\nContent-Type: application/wasm\r\n\r\n");
+    body.extend_from_slice(b"not really wasm");
+    body.extend_from_slice(b"\r\n--BOUND--\r\n");
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/skills/upload")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
+        .body(Body::from(body))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        !out["reload_error"].is_null(),
+        "expected a reload error: {out}"
+    );
+    assert_eq!(out["removed"], false);
+    assert!(
+        skills_dir.path().join("smoke-test.wasm").exists(),
+        "overwrite of a previously-working skill must keep the new (broken) file, not delete it"
+    );
+}
+
+#[tokio::test]
+async fn install_bundled_quarantines_file_when_first_install_fails() {
+    // Same quarantine contract for the `install_bundled` path: a "bundled"
+    // wasm that's actually garbage (e.g. a corrupted asset) must not leave
+    // a file behind that the next startup would try (and fail) to load.
+    let (store, token) = store_with_token().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    let bundled_dir = tempfile::tempdir().unwrap();
+    std::fs::write(bundled_dir.path().join("badskill.wasm"), b"not really wasm").unwrap();
+    let deps = admin_deps(
+        store,
+        Arc::new(SkillRegistry::new()),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        Some(bundled_dir.path().to_path_buf()),
+    )
+    .await;
+    let app = router(deps);
+
+    let res = app
+        .oneshot(post("/api/bundled/badskill/install", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        !out["reload_error"].is_null(),
+        "expected a reload error: {out}"
+    );
+    assert_eq!(out["removed"], true);
+    assert!(
+        !skills_dir.path().join("badskill.wasm").exists(),
+        "failed first install must not leave a file behind for the next startup"
+    );
+}

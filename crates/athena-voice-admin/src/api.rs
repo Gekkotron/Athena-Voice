@@ -206,10 +206,31 @@ pub(crate) async fn put_config(
         })
         .unwrap_or_default();
 
+    // Fix 3: a blank value must never overwrite a stored secret — an empty
+    // submission from the UI's masked secret field means "leave unchanged",
+    // not "clear it". This is fetched once, up front, and covers BOTH the
+    // schema-driven case (key marked secret in `secret_keys` above) and the
+    // schema-less path (key already stored with `is_secret = true`, e.g. a
+    // skill that isn't loaded yet so no schema is available).
+    let existing_rows = match state.store.skill_settings_for(&name).await {
+        Ok(r) => r,
+        Err(e) => return internal_error(e),
+    };
+    let existing_secret_keys: BTreeSet<String> = existing_rows
+        .iter()
+        .filter(|r| r.is_secret)
+        .map(|r| r.key.clone())
+        .collect();
+
     for (key, value) in &body.values {
+        let is_secret =
+            secret_keys.contains(key.as_str()) || existing_secret_keys.contains(key.as_str());
+        if is_secret && value.trim().is_empty() {
+            continue; // blank secret submission means "unchanged", not "clear"
+        }
         if let Err(e) = state
             .store
-            .skill_setting_set(&name, key, value, secret_keys.contains(key.as_str()))
+            .skill_setting_set(&name, key, value, is_secret)
             .await
         {
             return internal_error(e);
@@ -249,6 +270,19 @@ pub(crate) async fn reload_skill(state: &AppState, name: &str) -> Result<(), Str
     let Some(handle) = &state.skills else {
         return Ok(());
     };
+    // Fix 2: a disabled skill must stay unloaded. Without this check, a
+    // config PUT for a skill whose `.wasm` file is still on disk (installed,
+    // then disabled) would reload it straight back into the registry,
+    // silently undoing the disable. Config is still saved either way — only
+    // the reload is skipped.
+    let disabled = state
+        .store
+        .skills_disabled()
+        .await
+        .map_err(|e| e.to_string())?;
+    if disabled.iter().any(|d| d == name) {
+        return Ok(());
+    }
     let wasm = handle.dir.join(format!("{name}.wasm"));
     if !wasm.is_file() {
         return Ok(()); // not installed yet; config waits for the upload
@@ -355,6 +389,9 @@ pub(crate) async fn upload_skill(State(state): State<AppState>, mut parts: Multi
             Err(e) => return internal_error(e),
         };
         let dest = handle.dir.join(format!("{name}.wasm"));
+        // Captured BEFORE writing: whether this name had a working skill
+        // installed already. This decides the quarantine rule below.
+        let existed_before = dest.is_file();
         if let Err(e) = tokio::fs::write(&dest, &bytes).await {
             return internal_error(e);
         }
@@ -363,8 +400,26 @@ pub(crate) async fn upload_skill(State(state): State<AppState>, mut parts: Multi
             return internal_error(e);
         }
         let reload_error = reload_skill(&state, name).await.err();
-        return Json(serde_json::json!({"ok": true, "name": name, "reload_error": reload_error}))
-            .into_response();
+        // Fix 1: a failed reload on a brand-new file must not leave a
+        // busted `.wasm` behind — the next process restart calls `load_dir`
+        // over this same directory, and an un-quarantined bad file would
+        // brick that skill's slot again (now Fix 1b makes `load_dir` tolerant
+        // of ONE bad file, but there's no reason to keep a file we already
+        // know is broken). If the file existed before (this was an overwrite
+        // of a previously-working skill), we deliberately keep the new file
+        // as-is: the running process still has the OLD plugin loaded (
+        // `reload_path` leaves it untouched on failure), so nothing regresses
+        // until a future restart — that tradeoff is unchanged by this fix.
+        let removed = if reload_error.is_some() && !existed_before {
+            let _ = tokio::fs::remove_file(&dest).await;
+            true
+        } else {
+            false
+        };
+        return Json(
+            serde_json::json!({"ok": true, "name": name, "reload_error": reload_error, "removed": removed}),
+        )
+        .into_response();
     }
     (
         StatusCode::BAD_REQUEST,
@@ -412,12 +467,26 @@ pub(crate) async fn install_bundled(
         )
             .into_response();
     }
-    if let Err(e) = tokio::fs::copy(&src, handle.dir.join(format!("{name}.wasm"))).await {
+    let dest = handle.dir.join(format!("{name}.wasm"));
+    // Captured BEFORE copying — same quarantine rule as `upload_skill`.
+    let existed_before = dest.is_file();
+    if let Err(e) = tokio::fs::copy(&src, &dest).await {
         return internal_error(e);
     }
     if let Err(e) = state.store.skill_enabled_set(&name, true).await {
         return internal_error(e);
     }
     let reload_error = reload_skill(&state, &name).await.err();
-    Json(serde_json::json!({"ok": true, "reload_error": reload_error})).into_response()
+    // Fix 1: see the matching comment in `upload_skill` — a failed reload of
+    // a never-before-installed skill must not leave a broken file for the
+    // next restart to trip over; an overwrite of a previously-working skill
+    // keeps the new file as-is.
+    let removed = if reload_error.is_some() && !existed_before {
+        let _ = tokio::fs::remove_file(&dest).await;
+        true
+    } else {
+        false
+    };
+    Json(serde_json::json!({"ok": true, "reload_error": reload_error, "removed": removed}))
+        .into_response()
 }

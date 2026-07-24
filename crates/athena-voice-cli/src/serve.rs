@@ -91,7 +91,11 @@ async fn spawn_admin_ui(
     };
     drop(tokio::spawn(async move {
         if let Err(e) = athena_voice_admin::serve(admin_addr, admin_deps).await {
-            tracing::error!(error = %e, "admin server exited");
+            tracing::error!(
+                error = %e,
+                %admin_addr,
+                "admin server exited — is another serve instance already running?"
+            );
         }
     }));
     Ok(())
