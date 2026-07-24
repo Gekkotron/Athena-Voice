@@ -9,7 +9,9 @@ mod duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use athena_voice_skill_sdk::host::HostCtx;
-use athena_voice_skill_sdk::{Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec};
+use athena_voice_skill_sdk::{
+    ConfigSchema, Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec,
+};
 use extism_pdk::{FnResult, plugin_fn};
 
 use duration::{parse_en_duration, parse_fr_duration};
@@ -121,4 +123,10 @@ pub fn handle(intent_json: String) -> FnResult<String> {
     let mut c = ctx();
     let result = skill.handle(intent, &mut c);
     Ok(serde_json::to_string(&result)?)
+}
+
+#[plugin_fn]
+pub fn config_schema(_input: String) -> FnResult<String> {
+    let schema = ConfigSchema { fields: vec![] };
+    Ok(serde_json::to_string(&schema)?)
 }

@@ -18,7 +18,8 @@ mod weather_code;
 
 use athena_voice_skill_sdk::host::HostCtx;
 use athena_voice_skill_sdk::{
-    Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec,
+    ConfigField, ConfigSchema, FieldKind, Intent, PatternRule, Skill, SkillError, SkillResponse,
+    SlotKind, SlotSpec,
 };
 use extism_pdk::{FnResult, plugin_fn};
 use serde::{Deserialize, Serialize};
@@ -339,4 +340,20 @@ pub fn handle(intent_json: String) -> FnResult<String> {
     let mut c = HostCtx::for_testing();
     let result = skill.handle(intent, &mut c);
     Ok(serde_json::to_string(&result)?)
+}
+
+#[plugin_fn]
+pub fn config_schema(_input: String) -> FnResult<String> {
+    let schema = ConfigSchema {
+        fields: vec![ConfigField {
+            key: "default_city".into(),
+            label: "Default city".into(),
+            kind: FieldKind::String,
+            required: false,
+            help: "City used when none is spoken".into(),
+            default: String::new(),
+            item_fields: vec![],
+        }],
+    };
+    Ok(serde_json::to_string(&schema)?)
 }

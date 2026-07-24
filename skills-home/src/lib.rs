@@ -11,7 +11,8 @@
 use athena_voice_skill_sdk::host::HostCtx;
 use athena_voice_skill_sdk::strsim::normalized_damerau_levenshtein;
 use athena_voice_skill_sdk::{
-    Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec,
+    ConfigField, ConfigSchema, FieldKind, Intent, ItemField, PatternRule, Skill, SkillError,
+    SkillResponse, SlotKind, SlotSpec,
 };
 use extism_pdk::{FnResult, plugin_fn};
 use once_cell::sync::OnceCell;
@@ -192,4 +193,45 @@ pub fn handle(intent_json: String) -> FnResult<String> {
     let mut c = HostCtx::for_testing();
     let result = skill.handle(intent, &mut c);
     Ok(serde_json::to_string(&result)?)
+}
+
+#[plugin_fn]
+pub fn config_schema(_input: String) -> FnResult<String> {
+    let schema = ConfigSchema {
+        fields: vec![ConfigField {
+            key: "entities".into(),
+            label: "Entities".into(),
+            kind: FieldKind::List,
+            required: false,
+            help: "Devices this skill can turn on/off over MQTT".into(),
+            default: String::new(),
+            item_fields: vec![
+                ItemField {
+                    key: "name".into(),
+                    kind: FieldKind::String,
+                },
+                ItemField {
+                    key: "room".into(),
+                    kind: FieldKind::String,
+                },
+                ItemField {
+                    key: "kind".into(),
+                    kind: FieldKind::String,
+                },
+                ItemField {
+                    key: "set_topic".into(),
+                    kind: FieldKind::String,
+                },
+                ItemField {
+                    key: "on_payload".into(),
+                    kind: FieldKind::String,
+                },
+                ItemField {
+                    key: "off_payload".into(),
+                    kind: FieldKind::String,
+                },
+            ],
+        }],
+    };
+    Ok(serde_json::to_string(&schema)?)
 }

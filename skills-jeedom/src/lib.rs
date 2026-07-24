@@ -18,7 +18,8 @@
 use athena_voice_skill_sdk::host::HostCtx;
 use athena_voice_skill_sdk::strsim::normalized_damerau_levenshtein;
 use athena_voice_skill_sdk::{
-    Intent, PatternRule, Skill, SkillError, SkillResponse, SlotKind, SlotSpec,
+    ConfigField, ConfigSchema, FieldKind, Intent, ItemField, PatternRule, Skill, SkillError,
+    SkillResponse, SlotKind, SlotSpec,
 };
 use extism_pdk::{FnResult, plugin_fn};
 use once_cell::sync::OnceCell;
@@ -251,4 +252,54 @@ pub fn handle(intent_json: String) -> FnResult<String> {
     let mut ctx = HostCtx::for_testing();
     let result = JeedomSkill.handle(intent, &mut ctx);
     Ok(serde_json::to_string(&result)?)
+}
+
+#[plugin_fn]
+pub fn config_schema(_input: String) -> FnResult<String> {
+    let schema = ConfigSchema {
+        fields: vec![
+            ConfigField {
+                key: "base_url".into(),
+                label: "Jeedom URL".into(),
+                kind: FieldKind::Url,
+                required: true,
+                help: "e.g. http://192.168.1.91 — the host is allowed for HTTP automatically"
+                    .into(),
+                default: String::new(),
+                item_fields: vec![],
+            },
+            ConfigField {
+                key: "api_key".into(),
+                label: "API key".into(),
+                kind: FieldKind::Secret,
+                required: true,
+                help: "Jeedom → Settings → System → Configuration → API".into(),
+                default: String::new(),
+                item_fields: vec![],
+            },
+            ConfigField {
+                key: "sensors".into(),
+                label: "Sensors".into(),
+                kind: FieldKind::List,
+                required: false,
+                help: "Spoken name → Jeedom command id".into(),
+                default: String::new(),
+                item_fields: vec![
+                    ItemField {
+                        key: "name".into(),
+                        kind: FieldKind::String,
+                    },
+                    ItemField {
+                        key: "id".into(),
+                        kind: FieldKind::Number,
+                    },
+                    ItemField {
+                        key: "unit".into(),
+                        kind: FieldKind::String,
+                    },
+                ],
+            },
+        ],
+    };
+    Ok(serde_json::to_string(&schema)?)
 }
