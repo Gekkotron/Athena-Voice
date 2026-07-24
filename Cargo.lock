@@ -267,6 +267,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cpal",
+ "hound",
  "rodio",
  "rumqttc",
  "serde_json",
@@ -404,6 +406,22 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "athena-voice-stt-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "hound",
+ "rumqttc",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -1,20 +1,21 @@
 [package]
-name = "athena-voice-client"
+name = "athena-voice-stt-worker"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Text-mode satellite client for Athena-Voice: drives a session over MQTT."
+description = "MQTT STT worker for Athena-Voice: bridges athena/providers/stt/<name> to whisper.cpp."
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 clap.workspace = true
-cpal = "0.15"
 hound = "3"
-rodio = "0.19"
 rumqttc = { workspace = true }
 serde_json = { workspace = true }
+tempfile = "3"
 tokio.workspace = true
-uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

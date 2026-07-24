@@ -15,9 +15,10 @@ pub fn spawn_ingest(
                 () = cancel.cancelled() => break,
                 maybe = rx.recv() => match maybe {
                     Some(frame) => {
-                        if frame.pcm.is_empty() {
-                            continue;
-                        }
+                        // Empty frames are the satellite's end-of-utterance
+                        // marker (see the audio topic contract) — forward
+                        // them so the STT provider can flush transcription
+                        // without waiting for the session to close.
                         if tx.send(frame).await.is_err() {
                             break;
                         }
@@ -60,17 +61,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drops_empty_frames() {
+    async fn forwards_empty_end_of_utterance_marker() {
         let (in_tx, in_rx) = mpsc::channel(4);
         let (out_tx, mut out_rx) = mpsc::channel(4);
         spawn_ingest(in_rx, out_tx, CancellationToken::new());
 
         let sid = SessionId::new_v4();
-        in_tx.send(frame(sid, 0, &[])).await.unwrap();
-        in_tx.send(frame(sid, 1, &[1, 2])).await.unwrap();
+        in_tx.send(frame(sid, 0, &[1, 2])).await.unwrap();
+        in_tx.send(frame(sid, 1, &[])).await.unwrap();
         drop(in_tx);
-        let first = out_rx.recv().await.unwrap();
-        assert_eq!(first.seq, 1);
+        assert_eq!(out_rx.recv().await.unwrap().seq, 0);
+        let marker = out_rx.recv().await.unwrap();
+        assert_eq!(marker.seq, 1);
+        assert!(marker.pcm.is_empty(), "marker passes through untouched");
         assert!(out_rx.recv().await.is_none());
     }
 

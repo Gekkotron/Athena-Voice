@@ -7,8 +7,12 @@
 //!    `{ "session_id": "<uuid>", "locale": "fr", "format": "s16le", "sample_rate": 16000 }`
 //! 2. Audio, one message per frame batch (raw satellite PCM, base64):
 //!    `{ "session_id": "<uuid>", "audio_b64": "..." }`
-//! 3. End of audio (the session's input stream closed):
+//! 3. Utterance boundary (the satellite published an empty audio frame, or
+//!    the session's input stream closed) — the worker should transcribe its
+//!    buffered audio now and emit a final transcript:
 //!    `{ "session_id": "<uuid>", "done": true }`
+//!    A session may contain several utterances, i.e. several `done`
+//!    markers each followed by more audio.
 //!
 //! Worker → provider, on `athena/providers/stt/<name>/response`:
 //! - Transcripts (any number, partial or final, across the whole session):
@@ -134,22 +138,31 @@ impl Stt for MqttStt {
         let pump_client = self.client.clone();
         let sid = session.to_string();
         tokio::spawn(async move {
+            let done = json!({ "session_id": sid, "done": true }).to_string();
             while let Some(frame) = audio.next().await {
-                let msg = json!({
-                    "session_id": sid,
-                    "audio_b64": STANDARD.encode(&frame.pcm),
-                });
+                // Empty frame = the satellite's end-of-utterance marker:
+                // tell the worker to flush a transcript, then keep pumping —
+                // a session may carry several utterances.
+                let msg = if frame.pcm.is_empty() {
+                    done.clone()
+                } else {
+                    json!({
+                        "session_id": sid,
+                        "audio_b64": STANDARD.encode(&frame.pcm),
+                    })
+                    .to_string()
+                };
                 if pump_client
-                    .publish_request(Bytes::from(msg.to_string().into_bytes()))
+                    .publish_request(Bytes::from(msg.into_bytes()))
                     .await
                     .is_err()
                 {
                     break;
                 }
             }
-            let done = json!({ "session_id": sid, "done": true });
+            // Input stream closed (session ended): flush whatever remains.
             let _ = pump_client
-                .publish_request(Bytes::from(done.to_string().into_bytes()))
+                .publish_request(Bytes::from(done.into_bytes()))
                 .await;
         });
 

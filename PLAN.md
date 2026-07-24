@@ -5,9 +5,9 @@ is verified live — MQTT satellite client → text-injection topic → intent
 matcher → WASM skills (time / weather / timer / home) → TTS over MQTT
 (`athena-voice-tts-worker`, macOS `say` engine) → PCM chunks → client
 playback via rodio. `cargo check --workspace --all-targets` is clean and
-`cargo nextest run --workspace` is green (184 tests). See `SHOWCASE.md` for
+`cargo nextest run --workspace` is green (189 tests). See `SHOWCASE.md` for
 the quick-start and `athena.local.toml` / `athena.say.toml` for runnable
-configs. The missing half is voice INPUT: audio capture and real STT.
+configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; see athena.voice.toml) — verified with a spoken WAV end to end. Remaining: Ollama LLM fallback, Piper TTS engine, honest tts/meta.
 
 ## Notes
 
@@ -20,31 +20,12 @@ configs. The missing half is voice INPUT: audio capture and real STT.
   tests plus `./SHOWCASE.sh` before claiming success; wasm skills live
   OUTSIDE the host workspace (see `[workspace] exclude`); MQTT messages
   above ~10 KiB need `set_max_packet_size` on every connection involved.
-- The `mqtt_tts` provider had three latent bugs (stream never terminated,
-  packet caps, route leak) — fixed in `mqtt_tts.rs`/`mqtt_client.rs`. The
-  STT twin was NOT audited; that is the first Backlog task.
+- Both MQTT providers had latent bugs of the same family (streams never
+  terminated, packet caps, route leak, STT discarding audio entirely) —
+  all fixed; the wire protocols are documented in `mqtt_tts.rs` /
+  `mqtt_stt.rs` module docs. Mirror those patterns in any new provider.
 
 ## Backlog
-
-- [ ] Audit the mqtt_stt provider against the fixed mqtt_tts patterns
-      Read `crates/athena-voice-providers/src/remote/mqtt_stt.rs` and compare with the fixes applied to `mqtt_tts.rs` and `mqtt_client.rs` (commit "Real TTS over MQTT").
-      Check: response handling terminates on the protocol's `done`/final marker and on timeout (never a hanging stream/future); large audio payloads fit the packet caps (requests carry base64 or raw audio — compute worst case for 10 s of s16le@16kHz); session routes are cleaned up; the wire format doc comment matches what the code actually sends.
-      Fix what deviates, mirroring the TTS-side patterns; extend the doc comment with the exact request/response JSON schema a worker must implement.
-      Success criteria: (a) `cargo nextest run -p athena-voice-providers` green; (b) the wire protocol is documented precisely enough to write a worker without reading the provider source; (c) no code path can block a session forever if the worker dies mid-request.
-
-- [ ] Whisper STT worker crate (athena-voice-stt-worker)
-      New workspace member `crates/athena-voice-stt-worker`, modeled on `crates/athena-voice-tts-worker` (same CLI shape: --host/--port/--name, pid-suffixed client id, `set_max_packet_size`).
-      Subscribe to `athena/providers/stt/<name>/request` and answer on `.../response` per the wire format documented by the audit task above.
-      Engine: shell out to the whisper.cpp CLI (`whisper-cli`/`main` binary; the submodule is at `./whisper.cpp`, models under `./models/` — note `ggml-small-french-q5_1.bin` there is a 29-byte placeholder, so the worker must take a `--model <path>` flag and fail with a clear message when the file is not a real model). Convert incoming PCM to a temp WAV with `hound`, run whisper with `-l fr`, return the transcript text.
-      Add `athena.voice.toml` (or extend `athena.say.toml`) with `stt = { mqtt_stt = { name = "whisper" } }` and a header documenting the 4-process setup (broker, stt worker, tts worker, serve).
-      Success criteria: (a) worker + serve + client run locally; (b) feeding a WAV with French speech through the pipeline produces a transcript event and a skill answer; (c) worker absence degrades to a timeout, not a hang; (d) unit test for the PCM→WAV conversion.
-
-- [ ] Client --microphone mode (voice input from the Mac)
-      Extend `crates/athena-voice-client` with a `--microphone` mode: capture from the default input device via `cpal`, downmix to mono s16le at 16 kHz (or the rate the STT worker expects — align the two flags), and publish frames to `athena/sat/<sat>/session/<sid>/audio` in ~100 ms chunks.
-      Session flow: start session, stream audio while a key is held or until `--duration-secs` elapses, publish `end`, then print/play the response like the --text mode does.
-      Keep --text mode untouched; --microphone and --text are mutually exclusive arguments.
-      The runtime's ingest→vad→stt actors already exist; verify the vad actor's frame expectations (25 ms at what rate — read `pipeline/vad.rs` and `pipeline/ingest.rs` first) and resample client-side to match.
-      Success criteria: (a) speaking "quelle heure est-il" into the mic yields a transcript event from the STT worker and a spoken answer with --play; (b) works together with the whisper worker task above; (c) graceful error when no input device exists.
 
 - [ ] Verify the Ollama LLM fallback end to end
       `crates/athena-voice-providers/src/remote/ollama.rs` exists but has never been exercised. Configure `llm = { ollama = { base_url = "http://localhost:11434", model = "<small local model>" } }` in a config variant and drive an unmatched utterance ("raconte-moi une blague") through the client.
@@ -67,6 +48,9 @@ configs. The missing half is voice INPUT: audio capture and real STT.
 ## In progress
 
 ## Done
+
+- [x] Voice input end to end: mqtt_stt fix, whisper worker, client audio modes (2026-07-24)
+      mqtt_stt now actually delivers audio (base64 frames + utterance-boundary markers) and its transcript stream terminates; new athena-voice-stt-worker (whisper.cpp engine, models under ./models are placeholders — real ones are gitignored downloads); client --wav/--microphone capture with resampling to the s16le/16k contract; empty audio frame = end-of-utterance marker through ingest; TTS actor idle-flush so unpunctuated LLM answers are spoken; athena.voice.toml full-voice config. Verified live: spoken WAV in → whisper transcript → weather skill → say synthesis → client playback.
 
 - [x] Repair generated-code corruption across SDK, storage, runtime, server (2026-07-23/24)
       Rewrote skill SDK host bindings; storage retention on timestamp_sec column; restored Runtime::spawn; fixed manifests, vendored webrtcvad stub, honest server tests; workspace check and 184 workspace tests green. Commit "Repair generated-code corruption; wire the full skill voice loop".

@@ -36,3 +36,10 @@ athena.db-*
 /coverage
 *.profraw
 lcov.info
+
+# Real whisper models are downloaded, not committed (the committed .bin files are placeholders)
+/models/ggml-tiny.bin
+/models/ggml-base.bin
+/models/ggml-small.bin
+/models/ggml-medium.bin
+/models/ggml-large*.bin

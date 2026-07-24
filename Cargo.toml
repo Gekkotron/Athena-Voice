@@ -8,6 +8,7 @@ members = [
     "crates/athena-voice-cli",
     "crates/athena-voice-skill-sdk",
     "crates/athena-voice-tts-worker",
+    "crates/athena-voice-stt-worker",
     "crates/athena-voice-server",
     "crates/athena-voice-client",
 ]

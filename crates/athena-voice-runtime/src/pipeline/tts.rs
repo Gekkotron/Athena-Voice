@@ -15,6 +15,11 @@ fn is_sentence_boundary(c: char) -> bool {
     matches!(c, '.' | '!' | '?')
 }
 
+/// Buffered text with no sentence boundary is flushed after this much
+/// token-channel silence — LLM answers don't reliably end in punctuation
+/// ("je ne sais pas"), and without this they would never be spoken.
+const IDLE_FLUSH: std::time::Duration = std::time::Duration::from_millis(800);
+
 pub fn spawn_tts(
     session: SessionId,
     locale: Locale,
@@ -38,6 +43,11 @@ pub fn spawn_tts(
                     }
                     // Ignore lag / other events — a lagged BargeIn is a corner
                     // case that only fires under extreme event-bus pressure.
+                }
+                () = tokio::time::sleep(IDLE_FLUSH), if !buf.is_empty() => {
+                    // Token channel went quiet mid-sentence: speak what we have.
+                    seq = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                    buf.clear();
                 }
                 maybe = token_rx.recv() => {
                     let Some(tok) = maybe else {
@@ -132,6 +142,37 @@ mod tests {
     use super::*;
     use athena_voice_core::event::BargeInReason;
     use athena_voice_providers::testing::fake_tts::FakeTts;
+
+    #[tokio::test]
+    async fn idle_flush_speaks_unpunctuated_answers() {
+        let (tok_tx, tok_rx) = mpsc::channel(16);
+        let (chunk_tx, mut chunk_rx) = mpsc::channel(32);
+        let (ev_tx, _ev_rx) = broadcast::channel(32);
+        let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
+
+        let _handle = spawn_tts(
+            SessionId::new_v4(),
+            Locale::new("fr").unwrap(),
+            tts,
+            tok_rx,
+            chunk_tx,
+            ev_tx,
+            CancellationToken::new(),
+        );
+
+        // LLM-style tokens with no sentence boundary; the channel STAYS OPEN
+        // (a session outlives its answers), so only the idle flush can
+        // trigger synthesis.
+        for tok in ["je", "ne", "sais", "pas"] {
+            tok_tx.send(tok.to_string()).await.unwrap();
+        }
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
+            .await
+            .expect("idle flush must synthesize buffered text")
+            .expect("chunk");
+        assert_eq!(&chunk[..], b"je");
+        drop(tok_tx);
+    }
 
     #[tokio::test]
     async fn buffers_by_sentence_and_synthesises_each() {

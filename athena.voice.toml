@@ -1,0 +1,41 @@
+# Local FULL VOICE config: real STT (whisper.cpp) and real TTS (macOS say),
+# both bridged over MQTT by worker processes.
+#
+#   1. brew services start mosquitto                       (once)
+#   2. Download a real whisper model (once, ~465 MB):
+#        curl -L -o models/ggml-small.bin \
+#          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+#      and build whisper.cpp (once):
+#        cd whisper.cpp && cmake -B build && cmake --build build -j --target whisper-cli
+#   3. cargo run -p athena-voice-stt-worker                 (own terminal)
+#   4. cargo run -p athena-voice-tts-worker                 (own terminal)
+#   5. cargo run -p athena-voice-cli -- serve --config athena.voice.toml
+#   6. Ask by voice or file:
+#        cargo run -p athena-voice-client -- --microphone --play --timeout-secs 30
+#        cargo run -p athena-voice-client -- --wav test.wav --play --timeout-secs 30
+
+locales = ["fr"]
+
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[storage]
+database_url = "sqlite:///tmp/athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "athena-voice-local"
+
+[providers]
+stt = { mqtt_stt = { name = "whisper" } }
+llm = "fake"
+tts = { mqtt_tts = { name = "say" } }
+
+[skills]
+dir = "./skills"
+
+[skills.weather]
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+config = { default_city = "Strasbourg" }

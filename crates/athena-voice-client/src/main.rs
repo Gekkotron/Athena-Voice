@@ -40,8 +40,21 @@ struct Args {
     locale: String,
 
     /// Utterance injected as a final transcript (bypasses STT).
+    #[arg(long, conflicts_with_all = ["wav", "microphone"])]
+    text: Option<String>,
+
+    /// WAV file to send as session audio (any rate/format; converted to
+    /// s16le mono 16 kHz — the STT pipeline contract).
+    #[arg(long, conflicts_with = "microphone")]
+    wav: Option<std::path::PathBuf>,
+
+    /// Record from the default input device and send it as session audio.
     #[arg(long)]
-    text: String,
+    microphone: bool,
+
+    /// Recording duration for --microphone, in seconds.
+    #[arg(long, default_value_t = 5)]
+    duration_secs: u64,
 
     /// Seconds to wait for the session to complete.
     #[arg(long, default_value_t = 15)]
@@ -72,11 +85,29 @@ struct Args {
     rate: u32,
 }
 
+/// STT pipeline contract: s16le mono at 16 kHz.
+const STT_RATE: u32 = 16_000;
+/// 100 ms of s16le audio at the STT rate.
+const AUDIO_CHUNK_BYTES: usize = (STT_RATE as usize / 10) * 2;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let sid = Uuid::new_v4();
     let base = format!("athena/sat/{}/session/{sid}", args.satellite);
+
+    // Resolve the utterance source up front: audio is fully captured/decoded
+    // before the session opens, which keeps the session logic identical for
+    // all three modes.
+    let audio: Option<Vec<u8>> = if let Some(path) = &args.wav {
+        Some(read_wav_as_s16le_16k(path)?)
+    } else if args.microphone {
+        Some(record_microphone(args.duration_secs)?)
+    } else if args.text.is_none() {
+        anyhow::bail!("one of --text, --wav, or --microphone is required");
+    } else {
+        None
+    };
 
     let mut opts = MqttOptions::new(
         format!("athena-client-{}", &sid.to_string()[..8]),
@@ -131,6 +162,9 @@ async fn main() -> anyhow::Result<()> {
                 let _ = client
                     .publish(format!("{base}/end"), QoS::AtLeastOnce, false, "")
                     .await;
+                // process::exit skips buffered-stdout flushing (lines are
+                // block-buffered when piped) — flush or lose the session log.
+                let _ = std::io::Write::flush(&mut std::io::stdout());
                 std::process::exit(1);
             }
         };
@@ -147,15 +181,37 @@ async fn main() -> anyhow::Result<()> {
                         serde_json::json!({ "locale": args.locale }).to_string(),
                     )
                     .await?;
-                println!("→ text  {:?}", args.text);
-                client
-                    .publish(
-                        format!("{base}/text"),
-                        QoS::AtLeastOnce,
-                        false,
-                        args.text.clone(),
-                    )
-                    .await?;
+                if let Some(text) = &args.text {
+                    println!("→ text  {text:?}");
+                    client
+                        .publish(format!("{base}/text"), QoS::AtLeastOnce, false, text.clone())
+                        .await?;
+                } else if let Some(pcm) = audio.clone() {
+                    #[allow(clippy::cast_precision_loss)]
+                    let secs = pcm.len() as f32 / (STT_RATE as f32 * 2.0);
+                    println!("→ audio {secs:.1}s ({} bytes)", pcm.len());
+                    // Feed from a task: publishing enqueues on a bounded
+                    // channel drained by this event loop, so long audio
+                    // would deadlock if sent inline here.
+                    let audio_client = client.clone();
+                    let audio_topic = format!("{base}/audio");
+                    tokio::spawn(async move {
+                        for chunk in pcm.chunks(AUDIO_CHUNK_BYTES) {
+                            if audio_client
+                                .publish(&audio_topic, QoS::AtLeastOnce, false, chunk.to_vec())
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        // Empty frame = end-of-utterance marker: tells the
+                        // STT provider to flush a transcript now.
+                        let _ = audio_client
+                            .publish(&audio_topic, QoS::AtLeastOnce, false, "")
+                            .await;
+                    });
+                }
             }
             Ok(Event::Incoming(Packet::Publish(p))) => {
                 let chunks_before = tts_chunks.len();
@@ -204,6 +260,84 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Reads any WAV file and converts it to the STT contract: s16le mono 16 kHz.
+fn read_wav_as_s16le_16k(path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
+    let mut reader = hound::WavReader::open(path)
+        .map_err(|e| anyhow::anyhow!("cannot open {}: {e}", path.display()))?;
+    let spec = reader.spec();
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().collect::<Result<_, _>>()?,
+        hound::SampleFormat::Int => {
+            let max = f32::from(i16::MAX);
+            reader
+                .samples::<i16>()
+                .map(|s| s.map(|v| f32::from(v) / max))
+                .collect::<Result<_, _>>()?
+        }
+    };
+    Ok(to_s16le_16k(&samples, spec.sample_rate, spec.channels))
+}
+
+/// Records `secs` seconds from the default input device, converted to the
+/// STT contract format.
+fn record_microphone(secs: u64) -> anyhow::Result<Vec<u8>> {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or_else(|| anyhow::anyhow!("no default input device (microphone)"))?;
+    let config = device.default_input_config()?;
+    let (rate, channels) = (config.sample_rate().0, config.channels());
+
+    println!(
+        "🎙  recording {secs}s from {:?} — speak now…",
+        device.name().unwrap_or_else(|_| "input".into())
+    );
+    let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<f32>::new()));
+    let cb_buf = buf.clone();
+    let stream = device.build_input_stream(
+        &config.into(),
+        move |data: &[f32], _| cb_buf.lock().unwrap().extend_from_slice(data),
+        |e| eprintln!("input stream error: {e}"),
+        None,
+    )?;
+    stream.play()?;
+    std::thread::sleep(std::time::Duration::from_secs(secs));
+    drop(stream);
+
+    let samples = std::mem::take(&mut *buf.lock().unwrap());
+    anyhow::ensure!(!samples.is_empty(), "microphone produced no samples");
+    Ok(to_s16le_16k(&samples, rate, channels))
+}
+
+/// Downmixes interleaved f32 samples to mono and linearly resamples to
+/// 16 kHz s16le bytes.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn to_s16le_16k(samples: &[f32], src_rate: u32, channels: u16) -> Vec<u8> {
+    let channels = channels.max(1) as usize;
+    let mono: Vec<f32> = samples
+        .chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+        .collect();
+    if mono.is_empty() {
+        return Vec::new();
+    }
+    let ratio = f64::from(src_rate) / f64::from(STT_RATE);
+    let out_len = (mono.len() as f64 / ratio) as usize;
+    let mut out = Vec::with_capacity(out_len * 2);
+    for i in 0..out_len {
+        let pos = i as f64 * ratio;
+        let idx = pos as usize;
+        let frac = (pos - idx as f64) as f32;
+        let a = mono[idx.min(mono.len() - 1)];
+        let b = mono[(idx + 1).min(mono.len() - 1)];
+        let v = (a + (b - a) * frac).clamp(-1.0, 1.0);
+        out.extend_from_slice(&((v * f32::from(i16::MAX)) as i16).to_le_bytes());
+    }
+    out
+}
+
 /// Plays collected s16le mono PCM chunks on the default output device.
 fn play_pcm(tts_chunks: &[Vec<u8>], rate: u32) -> anyhow::Result<()> {
     use rodio::buffer::SamplesBuffer;
@@ -248,7 +382,7 @@ fn handle_publish(base: &str, topic: &str, payload: &[u8], tts_chunks: &mut Vec<
     if let Some(kind) = topic.strip_prefix(base).and_then(|s| s.strip_prefix('/')) {
         match kind {
             // Our own publishes, echoed back by the wildcard subscription.
-            "start" | "text" | "end" => {}
+            "start" | "text" | "audio" | "end" => {}
             "transcript" => println!("📝 {}", String::from_utf8_lossy(payload)),
             "tts/meta" => println!("🎧 {}", String::from_utf8_lossy(payload)),
             "tts" => tts_chunks.push(payload.to_vec()),
