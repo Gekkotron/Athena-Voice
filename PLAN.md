@@ -27,11 +27,11 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Backlog
 
-- [ ] Live-verify the Ollama LLM fallback with a real Ollama install
-      The code side is done: ollama.rs is covered by mockito tests (streaming happy path, HTTP error, connection refused fails fast, malformed lines skipped, stream termination without a done marker), and the LLM pipeline actor now speaks a locale-aware apology instead of staying silent when the backend fails (see pipeline/llm.rs::apology + tests).
-      Remaining: install Ollama (`brew install ollama`), pull a small model (e.g. `ollama pull llama3.2:1b`), set `llm = { ollama = { base_url = "http://localhost:11434", model = "llama3.2:1b" } }` in athena.voice.toml (or a copy), and drive an unmatched utterance ("raconte-moi une blague") through the client end to end.
-      Document which model was tested in the config header.
-      Success criteria: (a) unmatched intents produce an LLM-generated spoken answer; (b) stopping Ollama mid-session yields the spoken apology, not silence or a hang.
+- [ ] Remote LLM provider for constrained targets (GEEKOM)
+      Local Ollama inference is too slow on the GEEKOM deployment target. Two paths, both config-only for the runtime: (1) point `base_url` at an Ollama served from a beefier LAN host (works today — the provider is just HTTP); (2) add an `openai_compatible` StageChoice variant in `crates/athena-voice-providers` (chat/completions streaming, api key from env var, base_url + model in config) so hosted APIs and llama.cpp/vLLM servers all work through one provider.
+      Mirror the ollama.rs patterns: mockito tests for streaming, HTTP errors, connection refused, malformed chunks, termination; the pipeline's spoken-apology fallback already covers backend death.
+      Never commit API keys; read them from an env var named in the config.
+      Success criteria: (a) unmatched questions get spoken LLM answers with a remote endpoint configured; (b) provider tests green without network; (c) config documented in athena.voice.toml comments.
 
 - [ ] Piper engine option for the TTS worker
       Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
@@ -48,6 +48,9 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 ## In progress
 
 ## Done
+
+- [x] Ollama LLM fallback verified live + token-contract fix (2026-07-24)
+      llama3.2:1b via `brew install ollama` answers unmatched/compound questions in French, streamed sentence-by-sentence through say TTS. Fixed en route: TTS token channel is now VERBATIM fragments (LLMs stream sub-word pieces with their own spacing — the old space-joining would have garbled real LLM text); LLM actor speaks a locale-aware apology when the backend fails; ollama.rs edge-case tests (refused/malformed/no-done). Weather skill gained temperature phrasings ("quelle est la température (extérieure)"). NB: Ollama is too slow on the GEEKOM target — see the remote-LLM backlog task.
 
 - [x] Voice input end to end: mqtt_stt fix, whisper worker, client audio modes (2026-07-24)
       mqtt_stt now actually delivers audio (base64 frames + utterance-boundary markers) and its transcript stream terminates; new athena-voice-stt-worker (whisper.cpp engine, models under ./models are placeholders — real ones are gitignored downloads); client --wav/--microphone capture with resampling to the s16le/16k contract; empty audio frame = end-of-utterance marker through ingest; TTS actor idle-flush so unpunctuated LLM answers are spoken; athena.voice.toml full-voice config. Verified live: spoken WAV in → whisper transcript → weather skill → say synthesis → client playback.

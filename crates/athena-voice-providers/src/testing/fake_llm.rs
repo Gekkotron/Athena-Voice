@@ -55,7 +55,9 @@ impl Llm for FakeLlm {
             .iter()
             .find(|(sub, _)| prompt.contains(sub))
             .map_or_else(|| fallback(&locale).to_string(), |(_, r)| r.clone());
-        let tokens: Vec<String> = response.split_whitespace().map(String::from).collect();
+        // Emit fragments that concatenate verbatim (spaces included),
+        // matching how real LLM streams deliver text.
+        let tokens: Vec<String> = response.split_inclusive(' ').map(String::from).collect();
         let s = stream::iter(tokens.into_iter().map(Ok::<_, BoxError>));
         Ok(Box::pin(s.boxed()))
     }
@@ -87,7 +89,7 @@ mod tests {
         while let Some(t) = tokens.next().await {
             out.push(t.unwrap());
         }
-        assert_eq!(out, vec!["il", "fait", "beau"]);
+        assert_eq!(out.concat(), "il fait beau");
     }
 
     #[tokio::test]
@@ -105,7 +107,6 @@ mod tests {
         let mut joined = String::new();
         while let Some(t) = tokens.next().await {
             joined.push_str(&t.unwrap());
-            joined.push(' ');
         }
         assert!(joined.contains("je ne sais pas"));
     }
@@ -125,7 +126,6 @@ mod tests {
         let mut joined = String::new();
         while let Some(t) = tokens.next().await {
             joined.push_str(&t.unwrap());
-            joined.push(' ');
         }
         assert!(joined.contains("don't know"));
     }

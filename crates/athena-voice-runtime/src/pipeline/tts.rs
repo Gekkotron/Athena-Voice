@@ -44,28 +44,28 @@ pub fn spawn_tts(
                     // Ignore lag / other events — a lagged BargeIn is a corner
                     // case that only fires under extreme event-bus pressure.
                 }
-                () = tokio::time::sleep(IDLE_FLUSH), if !buf.is_empty() => {
+                () = tokio::time::sleep(IDLE_FLUSH), if !buf.trim().is_empty() => {
                     // Token channel went quiet mid-sentence: speak what we have.
-                    seq = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                    seq = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                     buf.clear();
                 }
                 maybe = token_rx.recv() => {
                     let Some(tok) = maybe else {
                         // Drain remaining buffered text as one final sentence.
-                        if !buf.is_empty() {
-                            let _ = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                        if !buf.trim().is_empty() {
+                            let _ = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                         }
                         break;
                     };
-                    if !buf.is_empty() {
-                        buf.push(' ');
-                    }
+                    // Tokens are VERBATIM text fragments — producers own their
+                    // spacing. LLMs stream sub-word pieces ("Le", " temps"),
+                    // so inserting separators here would corrupt the text.
                     buf.push_str(&tok);
                     // Flush on sentence boundary or when buffer is large.
-                    let should_flush = buf.chars().last().is_some_and(is_sentence_boundary)
+                    let should_flush = buf.trim_end().chars().last().is_some_and(is_sentence_boundary)
                         || buf.len() >= 100;
-                    if should_flush {
-                        seq = flush(&tts, session, &locale, &buf, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                    if should_flush && !buf.trim().is_empty() {
+                        seq = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                         buf.clear();
                     }
                 }
@@ -169,7 +169,7 @@ mod tests {
         // LLM-style tokens with no sentence boundary; the channel STAYS OPEN
         // (a session outlives its answers), so only the idle flush can
         // trigger synthesis.
-        for tok in ["je", "ne", "sais", "pas"] {
+        for tok in ["je ", "ne ", "sais ", "pas"] {
             tok_tx.send(tok.to_string()).await.unwrap();
         }
         let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
@@ -197,7 +197,7 @@ mod tests {
             CancellationToken::new(),
         );
 
-        for t in ["Bonjour.", "Comment", "allez-vous?"] {
+        for t in ["Bonjour.", "Comment ", "allez-vous?"] {
             tok_tx.send(t.into()).await.unwrap();
         }
         drop(tok_tx);

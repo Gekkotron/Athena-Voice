@@ -30,7 +30,12 @@ client_id = "athena-voice-local"
 
 [providers]
 stt = { mqtt_stt = { name = "whisper" } }
-llm = "fake"
+# Real LLM fallback for unmatched/free-form questions. Requires Ollama
+# (`brew install ollama`, `ollama serve`) with the model pulled
+# (`ollama pull llama3.2:1b` — the model this config was tested with).
+# With Ollama down, sessions still complete: the runtime speaks a
+# locale-aware apology instead of hanging.
+llm = { ollama = { base_url = "http://localhost:11434", model = "llama3.2:1b" } }
 tts = { mqtt_tts = { name = "say" } }
 
 [skills]

@@ -144,7 +144,7 @@ mod tests {
         while let Some(t) = tok_rx.recv().await {
             collected.push(t);
         }
-        assert_eq!(collected, vec!["il", "fait", "beau"]);
+        assert_eq!(collected.concat(), "il fait beau");
         handle.await.unwrap();
     }
 }
