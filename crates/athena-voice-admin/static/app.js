@@ -12,6 +12,12 @@ const T = {
     upload_title: 'Install a skill', upload_help: 'Drop a .wasm file or pick a bundled skill.',
     install: 'Install', no_settings: 'This skill has no settings.',
     needs_config: 'needs config', key: 'Key', value: 'Value',
+    test_connection: 'Test connection', testing: 'Testing…',
+    jeedom_ok: 'Jeedom reachable, version ', jeedom_unauthorized: 'Invalid API key',
+    jeedom_unreachable: 'Jeedom unreachable — check the URL', jeedom_bad_response: 'Unexpected reply — is this a Jeedom URL?',
+    jeedom_unconfigured: 'Save the URL and API key first',
+    discover: 'Discover sensors', discovering: 'Scanning…',
+    add_selection: 'Add selection', nothing_discovered: 'No readable commands found',
   },
   fr: {
     token_title: 'Jeton administrateur', save: 'Enregistrer', skills: 'Compétences',
@@ -24,10 +30,32 @@ const T = {
     upload_title: 'Installer une compétence', upload_help: 'Déposez un fichier .wasm ou choisissez une compétence fournie.',
     install: 'Installer', no_settings: 'Cette compétence n’a aucun réglage.',
     needs_config: 'à configurer', key: 'Clé', value: 'Valeur',
+    test_connection: 'Tester la connexion', testing: 'Test en cours…',
+    jeedom_ok: 'Jeedom joignable, version ', jeedom_unauthorized: 'Clé API invalide',
+    jeedom_unreachable: 'Jeedom injoignable — vérifiez l’URL', jeedom_bad_response: 'Réponse inattendue — est-ce bien une URL Jeedom ?',
+    jeedom_unconfigured: 'Enregistrez d’abord l’URL et la clé API',
+    discover: 'Découvrir les capteurs', discovering: 'Analyse en cours…',
+    add_selection: 'Ajouter la sélection', nothing_discovered: 'Aucune commande lisible trouvée',
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
 const t = (k) => T[lang][k] || k;
+
+// French article lookup for composed sensor names; unknown rooms get no
+// article ("température salon") — still fuzzy-matchable and editable.
+const FR_ROOM_ARTICLES = {
+  salon: 'du', bureau: 'du', garage: 'du', couloir: 'du', grenier: 'du', jardin: 'du',
+  chambre: 'de la', cuisine: 'de la', terrasse: 'de la', cave: 'de la',
+  'salle de bain': 'de la', 'salle à manger': 'de la', buanderie: 'de la',
+};
+function composeSensorName(cmdName, room) {
+  const cmd = cmdName.toLowerCase();
+  if (!room) return cmd;
+  const r = room.toLowerCase();
+  const article = /^[aeéèiouy]/.test(r) ? 'de l’' : FR_ROOM_ARTICLES[r];
+  if (!article) return `${cmd} ${r}`;
+  return article.endsWith('’') ? `${cmd} ${article}${r}` : `${cmd} ${article} ${r}`;
+}
 
 const app = document.getElementById('app');
 let token = localStorage.getItem('athena-admin-token') || '';
@@ -139,6 +167,7 @@ function listEditor(f, current) {
   };
   render();
   table.getRows = () => rows;
+  table.addRows = (newRows) => { rows.push(...newRows); render(); };
   return el('div', {},
     el('label', { text: f.label || f.key }), table,
     el('button', { class: 'quiet', text: t('add_row'), onclick: () => { rows.push({}); render(); } }),
@@ -158,6 +187,35 @@ async function renderDetail(skill) {
     card.append(el('p', { class: 'help', text: t('no_settings') }));
   }
   const widgets = fields.map((f) => { const w = fieldInput(f, skill.config[f.key]); card.append(w); return [f, w]; });
+  if (skill.name === 'jeedom') {
+    const jmsg = el('p', { class: 'help' });
+    const tree = el('div');
+    const findSensorsTable = () =>
+      widgets.find(([f]) => f.key === 'sensors')?.[1].querySelector('table');
+    card.append(
+      el('button', {
+        class: 'quiet', text: t('test_connection'),
+        onclick: async () => {
+          jmsg.textContent = t('testing');
+          const body = await (await api('/api/skills/jeedom/test', { method: 'POST' })).json();
+          jmsg.textContent = body.status === 'ok'
+            ? t('jeedom_ok') + body.version
+            : t(`jeedom_${body.status}`);
+        },
+      }),
+      el('button', {
+        class: 'quiet', text: t('discover'),
+        onclick: async () => {
+          jmsg.textContent = t('discovering');
+          const body = await (await api('/api/skills/jeedom/discover', { method: 'POST' })).json();
+          if (body.status !== 'ok') { jmsg.textContent = t(`jeedom_${body.status}`); return; }
+          jmsg.textContent = '';
+          renderDiscoveryTree(tree, body.rooms, findSensorsTable());
+        },
+      }),
+      jmsg, tree,
+    );
+  }
   card.append(el('button', {
     text: t('save'),
     onclick: async () => {
@@ -221,6 +279,50 @@ async function uploadCard() {
   } catch {}
   card.append(msg);
   return card;
+}
+
+function renderDiscoveryTree(container, rooms, sensorsTable) {
+  const existing = new Set((sensorsTable?.getRows() || []).map((r) => Number(r.id)));
+  const boxes = [];
+  container.replaceChildren();
+  if (!rooms.length) {
+    container.append(el('p', { class: 'help', text: t('nothing_discovered') }));
+    return;
+  }
+  for (const room of rooms) {
+    const section = el('div', {}, el('label', { text: room.name || '—' }));
+    for (const eq of room.equipments) {
+      for (const cmd of eq.cmds) {
+        const box = el('input', { type: 'checkbox' });
+        box.checked = existing.has(cmd.id);
+        box.disabled = existing.has(cmd.id); // already mapped — keep it in the table
+        boxes.push({ box, cmd, room: room.name });
+        const badge = cmd.subtype === 'binary' ? 'on/off' : (cmd.unit || '');
+        section.append(el('div', { class: 'skill-row' },
+          box,
+          el('span', { class: 'name', text: `${eq.name} — ${cmd.name}` }),
+          badge ? el('span', { class: 'badge', text: badge }) : '',
+        ));
+      }
+    }
+    container.append(section);
+  }
+  container.append(el('button', {
+    text: t('add_selection'),
+    onclick: () => {
+      const picked = boxes.filter(({ box }) => box.checked && !box.disabled);
+      sensorsTable?.addRows(picked.map(({ cmd, room }) => ({
+        name: composeSensorName(cmd.name, room),
+        id: cmd.id,
+        unit: cmd.unit || '',
+        room: (room || '').toLowerCase(),
+        kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
+        on_label: cmd.on_label || '',
+        off_label: cmd.off_label || '',
+      })));
+      container.replaceChildren();
+    },
+  }));
 }
 
 if (token) renderList(); else renderTokenPrompt();
