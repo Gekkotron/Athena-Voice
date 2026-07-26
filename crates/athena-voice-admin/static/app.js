@@ -48,8 +48,15 @@ const FR_ROOM_ARTICLES = {
   chambre: 'de la', cuisine: 'de la', terrasse: 'de la', cave: 'de la',
   'salle de bain': 'de la', 'salle à manger': 'de la', buanderie: 'de la',
 };
-function composeSensorName(cmdName, room) {
-  const cmd = cmdName.toLowerCase();
+// Command names that describe no equipment on their own ("état", "valeur")
+// — real Jeedom sensors are often equipment "Porte" + command "État", and
+// composing from the command alone would speak "état du garage" instead of
+// "porte du garage". When the command name is one of these, compose from
+// the equipment name instead.
+const GENERIC_CMD_NAMES = ['état', 'etat', 'statut', 'status', 'state', 'valeur', 'value', 'ouverture'];
+function composeSensorName(cmdName, eqName, room) {
+  const isGeneric = GENERIC_CMD_NAMES.includes(cmdName.toLowerCase());
+  const cmd = (isGeneric ? eqName : cmdName).toLowerCase();
   if (!room) return cmd;
   const r = room.toLowerCase();
   const article = /^[aeéèiouy]/.test(r) ? 'de l’' : FR_ROOM_ARTICLES[r];
@@ -296,7 +303,7 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
         const box = el('input', { type: 'checkbox' });
         box.checked = existing.has(cmd.id);
         box.disabled = existing.has(cmd.id); // already mapped — keep it in the table
-        boxes.push({ box, cmd, room: room.name });
+        boxes.push({ box, cmd, eqName: eq.name, room: room.name });
         const badge = cmd.subtype === 'binary' ? 'on/off' : (cmd.unit || '');
         section.append(el('div', { class: 'skill-row' },
           box,
@@ -311,8 +318,8 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
     text: t('add_selection'),
     onclick: () => {
       const picked = boxes.filter(({ box }) => box.checked && !box.disabled);
-      sensorsTable?.addRows(picked.map(({ cmd, room }) => ({
-        name: composeSensorName(cmd.name, room),
+      sensorsTable?.addRows(picked.map(({ cmd, eqName, room }) => ({
+        name: composeSensorName(cmd.name, eqName, room),
         id: cmd.id,
         unit: cmd.unit || '',
         room: (room || '').toLowerCase(),

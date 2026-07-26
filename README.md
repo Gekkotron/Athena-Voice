@@ -102,6 +102,9 @@ Skills can describe their settings by exporting `config_schema` (see
    sensors "quelle est la porte du garage" → "la porte du garage est
    ouverte".
 
+Existing installs: re-run `./skills-jeedom/build.sh` (the built wasm is
+gitignored) to pick up the room/enumeration/binary phrasing above.
+
 Skills in general follow the same recipe: build to `skills/<name>.wasm`
 (or upload it straight from the web UI), then configure it there — skills
 without a `config_schema` still get a raw key/value editor. A

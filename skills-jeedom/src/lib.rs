@@ -115,11 +115,12 @@ impl Skill for JeedomSkill {
             }
             let mut clauses = Vec::new();
             for sensor in matching {
-                let place = if sensor.room.is_empty() { sensor.name.clone() } else { sensor.room.clone() };
                 match read_value(ctx, sensor) {
-                    Ok(v) => clauses.push(format!("{place} {v}{}",
-                        if sensor.unit.is_empty() { String::new() } else { format!(" {}", sensor.unit) })),
-                    Err(()) => clauses.push(if en { format!("{place} unavailable") } else { format!("{place} indisponible") }),
+                    Ok(v) => clauses.push(enum_clause(sensor, &v, en)),
+                    Err(()) => {
+                        let place = if sensor.room.is_empty() { sensor.name.clone() } else { sensor.room.clone() };
+                        clauses.push(if en { format!("{place} unavailable") } else { format!("{place} indisponible") });
+                    }
                 }
             }
             return Ok(SkillResponse::speak(clauses.join(", ")));
@@ -164,19 +165,27 @@ fn speak_reading(ctx: &HostCtx, sensor: &Sensor, en: bool) -> Result<SkillRespon
     }
 }
 
+/// Selects the spoken label for a binary sensor's raw value: the sensor's
+/// own `on_label`/`off_label` when set, falling back to a generic
+/// activé/désactivé (or on/off in English). Shared by `phrase_reading` and
+/// `enum_clause` so both phrasings agree on what a binary reading says.
+fn binary_label<'a>(sensor: &'a Sensor, value: &str, en: bool) -> &'a str {
+    let on = value == "1" || value.eq_ignore_ascii_case("true");
+    if on {
+        if sensor.on_label.is_empty() { if en { "on" } else { "activé" } } else { &sensor.on_label }
+    } else if sensor.off_label.is_empty() {
+        if en { "off" } else { "désactivé" }
+    } else {
+        &sensor.off_label
+    }
+}
+
 /// Phrases a raw reading in the session's language. Binary sensors speak
 /// their configured on/off label (falling back to a generic activé/désactivé
 /// or on/off); numeric sensors speak the value with its unit.
 fn phrase_reading(sensor: &Sensor, value: &str, en: bool) -> String {
     if sensor.kind == "binary" {
-        let on = value == "1" || value.eq_ignore_ascii_case("true");
-        let label = if on {
-            if sensor.on_label.is_empty() { if en { "on" } else { "activé" } } else { &sensor.on_label }
-        } else if sensor.off_label.is_empty() {
-            if en { "off" } else { "désactivé" }
-        } else {
-            &sensor.off_label
-        };
+        let label = binary_label(sensor, value, en);
         return if en {
             format!("the {} is {label}", sensor.name)
         } else {
@@ -188,6 +197,21 @@ fn phrase_reading(sensor: &Sensor, value: &str, en: bool) -> String {
         format!("the {} is {value}{unit}", sensor.name)
     } else {
         format!("la {} est de {value}{unit}", sensor.name)
+    }
+}
+
+/// Builds one enumeration clause ("garage ouverte", "salon 21.5 degrés") for
+/// a sensor's raw reading. Uses the sensor's room as the spoken place when
+/// set (falling back to its full name), and the same binary label selection
+/// as `phrase_reading` so enumeration and single-sensor readings never
+/// disagree on what a binary value means.
+fn enum_clause(sensor: &Sensor, value: &str, en: bool) -> String {
+    let place = if sensor.room.is_empty() { sensor.name.clone() } else { sensor.room.clone() };
+    if sensor.kind == "binary" {
+        format!("{place} {}", binary_label(sensor, value, en))
+    } else {
+        let unit = if sensor.unit.is_empty() { String::new() } else { format!(" {}", sensor.unit) };
+        format!("{place} {value}{unit}")
     }
 }
 
@@ -498,6 +522,18 @@ mod tests {
         assert_eq!(metric_of(&s("température du salon", 1, "", "salon", "", "", "")), "température");
         assert_eq!(metric_of(&s("température de la chambre", 1, "", "chambre", "", "", "")), "température");
         assert_eq!(metric_of(&s("capteur exotique", 1, "", "", "", "", "")), "capteur exotique");
+    }
+
+    #[test]
+    fn enum_clause_labels_binary_sensors() {
+        let temp = s("température du salon", 1, "degrés", "salon", "numeric", "", "");
+        assert_eq!(enum_clause(&temp, "21.5", false), "salon 21.5 degrés");
+
+        let door = s("porte du garage", 2, "", "garage", "binary", "ouverte", "fermée");
+        assert_eq!(enum_clause(&door, "1", false), "garage ouverte");
+
+        let presence = s("présence chambre", 3, "", "chambre", "binary", "", "");
+        assert_eq!(enum_clause(&presence, "1", false), "chambre activé");
     }
 
     #[test]
