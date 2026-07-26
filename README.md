@@ -89,23 +89,18 @@ Skills can describe their settings by exporting `config_schema` (see
 
 ## Enabling the Jeedom skill
 
-The skill ships built (`quickstart.sh` and `./skills-jeedom/build.sh` both
-produce `skills/jeedom.wasm`); it stays dormant until sensors are
-configured. Three steps:
-
-1. In Jeedom, note the **command id** of each sensor you want to expose
-   (shown on the command's line in the equipment page) and an **API key**
-   (Settings → System → Configuration → API).
-2. Configure the skill from the web UI above (default
-   `http://127.0.0.1:8080`): open the `jeedom` entry, paste the **API key**
-   into its (masked) secret field, set `base_url` to your box's address
-   (e.g. `http://jeedom.local`), and add each sensor's `name` / `id` /
-   `unit` to the sensor list — `name` is what you'll say (fuzzy-matched),
-   `id` the Jeedom command id, `unit` is spoken after the value. Saving
-   applies the change live, no restart, and the key never touches a TOML
-   file.
-3. Enable the skill from the same page (if not already), then: *« donne-moi
-   la température du salon »* / *"give me the température du salon"*.
+1. In Jeedom: Settings → System → Configuration → API — copy (or create)
+   an API key, ideally one restricted to the commands you want to expose.
+2. In the Athena-Voice web UI (`http://127.0.0.1:8080`), open **jeedom**,
+   fill in the Jeedom URL and API key, and **save**.
+3. Click **Tester la connexion** — you should see the Jeedom version.
+4. Click **Découvrir les capteurs**, tick the sensors you want by room,
+   then **Ajouter la sélection** and save. Spoken names are pre-composed
+   ("température du salon") and editable.
+5. Ask by voice: "quelle est la température du salon", "quelle température
+   dans la chambre", "toutes les températures", or for door/presence
+   sensors "quelle est la porte du garage" → "la porte du garage est
+   ouverte".
 
 Skills in general follow the same recipe: build to `skills/<name>.wasm`
 (or upload it straight from the web UI), then configure it there — skills
