@@ -261,6 +261,7 @@ dependencies = [
  "athena-voice-skill-sdk",
  "athena-voice-storage",
  "axum 0.8.9",
+ "futures",
  "include_dir",
  "reqwest",
  "rumqttc",
@@ -272,6 +273,7 @@ dependencies = [
  "tower 0.5.3",
  "tracing",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
