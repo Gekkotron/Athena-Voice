@@ -928,3 +928,63 @@ async fn jeedom_test_unconfigured_and_auth_gated() {
     .unwrap();
     assert_eq!(body["status"], "unconfigured");
 }
+
+const FULLDATA_FIXTURE: &str = r#"[
+  { "name": "Salon", "eqLogics": [
+    { "name": "Capteur Xiaomi", "cmds": [
+      { "id": "142", "name": "Température", "type": "info", "subType": "numeric", "unite": "°C" },
+      { "id": 143, "name": "Rafraîchir", "type": "action", "subType": "other" },
+      { "id": 144, "name": "", "type": "info", "subType": "numeric" }
+    ] }
+  ] },
+  { "name": "Garage", "eqLogics": [
+    { "name": "Porte", "cmds": [
+      { "id": 201, "name": "État", "type": "info", "subType": "binary",
+        "display": { "on_label": "ouverte", "off_label": "fermée" } }
+    ] }
+  ] }
+]"#;
+
+#[tokio::test]
+async fn jeedom_discover_returns_info_command_tree() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::query_param("type", "fullData"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(FULLDATA_FIXTURE))
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app.oneshot(post("/api/skills/jeedom/discover", &token)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 22).await.unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("sekret-key-123"));
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "ok");
+    let rooms = body["rooms"].as_array().unwrap();
+    assert_eq!(rooms.len(), 2);
+    let salon_cmds = rooms[0]["equipments"][0]["cmds"].as_array().unwrap();
+    assert_eq!(salon_cmds.len(), 1, "action + unnamed cmds filtered out");
+    assert_eq!(salon_cmds[0]["id"], 142); // string "142" normalized to number
+    assert_eq!(salon_cmds[0]["subtype"], "numeric");
+    assert_eq!(salon_cmds[0]["unit"], "°C");
+    let garage_cmd = &rooms[1]["equipments"][0]["cmds"][0];
+    assert_eq!(garage_cmd["subtype"], "binary");
+    assert_eq!(garage_cmd["on_label"], "ouverte");
+    assert_eq!(garage_cmd["off_label"], "fermée");
+}
+
+#[tokio::test]
+async fn jeedom_discover_bad_payload_is_bad_response() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("<html>login</html>"))
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app.oneshot(post("/api/skills/jeedom/discover", &token)).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap()).unwrap();
+    assert_eq!(body["status"], "bad_response");
+}
