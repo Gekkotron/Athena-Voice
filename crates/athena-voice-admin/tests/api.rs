@@ -819,7 +819,7 @@ async fn install_bundled_quarantines_file_when_first_install_fails() {
 
 // Jeedom connection test endpoint tests
 async fn deps_with_jeedom_config(base_url: &str) -> (AdminDeps, String) {
-    let (mut deps, token) = test_deps().await;
+    let (deps, token) = test_deps().await;
     deps.store
         .skill_setting_set("jeedom", "base_url", base_url, false)
         .await
