@@ -42,6 +42,8 @@ pub struct ItemField {
     pub key: String,
     #[serde(rename = "type")]
     pub kind: FieldKind,
+    #[serde(default)]
+    pub required: bool,
 }
 
 impl ConfigField {
@@ -61,7 +63,7 @@ mod tests {
             { "key": "api_key", "label": "API key", "type": "secret", "required": true },
             { "key": "sensors", "label": "Sensors", "type": "list",
               "item_fields": [
-                { "key": "name", "type": "string" },
+                { "key": "name", "type": "string", "required": true },
                 { "key": "id",   "type": "number" },
                 { "key": "unit", "type": "string" } ] }
         ] }"#;
@@ -73,6 +75,10 @@ mod tests {
         assert_eq!(schema.fields[2].item_fields[1].kind, FieldKind::Number);
         // Optional fields default cleanly.
         assert!(!schema.fields[2].required);
+        // Item field `required` round-trips: explicit true stays true, absent
+        // (old JSON without the key) defaults cleanly to false.
+        assert!(schema.fields[2].item_fields[0].required);
+        assert!(!schema.fields[2].item_fields[1].required);
         assert!(schema.fields[0].help.is_empty());
         let back = serde_json::to_string(&schema).unwrap();
         let again: ConfigSchema = serde_json::from_str(&back).unwrap();

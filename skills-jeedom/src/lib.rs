@@ -408,30 +408,37 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                     ItemField {
                         key: "name".into(),
                         kind: FieldKind::String,
+                        required: true,
                     },
                     ItemField {
                         key: "id".into(),
                         kind: FieldKind::Number,
+                        required: true,
                     },
                     ItemField {
                         key: "unit".into(),
                         kind: FieldKind::String,
+                        required: false,
                     },
                     ItemField {
                         key: "room".into(),
                         kind: FieldKind::String,
+                        required: false,
                     },
                     ItemField {
                         key: "kind".into(),
                         kind: FieldKind::String,
+                        required: false,
                     },
                     ItemField {
                         key: "on_label".into(),
                         kind: FieldKind::String,
+                        required: false,
                     },
                     ItemField {
                         key: "off_label".into(),
                         kind: FieldKind::String,
+                        required: false,
                     },
                 ],
             },

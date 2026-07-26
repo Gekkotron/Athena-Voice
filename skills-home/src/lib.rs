@@ -209,26 +209,32 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                 ItemField {
                     key: "name".into(),
                     kind: FieldKind::String,
+                    required: true,
                 },
                 ItemField {
                     key: "room".into(),
                     kind: FieldKind::String,
+                    required: false,
                 },
                 ItemField {
                     key: "kind".into(),
                     kind: FieldKind::String,
+                    required: false,
                 },
                 ItemField {
                     key: "set_topic".into(),
                     kind: FieldKind::String,
+                    required: false,
                 },
                 ItemField {
                     key: "on_payload".into(),
                     kind: FieldKind::String,
+                    required: false,
                 },
                 ItemField {
                     key: "off_payload".into(),
                     kind: FieldKind::String,
+                    required: false,
                 },
             ],
         }],

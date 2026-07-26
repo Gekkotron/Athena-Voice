@@ -64,9 +64,15 @@ fn check(kind: FieldKind, raw: &str, key: &str, items: &[ItemField]) -> Result<(
                 })?;
             for (i, item) in parsed.iter().enumerate() {
                 for f in items {
-                    let v = item
-                        .get(&f.key)
-                        .ok_or_else(|| format!("`{key}[{i}]` is missing `{}`", f.key))?;
+                    let Some(v) = item.get(&f.key) else {
+                        if f.required {
+                            return Err(format!("`{key}[{i}]` is missing `{}`", f.key));
+                        }
+                        // Absent + not required: legacy rows predating this
+                        // item field are still valid (see module docs — an
+                        // absent key means "unchanged"/never populated).
+                        continue;
+                    };
                     let ok = match f.kind {
                         FieldKind::Number => v.is_number(),
                         _ => v.is_string(),
@@ -136,21 +142,27 @@ mod tests {
         }
     }
 
+    fn item_field(key: &str, kind: FieldKind, required: bool) -> ItemField {
+        ItemField {
+            key: key.into(),
+            kind,
+            required,
+        }
+    }
+
+    /// Mirrors skills-jeedom's live 7-field schema: only `name`/`id` are
+    /// required, so legacy rows stored before `room`/`kind`/`on_label`/
+    /// `off_label` existed still validate.
     fn jeedom_schema() -> ConfigSchema {
         let mut sensors = field("sensors", FieldKind::List, false);
         sensors.item_fields = vec![
-            ItemField {
-                key: "name".into(),
-                kind: FieldKind::String,
-            },
-            ItemField {
-                key: "id".into(),
-                kind: FieldKind::Number,
-            },
-            ItemField {
-                key: "unit".into(),
-                kind: FieldKind::String,
-            },
+            item_field("name", FieldKind::String, true),
+            item_field("id", FieldKind::Number, true),
+            item_field("unit", FieldKind::String, false),
+            item_field("room", FieldKind::String, false),
+            item_field("kind", FieldKind::String, false),
+            item_field("on_label", FieldKind::String, false),
+            item_field("off_label", FieldKind::String, false),
         ];
         ConfigSchema {
             fields: vec![
@@ -224,6 +236,54 @@ mod tests {
             validate(Some(&s), &blank_secret),
             Ok(()),
             "blank required secret must pass validation; put_config skips persisting it"
+        );
+    }
+
+    #[test]
+    fn legacy_row_missing_new_optional_item_fields_still_saves() {
+        // Regression: skills-jeedom's schema grew from 3 to 7 item fields
+        // (room/kind/on_label/off_label added for discovery). A sensor row
+        // stored before that migration only has name/id/unit — it must still
+        // pass validation on re-save since those new fields are optional.
+        let s = jeedom_schema();
+        let legacy = HashMap::from([
+            ("base_url".to_string(), "http://192.168.1.91".to_string()),
+            ("api_key".to_string(), "k".to_string()),
+            (
+                "sensors".to_string(),
+                r#"[{"name":"x","id":1,"unit":""}]"#.to_string(),
+            ),
+        ]);
+        assert_eq!(
+            validate(Some(&s), &legacy),
+            Ok(()),
+            "legacy row missing optional item fields must still validate"
+        );
+    }
+
+    #[test]
+    fn list_item_missing_required_field_is_rejected() {
+        let s = jeedom_schema();
+        let missing_id = HashMap::from([(
+            "sensors".to_string(),
+            r#"[{"name":"x","unit":""}]"#.to_string(),
+        )]);
+        assert!(
+            validate(Some(&s), &missing_id).is_err(),
+            "`id` is a required item field even though other item fields are optional"
+        );
+    }
+
+    #[test]
+    fn list_item_present_optional_field_with_wrong_type_is_rejected() {
+        let s = jeedom_schema();
+        let bad_room = HashMap::from([(
+            "sensors".to_string(),
+            r#"[{"name":"x","id":1,"room":3}]"#.to_string(),
+        )]);
+        assert!(
+            validate(Some(&s), &bad_room).is_err(),
+            "an optional item field, once present, must still match its declared type"
         );
     }
 
