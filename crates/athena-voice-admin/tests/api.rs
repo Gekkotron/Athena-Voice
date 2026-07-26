@@ -955,9 +955,14 @@ async fn jeedom_discover_returns_info_command_tree() {
         .await;
     let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
-    let res = app.oneshot(post("/api/skills/jeedom/discover", &token)).await.unwrap();
+    let res = app
+        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .await
+        .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 22).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 22)
+        .await
+        .unwrap();
     assert!(!String::from_utf8_lossy(&bytes).contains("sekret-key-123"));
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["status"], "ok");
@@ -983,8 +988,106 @@ async fn jeedom_discover_bad_payload_is_bad_response() {
         .await;
     let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
-    let res = app.oneshot(post("/api/skills/jeedom/discover", &token)).await.unwrap();
+    let res = app
+        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .await
+        .unwrap();
     let body: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap()).unwrap();
+        &axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(body["status"], "bad_response");
+}
+
+#[tokio::test]
+async fn jeedom_discover_aborts_on_oversized_response() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::query_param("type", "fullData"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_bytes(vec![b'['; 5 * 1024 * 1024]), // 5 MiB, exceeds 4 MiB cap
+        )
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 23)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        body["status"], "bad_response",
+        "oversized response must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn jeedom_discover_prunes_empty_equipment_and_rooms() {
+    // Fixture: Salon has one eqLogic with only action cmds (pruned).
+    // Kitchen has one eqLogic with an info cmd and an action cmd.
+    // Bathroom room has eqLogics but all cmds are actions or unnamed (room pruned).
+    let pruning_fixture = r#"[
+  { "name": "Salon", "eqLogics": [
+    { "name": "Commutateur", "cmds": [
+      { "id": 1, "name": "Allumer", "type": "action", "subType": "other" },
+      { "id": 2, "name": "Éteindre", "type": "action", "subType": "other" }
+    ] }
+  ] },
+  { "name": "Cuisine", "eqLogics": [
+    { "name": "Capteur", "cmds": [
+      { "id": 10, "name": "Température", "type": "info", "subType": "numeric", "unite": "°C" },
+      { "id": 11, "name": "Allumer", "type": "action", "subType": "other" }
+    ] }
+  ] },
+  { "name": "Salle de bain", "eqLogics": [
+    { "name": "Ventilatrice", "cmds": [
+      { "id": 20, "name": "Activer", "type": "action", "subType": "other" },
+      { "id": 21, "name": "", "type": "info", "subType": "numeric" }
+    ] }
+  ] }
+]"#;
+
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::query_param("type", "fullData"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(pruning_fixture))
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 22)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "ok");
+
+    let rooms = body["rooms"].as_array().unwrap();
+    assert_eq!(
+        rooms.len(),
+        1,
+        "only Cuisine survives (Salon + Salle de bain have no info cmds)"
+    );
+    assert_eq!(rooms[0]["name"], "Cuisine");
+
+    let equipments = rooms[0]["equipments"].as_array().unwrap();
+    assert_eq!(equipments.len(), 1);
+    assert_eq!(equipments[0]["name"], "Capteur");
+
+    let cmds = equipments[0]["cmds"].as_array().unwrap();
+    assert_eq!(cmds.len(), 1, "action cmd filtered out");
+    assert_eq!(cmds[0]["id"], 10);
+    assert_eq!(cmds[0]["name"], "Température");
 }

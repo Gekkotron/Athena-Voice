@@ -7,6 +7,7 @@ use std::time::Duration;
 use axum::Json;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 
 use athena_voice_runtime::wasm::settings::apply_settings;
 
@@ -129,19 +130,35 @@ fn parse_fulldata(raw: &serde_json::Value) -> Option<Vec<DiscoveredRoom>> {
     let objects = raw.as_array()?;
     let mut rooms = Vec::new();
     for obj in objects {
-        let room_name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let room_name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let mut equipments = Vec::new();
-        let eq_iter = obj.get("eqLogics").and_then(|v| v.as_array()).map_or(&[][..], |a| a.as_slice());
+        let eq_iter = obj
+            .get("eqLogics")
+            .and_then(|v| v.as_array())
+            .map_or(&[][..], |a| a.as_slice());
         for eq in eq_iter {
-            let eq_name = eq.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let eq_name = eq
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let mut cmds = Vec::new();
-            let cmd_iter = eq.get("cmds").and_then(|v| v.as_array()).map_or(&[][..], |a| a.as_slice());
+            let cmd_iter = eq
+                .get("cmds")
+                .and_then(|v| v.as_array())
+                .map_or(&[][..], |a| a.as_slice());
             for cmd in cmd_iter {
                 if cmd.get("type").and_then(|v| v.as_str()) != Some("info") {
                     continue;
                 }
                 let name = cmd.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let Some(id) = cmd.get("id").and_then(cmd_id) else { continue };
+                let Some(id) = cmd.get("id").and_then(cmd_id) else {
+                    continue;
+                };
                 if name.is_empty() {
                     continue;
                 }
@@ -171,11 +188,17 @@ fn parse_fulldata(raw: &serde_json::Value) -> Option<Vec<DiscoveredRoom>> {
                 });
             }
             if !cmds.is_empty() {
-                equipments.push(DiscoveredEquipment { name: eq_name, cmds });
+                equipments.push(DiscoveredEquipment {
+                    name: eq_name,
+                    cmds,
+                });
             }
         }
         if !equipments.is_empty() {
-            rooms.push(DiscoveredRoom { name: room_name, equipments });
+            rooms.push(DiscoveredRoom {
+                name: room_name,
+                equipments,
+            });
         }
     }
     Some(rooms)
@@ -189,17 +212,33 @@ pub(crate) async fn discover(State(state): State<AppState>) -> Response {
         "{}/core/api/jeeApi.php?apikey={}&type=fullData",
         cfg.base_url, cfg.api_key
     );
-    let Ok(resp) = state.http.get(&url).timeout(Duration::from_secs(10)).send().await else {
+    let Ok(resp) = state
+        .http
+        .get(&url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    else {
         return status_json("unreachable");
     };
     if !resp.status().is_success() {
         return status_json("bad_response");
     }
-    let bytes = match resp.bytes().await {
-        Ok(b) if b.len() <= FULLDATA_CAP_BYTES => b,
-        _ => return status_json("bad_response"),
-    };
-    let Ok(raw) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+
+    // Stream the response body with early abort if size exceeds cap.
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else {
+            return status_json("bad_response");
+        };
+        if buf.len() + chunk.len() > FULLDATA_CAP_BYTES {
+            return status_json("bad_response");
+        }
+        buf.extend_from_slice(&chunk);
+    }
+
+    let Ok(raw) = serde_json::from_slice::<serde_json::Value>(&buf) else {
         return status_json("bad_response");
     };
     match parse_fulldata(&raw) {
