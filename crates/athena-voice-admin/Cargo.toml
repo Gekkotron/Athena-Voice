@@ -12,6 +12,7 @@ anyhow = { workspace = true }
 argon2 = { workspace = true }
 axum = { workspace = true }
 include_dir = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -27,6 +28,7 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 rumqttc = { workspace = true }
 reqwest = { workspace = true }
+wiremock = { workspace = true }
 # `test-support` exposes real skill-wasm fixture paths built by the
 # runtime's own build.rs; see that crate's `test_support` module doc.
 athena-voice-runtime = { workspace = true, features = ["test-support"] }

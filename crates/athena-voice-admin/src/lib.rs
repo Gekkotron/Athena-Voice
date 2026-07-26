@@ -3,6 +3,7 @@
 
 pub(crate) mod api;
 pub mod auth;
+pub(crate) mod jeedom;
 pub(crate) mod validate;
 
 use std::collections::HashMap;
@@ -40,6 +41,7 @@ pub(crate) struct AppState {
     pub base_per_skill: Arc<HashMap<String, SkillConfig>>,
     pub token_hash: Arc<String>,
     pub bundled_dir: Option<PathBuf>,
+    pub http: reqwest::Client,
 }
 
 pub fn router(deps: AdminDeps) -> Router {
@@ -49,6 +51,7 @@ pub fn router(deps: AdminDeps) -> Router {
         base_per_skill: Arc::new(deps.base_per_skill),
         token_hash: Arc::new(deps.token_hash),
         bundled_dir: deps.bundled_dir,
+        http: reqwest::Client::new(),
     };
     // The api sub-router is fully stated (Router<()>) before nesting; the
     // outer router stays stateless — the asset handler needs no state.
@@ -63,6 +66,10 @@ pub fn router(deps: AdminDeps) -> Router {
         .route(
             "/skills/{name}/disable",
             axum::routing::post(api::disable_skill),
+        )
+        .route(
+            "/skills/jeedom/test",
+            axum::routing::post(jeedom::test_connection),
         )
         .route("/skills/upload", axum::routing::post(api::upload_skill))
         .route("/bundled", get(api::list_bundled))

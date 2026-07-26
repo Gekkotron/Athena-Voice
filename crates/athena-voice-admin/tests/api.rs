@@ -816,3 +816,115 @@ async fn install_bundled_quarantines_file_when_first_install_fails() {
         "failed first install must not leave a file behind for the next startup"
     );
 }
+
+// Jeedom connection test endpoint tests
+async fn deps_with_jeedom_config(base_url: &str) -> (AdminDeps, String) {
+    let (mut deps, token) = test_deps().await;
+    deps.store
+        .skill_setting_set("jeedom", "base_url", base_url, false)
+        .await
+        .unwrap();
+    deps.store
+        .skill_setting_set("jeedom", "api_key", "sekret-key-123", true)
+        .await
+        .unwrap();
+    (deps, token)
+}
+
+#[tokio::test]
+async fn jeedom_test_reports_ok_with_version() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/core/api/jeeApi.php"))
+        .and(wiremock::matchers::query_param("type", "version"))
+        .and(wiremock::matchers::query_param("apikey", "sekret-key-123"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("4.4.19"))
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/test", &token))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["version"], "4.4.19");
+    assert!(
+        !String::from_utf8_lossy(&bytes).contains("sekret-key-123"),
+        "api key must never be echoed"
+    );
+}
+
+#[tokio::test]
+async fn jeedom_test_classifies_failures() {
+    // unauthorized: Jeedom answers 200 with an error sentence, not a version.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("Clé API non valide"))
+        .mount(&server)
+        .await;
+    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app
+        .clone()
+        .oneshot(post("/api/skills/jeedom/test", &token))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "unauthorized");
+
+    // unreachable: explicit unreachable port.
+    drop(server);
+    let (deps, token) = deps_with_jeedom_config("http://127.0.0.1:1").await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/test", &token))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "unreachable");
+}
+
+#[tokio::test]
+async fn jeedom_test_unconfigured_and_auth_gated() {
+    let (deps, token) = test_deps().await; // no jeedom config at all
+    let app = router(deps);
+    let unauth = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/skills/jeedom/test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/test", &token))
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "unconfigured");
+}
