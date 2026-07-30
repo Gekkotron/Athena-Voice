@@ -1,13 +1,16 @@
 # Plan
 
-Current state (2026-07-24): the text-driven voice loop works end to end and
-is verified live — MQTT satellite client → text-injection topic → intent
-matcher → WASM skills (time / weather / timer / home) → TTS over MQTT
-(`athena-voice-tts-worker`, macOS `say` engine) → PCM chunks → client
-playback via rodio. `cargo check --workspace --all-targets` is clean and
-`cargo nextest run --workspace` is green (189 tests). See `SHOWCASE.md` for
-the quick-start and `athena.local.toml` / `athena.say.toml` for runnable
-configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; see athena.voice.toml) — verified with a spoken WAV end to end. Remaining: Ollama LLM fallback, Piper TTS engine, honest tts/meta.
+Current state (2026-07-30): the full voice loop works end to end and is
+verified live — client --microphone/--wav → whisper.cpp STT worker → intent
+matcher → WASM skills (time / weather / timer / home / Jeedom) → TTS over
+MQTT (`athena-voice-tts-worker`, macOS `say` engine) → PCM chunks → client
+playback via rodio. LLM fallback is opt-in (`llm = "none"` default;
+`ollama` and `openai_compatible` providers available). A web admin UI
+(`athena-voice-admin`) handles config editing, Jeedom connection test, and
+sensor discovery. See `README.md` / `quickstart.sh` for setup and
+`athena.voice.toml` for the full-voice config. Remaining in the voice path:
+honest tts/meta, Piper TTS engine (last macOS-only piece), wake-word
+detection (today the client streams on demand, no hands-free trigger).
 
 ## Notes
 
@@ -33,21 +36,37 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Backlog
 
-- [ ] Piper engine option for the TTS worker (PORTABILITY: `say` is the only macOS-only piece left in the voice path)
-      Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
-      Piper CLI outputs WAV at the model's native rate; resample or pass the actual rate in the response if it differs from --rate (keep it simple: require the worker's --rate to match the model and validate at startup).
-      Do NOT vendor models; document where to fetch a French voice (e.g. fr_FR-siwis-medium) and add the paths to the config header.
-      Success criteria: (a) with a downloaded Piper voice the full loop speaks with the Piper voice on Linux and macOS; (b) `say` remains the default with unchanged behavior; (c) startup fails fast with a clear message when the binary/model paths are wrong.
+- [ ] Redact the Jeedom API key from HTTP error logs (SECURITY, small)
+      `skills-jeedom/src/lib.rs` `read_value` puts the key in the URL query (`jeeApi.php?apikey=…`) and the error branch logs the raw error, whose message includes the full URL when Jeedom is unreachable — so a failed voice query writes the key to the runtime log.
+      Fix at the host boundary so every skill benefits: in the host's `http_get_json` implementation, redact query-string values (or at least any `apikey`/`key`/`token` params) from error strings before they cross into skill-visible errors; keep scheme/host/path so failures stay diagnosable.
+      Add a regression test asserting the error string for an unreachable URL with `?apikey=SECRET` does not contain `SECRET`.
+      Success criteria: (a) test proves no key in error text; (b) Jeedom skill still logs a useful warn on failure; (c) workspace tests green.
 
-- [ ] Honest audio format metadata in tts/meta
+- [ ] Honest audio format metadata in tts/meta (do this BEFORE the Piper task — Piper models have their own native rates, so the metadata must stop lying first)
       `pipeline/sink.rs` hardcodes `{codec: "opus", sample_rate: 24000}` in the session `tts/meta` message while the actual stream today is s16le at the worker's rate.
       Thread real format info: extend the TTS provider trait (or wrap AudioStream) so synthesize returns format metadata alongside chunks; FakeTts reports a `text` pseudo-codec, MqttTts forwards what the worker declares (add optional `format`/`sample_rate` fields to the worker's first response message; missing fields default to s16le/22050 for compatibility).
       Update the satellite client to honor tts/meta instead of the --rate flag when metadata is present (keep --rate as override).
       Success criteria: (a) client plays correctly with no --rate flag against both fake and say-worker configs; (b) meta reflects reality for each provider; (c) runtime + provider tests green.
 
+- [ ] Piper engine option for the TTS worker (PORTABILITY: `say` is the only macOS-only piece left in the voice path)
+      Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
+      Piper CLI outputs WAV at the model's native rate; declare that real rate in the worker's response metadata (the tts/meta task above threads it through), so no resampling is needed.
+      Do NOT vendor models; document where to fetch a French voice (e.g. fr_FR-siwis-medium) and add the paths to the config header.
+      Success criteria: (a) with a downloaded Piper voice the full loop speaks with the Piper voice on Linux and macOS; (b) `say` remains the default with unchanged behavior; (c) startup fails fast with a clear message when the binary/model paths are wrong.
+
+- [ ] Wake-word detection in the satellite client (hands-free trigger — today --microphone streams on demand only)
+      Evaluate pure-Rust cross-platform detectors first (e.g. rustpotter) — read the real crate API before writing code, do not invent it; a subprocess engine is acceptable fallback but pure-Rust is strongly preferred per the portability principle.
+      Add an opt-in client mode (e.g. --wake-word <model/config path>) that listens continuously, opens a session and starts streaming only after detection, and re-arms after the session ends; keep detection entirely client-side (no wake audio leaves the satellite).
+      Without the flag, current behavior must be byte-for-byte unchanged; feature-gate heavy deps if needed.
+      Do NOT vendor wake models; document where to fetch or how to train one in the config header.
+      Success criteria: (a) live-verified hands-free round trip: spoken wake word → question → spoken answer, without touching the keyboard; (b) no session traffic before detection; (c) existing client modes and tests unchanged and green.
+
 ## In progress
 
 ## Done
+
+- [x] Web admin UI + Jeedom skill (2026-07-25..29)
+      `athena-voice-admin` crate: web config editor with validation, secrets protection, upload quarantine, Jeedom connection test, and streaming sensor-discovery endpoint with size cap; admin UI discovery tree. `skills-jeedom` WASM skill: room queries, device enumeration, spoken binary states, names composed from equipment for generic commands. All on origin/main.
 
 - [x] LLM made truly optional + openai_compatible provider (2026-07-24)
       Owner preference: no OpenAI/cloud dependency. `llm = "none"` is now the shipped default — unmatched questions get a deterministic spoken capabilities answer (FR/EN, unit-tested, verified live). For those who opt in: new `openai_compatible` provider (SSE chat/completions; works with hosted APIs, llama.cpp, vLLM, Ollama /v1; bearer token only via api_key_env env var, fail-fast when missing; mockito tests for streaming/auth header/malformed/termination/refused). Ollama stays as the second opt-in. NOT yet live-verified against a real /v1 endpoint end to end — protocol is pinned by tests; config examples in athena.voice.toml.
@@ -87,6 +106,7 @@ configs. Voice input works too (whisper.cpp worker + client --wav/--microphone; 
 
 ## Manual checklist (human, not the orchestrator)
 
-- [ ] Decide the fate of `athena-voice-server`: its socket-based VAD→hotword→ASR path duplicates the runtime's MQTT satellite pipeline and is mostly stubs (audio socket unimplemented, Piper tokenizer TODO, placeholder models). Consolidate on the MQTT path, or invest in the socket path — don't let both drift.
+- [ ] Rotate the Jeedom API key that was used during web-UI development, then browser-check the admin UI end to end.
+- [ ] Decide the fate of `athena-voice-server`: its socket-based VAD→hotword→ASR path duplicates the runtime's MQTT satellite pipeline and is mostly stubs (audio socket unimplemented, Piper tokenizer TODO, placeholder models). The wake-word backlog task covers the one capability it was meant to add — once that lands, deleting the crate is the likely call.
 - [ ] Download a real whisper ggml model and a Piper French voice into `models/` (the current files are byte-sized placeholders).
 - [ ] Consider enabling `[skills] hot_reload = true` in dev configs now that the watcher is deflaked.
