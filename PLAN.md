@@ -36,12 +36,6 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Backlog
 
-- [ ] Redact the Jeedom API key from HTTP error logs (SECURITY, small)
-      `skills-jeedom/src/lib.rs` `read_value` puts the key in the URL query (`jeeApi.php?apikey=…`) and the error branch logs the raw error, whose message includes the full URL when Jeedom is unreachable — so a failed voice query writes the key to the runtime log.
-      Fix at the host boundary so every skill benefits: in the host's `http_get_json` implementation, redact query-string values (or at least any `apikey`/`key`/`token` params) from error strings before they cross into skill-visible errors; keep scheme/host/path so failures stay diagnosable.
-      Add a regression test asserting the error string for an unreachable URL with `?apikey=SECRET` does not contain `SECRET`.
-      Success criteria: (a) test proves no key in error text; (b) Jeedom skill still logs a useful warn on failure; (c) workspace tests green.
-
 - [ ] Honest audio format metadata in tts/meta (do this BEFORE the Piper task — Piper models have their own native rates, so the metadata must stop lying first)
       `pipeline/sink.rs` hardcodes `{codec: "opus", sample_rate: 24000}` in the session `tts/meta` message while the actual stream today is s16le at the worker's rate.
       Thread real format info: extend the TTS provider trait (or wrap AudioStream) so synthesize returns format metadata alongside chunks; FakeTts reports a `text` pseudo-codec, MqttTts forwards what the worker declares (add optional `format`/`sample_rate` fields to the worker's first response message; missing fields default to s16le/22050 for compatibility).
@@ -64,6 +58,9 @@ detection (today the client streams on demand, no hands-free trigger).
 ## In progress
 
 ## Done
+
+- [x] Redact the Jeedom API key from HTTP error logs (2026-07-30)
+      Host boundary fix in `wasm/host_fns.rs`: new `redact_query_values` scrubs every query-param value (→ `REDACTED`) from error text while keeping param names, scheme, host, and path; the fetch path is extracted into a testable `fetch_json` that redacts both send and JSON-decode errors before they become skill-visible `{"error": …}` payloads. Regression test proves it live: reqwest 0.12 really does embed `?apikey=SUPERSECRET` in its connect-error text (watched the test fail first), and the redacted error still names the host. 255 workspace tests + SHOWCASE.sh green.
 
 - [x] Web admin UI + Jeedom skill (2026-07-25..29)
       `athena-voice-admin` crate: web config editor with validation, secrets protection, upload quarantine, Jeedom connection test, and streaming sensor-discovery endpoint with size cap; admin UI discovery tree. `skills-jeedom` WASM skill: room queries, device enumeration, spoken binary states, names composed from equipment for generic commands. All on origin/main.

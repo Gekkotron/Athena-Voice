@@ -438,6 +438,46 @@ fn host_mqtt_publish(
     Ok(())
 }
 
+/// Scrubs the values of `url`'s query parameters out of `text`, so secrets
+/// passed as query params (Jeedom's `?apikey=…`) never reach the runtime log
+/// or skill-visible error strings. Param names, scheme, host, and path stay
+/// intact so failures remain diagnosable.
+fn redact_query_values(text: &str, url: &Url) -> String {
+    let Some(query) = url.query() else {
+        return text.to_string();
+    };
+    let mut out = text.to_string();
+    for pair in query.split('&') {
+        if let Some((_, value)) = pair.split_once('=') {
+            if !value.is_empty() {
+                out = out.replace(value, "REDACTED");
+            }
+        }
+    }
+    out
+}
+
+/// Fetches `url` and decodes the body as JSON. Error strings are passed
+/// through [`redact_query_values`] — reqwest embeds the full request URL in
+/// its error text, which would otherwise leak query-string secrets.
+async fn fetch_json(
+    http: &reqwest::Client,
+    url: Url,
+) -> Result<serde_json::Value, HostFnError> {
+    let resp = http
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|e| HostFnError::HttpFailed(redact_query_values(&e.to_string(), &url)))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(HostFnError::HttpFailed(format!("status {status}")));
+    }
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| HostFnError::HttpFailed(redact_query_values(&e.to_string(), &url)))
+}
+
 fn host_http_get_json(
     plugin: &mut CurrentPlugin,
     inputs: &[Val],
@@ -453,20 +493,7 @@ fn host_http_get_json(
         )
     })?;
     let response = match http_url_allowed(&allowlist, &url) {
-        Ok(parsed) => tokio.block_on(async move {
-            let resp = http
-                .get(parsed)
-                .send()
-                .await
-                .map_err(|e| HostFnError::HttpFailed(e.to_string()))?;
-            let status = resp.status();
-            if !status.is_success() {
-                return Err(HostFnError::HttpFailed(format!("status {status}")));
-            }
-            resp.json::<serde_json::Value>()
-                .await
-                .map_err(|e| HostFnError::HttpFailed(e.to_string()))
-        }),
+        Ok(parsed) => tokio.block_on(async move { fetch_json(&http, parsed).await }),
         Err(e) => Err(e),
     };
     let json_out = match response {
@@ -737,6 +764,32 @@ async fn make_ctx(name: &str) -> SkillCtx {
     fn http_allowlist_rejects_garbage_url() {
         let err = http_url_allowed(&[], "not a url").unwrap_err();
         assert!(matches!(err, HostFnError::HttpBadUrl(_)));
+    }
+
+    #[test]
+    fn redact_query_values_scrubs_secrets_keeps_host_and_path() {
+        let url = Url::parse(
+            "http://jeedom.local/core/api/jeeApi.php?apikey=S3CR3T&type=cmd&id=42",
+        )
+        .unwrap();
+        let text = format!("error sending request for url ({url})");
+        let out = redact_query_values(&text, &url);
+        assert!(!out.contains("S3CR3T"), "secret leaked: {out}");
+        assert!(out.contains("jeedom.local"), "host gone: {out}");
+        assert!(out.contains("jeeApi.php"), "path gone: {out}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fetch_json_error_does_not_leak_query_secrets() {
+        // Regression: a failed voice query against an unreachable Jeedom must
+        // not write the apikey to the runtime log — reqwest embeds the full
+        // request URL in its connect-error text.
+        let http = reqwest::Client::new();
+        let url = Url::parse("http://127.0.0.1:1/api?apikey=SUPERSECRET").unwrap();
+        let err = fetch_json(&http, url).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(!msg.contains("SUPERSECRET"), "secret leaked: {msg}");
+        assert!(msg.contains("127.0.0.1"), "host gone from error: {msg}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
