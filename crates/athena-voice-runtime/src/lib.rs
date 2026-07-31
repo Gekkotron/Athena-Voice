@@ -1,6 +1,7 @@
 #![deny(warnings)]
 //! Athena-Voice runtime: actor DAG + MQTT satellite adapter + event bus.
 
+pub mod assist;
 pub mod audio;
 pub mod config;
 pub mod error;
