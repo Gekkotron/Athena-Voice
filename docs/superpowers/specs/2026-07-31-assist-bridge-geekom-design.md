@@ -124,6 +124,28 @@ locale = "fr"
 - **Live**: mosquitto + serve on the dev Mac, `mosquitto_pub`/`_sub` round
   trip; then the real GEEKOM + DomoticApp.
 
+## Implementation notes (corrections after code recon, 2026-07-31)
+
+Four spec items turned out simpler than assumed once checked against the
+tree; the plan implements these corrected versions:
+
+1. **MQTT credentials already exist.** `[mqtt] username`/`password` are
+   already parsed by the CLI and honored by the runtime's `MqttConfig`, and
+   figment merges `ATHENA__`-prefixed env vars — so
+   `ATHENA__MQTT__PASSWORD=… ` already works with zero code. Deliverable
+   becomes documentation, not a `password_env` field.
+2. **Linux CI already exists but is broken.** All `ci.yml` jobs run on
+   `ubuntu-latest`; a mis-indented step (line 61) makes the YAML invalid and
+   every recent run fails. Deliverable becomes "repair ci.yml", not "add a
+   job".
+3. **No config-loader change.** `athena.assist.toml` sets
+   `stt = "fake"` / `tts = "fake"` (never invoked — assist sessions wire no
+   STT/TTS actors), so `[providers]` keeps its required shape.
+4. **Assist sessions self-reap.** The per-device bridge actor tracks its own
+   idle deadline (same `session_idle_secs` value) instead of registering in
+   `SessionManager` — avoids dummy audio channels and satellite-id
+   sanitization for no benefit.
+
 ## Out of scope (deliberate)
 
 - Raw audio from the app to the GEEKOM (whisper on GEEKOM, Piper TTS) —
