@@ -49,7 +49,12 @@ impl SkillDispatcherHandle {
     }
 
     /// Convenience: fire-and-forget dispatch.
-    pub async fn send(&self, session: SessionId, skill: String, intent: Intent) -> Result<(), SkillError> {
+    pub async fn send(
+        &self,
+        session: SessionId,
+        skill: String,
+        intent: Intent,
+    ) -> Result<(), SkillError> {
         self.dispatch(DispatchRequest {
             session,
             skill,

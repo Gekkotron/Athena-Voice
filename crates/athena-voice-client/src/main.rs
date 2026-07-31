@@ -248,7 +248,12 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(text) = &args.text {
                     println!("→ text  {text:?}");
                     client
-                        .publish(format!("{base}/text"), QoS::AtLeastOnce, false, text.clone())
+                        .publish(
+                            format!("{base}/text"),
+                            QoS::AtLeastOnce,
+                            false,
+                            text.clone(),
+                        )
                         .await?;
                 } else if let Some(pcm) = audio.clone() {
                     #[allow(clippy::cast_precision_loss)]
@@ -288,7 +293,10 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(_) => {}
             Err(e) => {
-                eprintln!("mqtt error: {e} (is the broker up at {}:{}?)", args.host, args.port);
+                eprintln!(
+                    "mqtt error: {e} (is the broker up at {}:{}?)",
+                    args.host, args.port
+                );
                 tokio::time::sleep(Duration::from_millis(300)).await;
             }
         }
@@ -398,7 +406,11 @@ fn record_microphone(secs: u64) -> anyhow::Result<Vec<u8>> {
 
 /// Downmixes interleaved f32 samples to mono and linearly resamples to
 /// 16 kHz s16le bytes.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 fn to_s16le_16k(samples: &[f32], src_rate: u32, channels: u16) -> Vec<u8> {
     let channels = channels.max(1) as usize;
     let mono: Vec<f32> = samples

@@ -212,7 +212,13 @@ impl Store for InMemoryStore {
 }
 
 impl TmpStore for InMemoryStore {
-    fn tmp_set(&self, skill: &str, key: &str, val: Vec<u8>, expires_sec: u64) -> Result<(), StoreError> {
+    fn tmp_set(
+        &self,
+        skill: &str,
+        key: &str,
+        val: Vec<u8>,
+        expires_sec: u64,
+    ) -> Result<(), StoreError> {
         self.tmp_store.tmp_set(skill, key, val, expires_sec)
     }
 

@@ -300,11 +300,7 @@ mod tests {
                 "weather",
             ),
             (
-                rule(
-                    "jeedom.read",
-                    &["quelle est la température du salon"],
-                    &[],
-                ),
+                rule("jeedom.read", &["quelle est la température du salon"], &[]),
                 "fr",
                 "jeedom",
             ),

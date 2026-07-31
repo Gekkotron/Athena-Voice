@@ -40,11 +40,7 @@ async fn skill_retention_ttl_expires_keys() {
         name: SKILL_NAME.into(),
         store: store.clone(),
         mqtt: Arc::new(AsyncClientPublisher(
-            rumqttc::AsyncClient::new(
-                rumqttc::MqttOptions::new("test", "127.0.0.1", 1883),
-                8,
-            )
-            .0,
+            rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("test", "127.0.0.1", 1883), 8).0,
         )),
         http_allowlist: vec!["smoke.local".into()],
         mqtt_publish_allowlist: Vec::new(),

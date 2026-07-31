@@ -151,7 +151,8 @@ mod tests {
     async fn open_and_get() {
         let mgr = SessionManager::default();
         let (sid, sat, loc, tx, text_tx) = state();
-        mgr.open(sid, sat.clone(), loc.clone(), tx, text_tx).unwrap();
+        mgr.open(sid, sat.clone(), loc.clone(), tx, text_tx)
+            .unwrap();
         assert_eq!(mgr.len(), 1);
         let entry = mgr.get(sid).expect("present");
         assert_eq!(entry.sat, sat);
@@ -162,7 +163,8 @@ mod tests {
     async fn open_duplicate_returns_error() {
         let mgr = SessionManager::default();
         let (sid, sat, loc, tx, text_tx) = state();
-        mgr.open(sid, sat.clone(), loc.clone(), tx.clone(), text_tx.clone()).unwrap();
+        mgr.open(sid, sat.clone(), loc.clone(), tx.clone(), text_tx.clone())
+            .unwrap();
         assert!(matches!(
             mgr.open(sid, sat, loc, tx, text_tx),
             Err(SessionExists { .. })

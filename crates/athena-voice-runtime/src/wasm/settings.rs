@@ -44,12 +44,15 @@ mod tests {
         let rows = vec![
             ("base_url".to_string(), "http://db".to_string()),
             ("api_key".to_string(), "s3cret".to_string()),
-            (HTTP_ALLOWLIST_KEY.to_string(), r#"["192.168.1.91"]"#.to_string()),
+            (
+                HTTP_ALLOWLIST_KEY.to_string(),
+                r#"["192.168.1.91"]"#.to_string(),
+            ),
         ];
         let merged = apply_settings(&base, &rows);
-        assert_eq!(merged.config["base_url"], "http://db");     // overridden
-        assert_eq!(merged.config["kept"], "from-toml");         // preserved
-        assert_eq!(merged.config["api_key"], "s3cret");         // added
+        assert_eq!(merged.config["base_url"], "http://db"); // overridden
+        assert_eq!(merged.config["kept"], "from-toml"); // preserved
+        assert_eq!(merged.config["api_key"], "s3cret"); // added
         assert_eq!(merged.http_allowlist, vec!["192.168.1.91"]); // replaced
         assert_eq!(merged.mqtt_publish_allowlist, base.mqtt_publish_allowlist);
         assert_eq!(merged.retention_gc_after_sec, Some(60));

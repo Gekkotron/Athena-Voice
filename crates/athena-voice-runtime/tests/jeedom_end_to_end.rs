@@ -170,7 +170,10 @@ async fn known_sensor_speaks_value_with_unit() {
         spoken.contains("21.5") && spoken.contains("degrés"),
         "spoken: {spoken:?}"
     );
-    assert!(spoken.contains("température du salon"), "spoken: {spoken:?}");
+    assert!(
+        spoken.contains("température du salon"),
+        "spoken: {spoken:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -217,8 +220,5 @@ async fn jeedom_down_speaks_failure_line() {
         .await;
 
     let spoken = drive_utterance(&server.uri(), "capteur humidité de la chambre").await;
-    assert!(
-        spoken.contains("joindre Jeedom"),
-        "spoken: {spoken:?}"
-    );
+    assert!(spoken.contains("joindre Jeedom"), "spoken: {spoken:?}");
 }

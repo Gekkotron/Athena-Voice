@@ -48,7 +48,6 @@ async fn kvs_are_scoped_by_skill() {
         s.skill_kv_get("timer", "k").await.unwrap().as_deref(),
         Some(b"B".as_slice())
     );
-
 }
 
 #[tokio::test]
@@ -58,12 +57,12 @@ async fn skill_kv_gc_deletes_expired_keys() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     // Insert rows with explicit ages; the retention timestamp lives in the
     // `timestamp_sec` column and the value stays verbatim.
     let old_payload = b"old".to_vec();
     let fresh_payload = b"fresh".to_vec();
-    
+
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("test")
         .bind("old")
@@ -72,7 +71,7 @@ async fn skill_kv_gc_deletes_expired_keys() {
         .execute(s.pool())
         .await
         .unwrap();
-    
+
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("test")
         .bind("fresh")
@@ -81,10 +80,10 @@ async fn skill_kv_gc_deletes_expired_keys() {
         .execute(s.pool())
         .await
         .unwrap();
-    
+
     // GC with TTL=5: deletes "old" but keeps "fresh"
     s.skill_kv_gc("test", now_sec - 5).await.unwrap();
-    
+
     assert!(s.skill_kv_get("test", "old").await.unwrap().is_none());
     assert_eq!(
         s.skill_kv_get("test", "fresh").await.unwrap().as_deref(),
@@ -99,10 +98,10 @@ async fn skill_kv_gc_ignores_other_skills() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     // Same-aged key under two skills; GC must only touch the named skill.
     let payload = b"data".to_vec();
-    
+
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("test")
         .bind("key")
@@ -111,7 +110,7 @@ async fn skill_kv_gc_ignores_other_skills() {
         .execute(s.pool())
         .await
         .unwrap();
-    
+
     sqlx::query("INSERT INTO skill_kv (skill, key, timestamp_sec, value) VALUES (?1, ?2, ?3, ?4)")
         .bind("other")
         .bind("key")
@@ -120,10 +119,10 @@ async fn skill_kv_gc_ignores_other_skills() {
         .execute(s.pool())
         .await
         .unwrap();
-    
+
     // GC only affects "test"
     s.skill_kv_gc("test", now_sec - 5).await.unwrap();
-    
+
     assert!(s.skill_kv_get("test", "key").await.unwrap().is_none());
     assert_eq!(
         s.skill_kv_get("other", "key").await.unwrap().as_deref(),
@@ -138,20 +137,21 @@ async fn skill_kv_set_records_timestamp_column() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     // Use the storage layer directly to simulate what the host does
     s.skill_kv_set("test", "key", b"value").await.unwrap();
-    
+
     // Verify the value was stored with the correct timestamp
-    let row: (i64,) = sqlx::query_as("SELECT timestamp_sec FROM skill_kv WHERE skill = ?1 AND key = ?2")
-        .bind("test")
-        .bind("key")
-        .fetch_one(s.pool())
-        .await
-        .unwrap();
-    
+    let row: (i64,) =
+        sqlx::query_as("SELECT timestamp_sec FROM skill_kv WHERE skill = ?1 AND key = ?2")
+            .bind("test")
+            .bind("key")
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+
     assert!(row.0 >= now_sec as i64 - 1); // Allow 1s tolerance
-    
+
     // Verify the value round-trips verbatim.
     let retrieved = s.skill_kv_get("test", "key").await.unwrap();
     assert_eq!(retrieved.as_deref(), Some(b"value".as_slice()));

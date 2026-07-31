@@ -41,13 +41,25 @@ pub fn event_topic(kind: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedTopic {
-    Start { sat: SatelliteId, sid: SessionId },
-    Audio { sat: SatelliteId, sid: SessionId },
+    Start {
+        sat: SatelliteId,
+        sid: SessionId,
+    },
+    Audio {
+        sat: SatelliteId,
+        sid: SessionId,
+    },
     /// Raw UTF-8 utterance injected as a final transcript, bypassing STT.
     /// Lets text-only satellites (and humans testing with `mosquitto_pub`)
     /// drive the intent pipeline without sending audio.
-    Text { sat: SatelliteId, sid: SessionId },
-    End { sat: SatelliteId, sid: SessionId },
+    Text {
+        sat: SatelliteId,
+        sid: SessionId,
+    },
+    End {
+        sat: SatelliteId,
+        sid: SessionId,
+    },
 }
 
 #[must_use]

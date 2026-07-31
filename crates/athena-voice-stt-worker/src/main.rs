@@ -66,8 +66,7 @@ struct SessionBuf {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
     let args = Args::parse();
@@ -170,9 +169,10 @@ async fn handle_message(
         let locale = buf.locale.clone();
         let (bin, model, rate) = (args.whisper_bin.clone(), args.model.clone(), args.rate);
         info!(session = %sid, bytes = pcm.len(), "transcribing utterance");
-        let text = tokio::task::spawn_blocking(move || transcribe(&bin, &model, &locale, rate, &pcm))
-            .await
-            .unwrap_or_else(|e| Err(anyhow::anyhow!("join: {e}")));
+        let text =
+            tokio::task::spawn_blocking(move || transcribe(&bin, &model, &locale, rate, &pcm))
+                .await
+                .unwrap_or_else(|e| Err(anyhow::anyhow!("join: {e}")));
         match text {
             Ok(text) if !text.is_empty() => {
                 info!(session = %sid, text = %text, "transcript");

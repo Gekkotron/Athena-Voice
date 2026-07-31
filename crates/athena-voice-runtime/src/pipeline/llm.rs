@@ -97,8 +97,10 @@ mod tests {
                 _l: Locale,
                 _p: String,
                 _h: Vec<(String, String)>,
-            ) -> Result<athena_voice_core::provider::CompletionStream, athena_voice_core::provider::BoxError>
-            {
+            ) -> Result<
+                athena_voice_core::provider::CompletionStream,
+                athena_voice_core::provider::BoxError,
+            > {
                 Err("connection refused".into())
             }
             fn name(&self) -> &'static str {

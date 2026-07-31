@@ -111,7 +111,9 @@ pub trait SkillPlugin: Send {
     fn pattern_rules(&mut self, locale: &str) -> Result<Vec<PatternRule>, extism::Error>;
     fn handle(&mut self, intent: &Intent) -> Result<SkillResponse, SkillError>;
     /// Returns the `SkillCtx` if this plugin wraps a `ExtismSkillPlugin`.
-    fn ctx(&self) -> Option<&SkillCtx> { None }
+    fn ctx(&self) -> Option<&SkillCtx> {
+        None
+    }
     /// Parsed `config_schema` guest export, if the skill provides one.
     fn config_schema(&mut self) -> Option<ConfigSchema> {
         None
@@ -410,45 +412,45 @@ impl SkillRegistry {
         outcome
     }
 
-/// Dispatch `intent` to the named skill. Unknown-skill and mutex-poison
-/// conditions surface as `SkillError::Custom` so the caller can treat
-/// dispatch as a single unified fail-path.
-pub fn dispatch(&self, skill: &str, intent: Intent) -> Result<SkillResponse, SkillError> {
-    let now_sec = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| SkillError::Custom(format!("time error: {e}")))?
-        .as_secs();
+    /// Dispatch `intent` to the named skill. Unknown-skill and mutex-poison
+    /// conditions surface as `SkillError::Custom` so the caller can treat
+    /// dispatch as a single unified fail-path.
+    pub fn dispatch(&self, skill: &str, intent: Intent) -> Result<SkillResponse, SkillError> {
+        let now_sec = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| SkillError::Custom(format!("time error: {e}")))?
+            .as_secs();
 
-    let plugin = {
-        let plugins = self
-            .plugins
-            .read()
-            .map_err(|_| SkillError::Custom("skills map lock poisoned".into()))?;
-        plugins
-            .get(skill)
-            .cloned()
-            .ok_or_else(|| SkillError::Custom(format!("unknown skill: {skill}")))?
-    };
+        let plugin = {
+            let plugins = self
+                .plugins
+                .read()
+                .map_err(|_| SkillError::Custom("skills map lock poisoned".into()))?;
+            plugins
+                .get(skill)
+                .cloned()
+                .ok_or_else(|| SkillError::Custom(format!("unknown skill: {skill}")))?
+        };
 
-    // GC expired keys if retention is enabled (spawned to avoid blocking)
-    if let Some(ctx) = plugin.lock().unwrap().ctx() {
-        if let Some(gc_sec) = ctx.retention_gc_after_sec {
-            if gc_sec > 0 {
-                let store = ctx.store.clone();
-                let skill_name = skill.to_string();
-                let gc_threshold = now_sec - gc_sec;
-                ctx.tokio.spawn(async move {
-                    let _ = store.skill_kv_gc(&skill_name, gc_threshold).await;
-                });
+        // GC expired keys if retention is enabled (spawned to avoid blocking)
+        if let Some(ctx) = plugin.lock().unwrap().ctx() {
+            if let Some(gc_sec) = ctx.retention_gc_after_sec {
+                if gc_sec > 0 {
+                    let store = ctx.store.clone();
+                    let skill_name = skill.to_string();
+                    let gc_threshold = now_sec - gc_sec;
+                    ctx.tokio.spawn(async move {
+                        let _ = store.skill_kv_gc(&skill_name, gc_threshold).await;
+                    });
+                }
             }
         }
-    }
 
-    let mut guard = plugin
-        .lock()
-        .map_err(|_| SkillError::Custom("skill plugin mutex poisoned".into()))?;
-    guard.handle(&intent)
-}
+        let mut guard = plugin
+            .lock()
+            .map_err(|_| SkillError::Custom("skill plugin mutex poisoned".into()))?;
+        guard.handle(&intent)
+    }
 
     fn rebuild_index(&self) {
         let rules_map = self
@@ -482,29 +484,27 @@ fn build_plugin_from_file(
         .to_string();
     let cfg = deps.per_skill.get(&name).cloned().unwrap_or_default();
     let retention_gc_after_sec = cfg.retention_gc_after_sec;
-let ctx = SkillCtx {
-    name: name.clone(),
-    store: deps.store.clone(),
-    mqtt: Arc::new(AsyncClientPublisher(deps.mqtt.clone())),
-    http_allowlist: cfg.http_allowlist,
-    mqtt_publish_allowlist: cfg.mqtt_publish_allowlist,
-    config: cfg.config,
-    tokio: deps.tokio.clone(),
-    http: deps.http.clone(),
-    retention_gc_after_sec: cfg.retention_gc_after_sec,
-    event_bus: deps.audio_event_tx.clone(),
-    config_file: cfg.config_file,
-};
-let manifest = Manifest::new([Wasm::file(path)]);
-let builder = PluginBuilder::new(manifest)
-.with_wasi(true)
-.with_functions(host_functions(ctx.clone()));
-let plugin = builder
-.build()
-.map_err(|source| RegistryError::Build {
- skill: name.clone(),
- source,
-        })?;
+    let ctx = SkillCtx {
+        name: name.clone(),
+        store: deps.store.clone(),
+        mqtt: Arc::new(AsyncClientPublisher(deps.mqtt.clone())),
+        http_allowlist: cfg.http_allowlist,
+        mqtt_publish_allowlist: cfg.mqtt_publish_allowlist,
+        config: cfg.config,
+        tokio: deps.tokio.clone(),
+        http: deps.http.clone(),
+        retention_gc_after_sec: cfg.retention_gc_after_sec,
+        event_bus: deps.audio_event_tx.clone(),
+        config_file: cfg.config_file,
+    };
+    let manifest = Manifest::new([Wasm::file(path)]);
+    let builder = PluginBuilder::new(manifest)
+        .with_wasi(true)
+        .with_functions(host_functions(ctx.clone()));
+    let plugin = builder.build().map_err(|source| RegistryError::Build {
+        skill: name.clone(),
+        source,
+    })?;
     let plugin: Arc<Mutex<dyn SkillPlugin>> =
         Arc::new(Mutex::new(ExtismSkillPlugin::with_ctx(plugin, ctx)));
     Ok((name, plugin, retention_gc_after_sec))

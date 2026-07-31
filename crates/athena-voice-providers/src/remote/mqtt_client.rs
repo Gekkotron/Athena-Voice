@@ -139,12 +139,12 @@ fn spawn_pump(
                     let Some(sid) = extract_session(&p.payload) else {
                         continue;
                     };
-                    let closed = routes
-                        .get(&sid)
-                        .is_some_and(|sender| matches!(
+                    let closed = routes.get(&sid).is_some_and(|sender| {
+                        matches!(
                             sender.try_send(p),
                             Err(mpsc::error::TrySendError::Closed(_))
-                        ));
+                        )
+                    });
                     // Receiver dropped (stream finished / timed out): drop the
                     // stale route so the map doesn't grow per session.
                     if closed {

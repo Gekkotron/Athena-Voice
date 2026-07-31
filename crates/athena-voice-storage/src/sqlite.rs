@@ -218,8 +218,8 @@ impl Store for SqliteStore {
             .bind(kind)
             .bind(payload)
             .bind(now)
-        .execute(&self.pool)
-        .await?;
+            .execute(&self.pool)
+            .await?;
         Ok::<(), StoreError>(())
     }
 
@@ -305,10 +305,10 @@ impl Store for SqliteStore {
 
     async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError> {
         sqlx::query("DELETE FROM skill_kv WHERE skill = ?1 AND timestamp_sec <= ?2")
-        .bind(skill)
-        .bind(now_sec as i64)
-        .execute(&self.pool)
-        .await?;
+            .bind(skill)
+            .bind(now_sec as i64)
+            .execute(&self.pool)
+            .await?;
         Ok::<(), StoreError>(())
     }
 

@@ -67,8 +67,8 @@ impl Tts for MqttTts {
         // The stream must terminate: on the worker's `done: true` marker, on
         // a per-message timeout (worker died mid-stream), or on channel
         // close. A `done` message may itself carry a final chunk.
-        let audio_stream = futures::stream::unfold((rx, false), move |(mut rx, finished)| {
-            async move {
+        let audio_stream =
+            futures::stream::unfold((rx, false), move |(mut rx, finished)| async move {
                 if finished {
                     return None;
                 }
@@ -102,8 +102,7 @@ impl Tts for MqttTts {
                         }
                     }
                 }
-            }
-        });
+            });
         Ok(Box::pin(audio_stream))
     }
 

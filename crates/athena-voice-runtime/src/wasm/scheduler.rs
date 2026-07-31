@@ -84,8 +84,7 @@ fn timer_expiration_text(payload: &[u8]) -> String {
     struct Payload {
         seconds: u64,
     }
-    let seconds = serde_json::from_slice::<Payload>(payload)
-        .map_or(0, |p| p.seconds);
+    let seconds = serde_json::from_slice::<Payload>(payload).map_or(0, |p| p.seconds);
     format!("le minuteur de {seconds} secondes est terminé.")
 }
 

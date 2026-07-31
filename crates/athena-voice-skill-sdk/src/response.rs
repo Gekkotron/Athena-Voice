@@ -11,14 +11,9 @@ pub enum SkillResponse {
     /// Skill wants the host to consult the LLM with the supplied prompt.
     AskLlm { prompt: String },
     /// Sampled PCM audio (f32) for immediate playback.
-    SampledPcm {
-        sample_rate: u32,
-        samples: Vec<f32>,
-    },
+    SampledPcm { sample_rate: u32, samples: Vec<f32> },
     /// Opus-encoded audio frames for efficient playback.
-    SampledOpus {
-        opus_frames: Vec<u8>,
-    },
+    SampledOpus { opus_frames: Vec<u8> },
     /// Adjust the playback volume (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
     ///
     /// Struct variant on purpose: serde's internally-tagged enums cannot
@@ -43,7 +38,10 @@ impl SkillResponse {
     }
     #[must_use]
     pub fn sampled_pcm(sample_rate: u32, samples: Vec<f32>) -> Self {
-        Self::SampledPcm { sample_rate, samples }
+        Self::SampledPcm {
+            sample_rate,
+            samples,
+        }
     }
     #[must_use]
     pub fn sampled_opus(opus_frames: Vec<u8>) -> Self {
@@ -94,46 +92,52 @@ mod tests {
         assert!(json.contains("\"kind\":\"ask_llm\""));
     }
 
-#[test]
-fn empty_variant_serde() {
-    let r = SkillResponse::empty();
-    let json = serde_json::to_string(&r).unwrap();
-    assert_eq!(json, r#"{"kind":"empty"}"#);
-}
+    #[test]
+    fn empty_variant_serde() {
+        let r = SkillResponse::empty();
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(json, r#"{"kind":"empty"}"#);
+    }
 
-#[test]
-fn sampled_pcm_variant_serde() {
-    let r = SkillResponse::sampled_pcm(48000, vec![0.0, 0.5, -0.5]);
-    let json = serde_json::to_string(&r).unwrap();
-    assert!(json.contains(r#""kind":"sampled_pcm"#));
-    assert!(json.contains(r#""sample_rate":48000"#));
-    assert!(json.contains("0.0"));
-    let back: SkillResponse = serde_json::from_str(&json).unwrap();
-    assert!(matches!(back, SkillResponse::SampledPcm { sample_rate, samples } if sample_rate == 48000 && samples.len() == 3));
-}
+    #[test]
+    fn sampled_pcm_variant_serde() {
+        let r = SkillResponse::sampled_pcm(48000, vec![0.0, 0.5, -0.5]);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains(r#""kind":"sampled_pcm"#));
+        assert!(json.contains(r#""sample_rate":48000"#));
+        assert!(json.contains("0.0"));
+        let back: SkillResponse = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(back, SkillResponse::SampledPcm { sample_rate, samples } if sample_rate == 48000 && samples.len() == 3)
+        );
+    }
 
-#[test]
-fn sampled_opus_variant_serde() {
-    let r = SkillResponse::sampled_opus(vec![0x00, 0xFF, 0x7F]);
-    let json = serde_json::to_string(&r).unwrap();
-    assert!(json.contains(r#""kind":"sampled_opus"#));
-    let back: SkillResponse = serde_json::from_str(&json).unwrap();
-    assert!(matches!(back, SkillResponse::SampledOpus { opus_frames } if opus_frames.len() == 3));
-}
+    #[test]
+    fn sampled_opus_variant_serde() {
+        let r = SkillResponse::sampled_opus(vec![0x00, 0xFF, 0x7F]);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains(r#""kind":"sampled_opus"#));
+        let back: SkillResponse = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(back, SkillResponse::SampledOpus { opus_frames } if opus_frames.len() == 3)
+        );
+    }
 
-#[test]
-fn volume_variant_serde() {
-    let r = SkillResponse::volume(1.2);
-    let json = serde_json::to_string(&r).unwrap();
-    assert!(json.contains(r#""kind":"volume"#));
-    assert!(json.contains("1.2"));
-    let back: SkillResponse = serde_json::from_str(&json).unwrap();
-    assert!(matches!(back, SkillResponse::Volume { level } if (level - 1.2).abs() < f32::EPSILON));
-    // Volume is clamped
-    assert!(
-        matches!(SkillResponse::volume(2.0), SkillResponse::Volume { level } if (level - 1.5).abs() < f32::EPSILON)
-    );
-}
+    #[test]
+    fn volume_variant_serde() {
+        let r = SkillResponse::volume(1.2);
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains(r#""kind":"volume"#));
+        assert!(json.contains("1.2"));
+        let back: SkillResponse = serde_json::from_str(&json).unwrap();
+        assert!(
+            matches!(back, SkillResponse::Volume { level } if (level - 1.2).abs() < f32::EPSILON)
+        );
+        // Volume is clamped
+        assert!(
+            matches!(SkillResponse::volume(2.0), SkillResponse::Volume { level } if (level - 1.5).abs() < f32::EPSILON)
+        );
+    }
 
     #[test]
     fn error_display() {

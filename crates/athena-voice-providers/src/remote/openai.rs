@@ -99,10 +99,7 @@ impl Llm for OpenAiCompatLlm {
         prompt: String,
         _history: Vec<(String, String)>,
     ) -> Result<CompletionStream, BoxError> {
-        let url = format!(
-            "{}/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let body = ChatRequest {
             model: &self.model,
             messages: vec![

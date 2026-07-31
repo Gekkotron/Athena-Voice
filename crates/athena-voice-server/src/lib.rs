@@ -8,7 +8,6 @@ pub use runtime::Runtime;
 
 use std::sync::Arc;
 
-
 mod asr;
 mod hotword;
 mod metrics;

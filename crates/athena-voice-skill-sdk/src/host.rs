@@ -309,8 +309,15 @@ mod guest {
         val: &[u8],
         expires_sec: u64,
     ) -> Result<(), SkillError> {
-        unsafe { host_tmp_set(skill.to_string(), key.to_string(), val.to_vec(), expires_sec) }
-            .map_err(|e| SkillError::HostFn(e.to_string()))
+        unsafe {
+            host_tmp_set(
+                skill.to_string(),
+                key.to_string(),
+                val.to_vec(),
+                expires_sec,
+            )
+        }
+        .map_err(|e| SkillError::HostFn(e.to_string()))
     }
 
     pub(super) fn tmp_get(skill: &str, key: &str) -> Result<Vec<u8>, SkillError> {

@@ -53,33 +53,33 @@ impl MqttPublisher for AsyncClientPublisher {
 /// is a wash.
 #[derive(Clone)]
 pub struct SkillCtx {
- /// Logical skill name — used for tracing spans and for the MQTT ACL
- /// prefix (`athena/skills/<name>/…`).
- pub name: String,
- /// Storage backend, scoped by `Store::skill_kv_{get,set}(&name, …)`.
- pub store: Arc<dyn Store>,
- /// MQTT client shared with the rest of the runtime.
- pub mqtt: Arc<dyn MqttPublisher>,
- /// Allowlisted hosts (bare host names, no scheme) the skill may reach via
- /// `host_http_get_json`.
- pub http_allowlist: Vec<String>,
- /// Extra MQTT publish prefixes/patterns the skill may target beyond its
- /// built-in `athena/skills/<name>/*` namespace. Supports the same wildcard
- /// grammar as MQTT subscriptions (`+` = one level, `#` = tail).
- pub mqtt_publish_allowlist: Vec<String>,
- /// Config map exposed via `host_config_get`.
- pub config: HashMap<String, String>,
- /// Tokio runtime handle used to bridge async runtime APIs (Store, MQTT,
- /// reqwest) from the sync host-fn callback.
- pub tokio: Handle,
- /// Optional TTL in seconds for state keys set by this skill.
- /// Keys older than this are deleted automatically by `host_state_set`.
- pub retention_gc_after_sec: Option<u64>,
- /// Event bus for skill-driven audio playback.
- pub event_bus: tokio::sync::broadcast::Sender<Event>,
- /// Optional INI/TOML config file for skill config.
- /// If provided, `host_config_get` returns its contents as a byte slice.
- pub config_file: Option<String>,
+    /// Logical skill name — used for tracing spans and for the MQTT ACL
+    /// prefix (`athena/skills/<name>/…`).
+    pub name: String,
+    /// Storage backend, scoped by `Store::skill_kv_{get,set}(&name, …)`.
+    pub store: Arc<dyn Store>,
+    /// MQTT client shared with the rest of the runtime.
+    pub mqtt: Arc<dyn MqttPublisher>,
+    /// Allowlisted hosts (bare host names, no scheme) the skill may reach via
+    /// `host_http_get_json`.
+    pub http_allowlist: Vec<String>,
+    /// Extra MQTT publish prefixes/patterns the skill may target beyond its
+    /// built-in `athena/skills/<name>/*` namespace. Supports the same wildcard
+    /// grammar as MQTT subscriptions (`+` = one level, `#` = tail).
+    pub mqtt_publish_allowlist: Vec<String>,
+    /// Config map exposed via `host_config_get`.
+    pub config: HashMap<String, String>,
+    /// Tokio runtime handle used to bridge async runtime APIs (Store, MQTT,
+    /// reqwest) from the sync host-fn callback.
+    pub tokio: Handle,
+    /// Optional TTL in seconds for state keys set by this skill.
+    /// Keys older than this are deleted automatically by `host_state_set`.
+    pub retention_gc_after_sec: Option<u64>,
+    /// Event bus for skill-driven audio playback.
+    pub event_bus: tokio::sync::broadcast::Sender<Event>,
+    /// Optional INI/TOML config file for skill config.
+    /// If provided, `host_config_get` returns its contents as a byte slice.
+    pub config_file: Option<String>,
     /// HTTP client used by `host_http_get_json` — cloning is cheap (internal
     /// `Arc`), so we keep one instance per skill.
     pub http: reqwest::Client,
@@ -259,14 +259,8 @@ pub fn host_functions(ctx: SkillCtx) -> Vec<Function> {
             host_tmp_set,
         )
         .with_namespace("extism:host/user"),
-        Function::new(
-            "host_tmp_get",
-            [PTR, PTR],
-            [PTR],
-            user_data,
-            host_tmp_get,
-        )
-        .with_namespace("extism:host/user"),
+        Function::new("host_tmp_get", [PTR, PTR], [PTR], user_data, host_tmp_get)
+            .with_namespace("extism:host/user"),
     ]
 }
 
@@ -358,33 +352,40 @@ fn host_state_get(
 }
 
 fn host_state_set(
- plugin: &mut CurrentPlugin,
- inputs: &[Val],
- _outputs: &mut [Val],
- ud: UserData<SkillCtx>,
+    plugin: &mut CurrentPlugin,
+    inputs: &[Val],
+    _outputs: &mut [Val],
+    ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
- let key: String = plugin.memory_get_val(&inputs[0])?;
- let val: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
- let (store, name, retention_gc_after_sec, tokio) = with_ctx(&ud, |ctx| {
- (ctx.store.clone(), ctx.name.clone(), ctx.retention_gc_after_sec, ctx.tokio.clone())
- })?;
+    let key: String = plugin.memory_get_val(&inputs[0])?;
+    let val: Vec<u8> = plugin.memory_get_val(&inputs[1])?;
+    let (store, name, retention_gc_after_sec, tokio) = with_ctx(&ud, |ctx| {
+        (
+            ctx.store.clone(),
+            ctx.name.clone(),
+            ctx.retention_gc_after_sec,
+            ctx.tokio.clone(),
+        )
+    })?;
 
- // Write to store and run GC if retention is enabled
- tokio
- .block_on(async move {
- store.skill_kv_set(&name, &key, &val).await?;
- if let Some(ttl) = retention_gc_after_sec {
- let now_sec = std::time::SystemTime::now()
- .duration_since(std::time::UNIX_EPOCH)
- .map_err(|e| extism::Error::msg(e.to_string()))?
- .as_secs();
- store.skill_kv_gc(&name, now_sec.saturating_sub(ttl)).await?;
- }
- Ok::<(), extism::Error>(())
- })
- .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
+    // Write to store and run GC if retention is enabled
+    tokio
+        .block_on(async move {
+            store.skill_kv_set(&name, &key, &val).await?;
+            if let Some(ttl) = retention_gc_after_sec {
+                let now_sec = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| extism::Error::msg(e.to_string()))?
+                    .as_secs();
+                store
+                    .skill_kv_gc(&name, now_sec.saturating_sub(ttl))
+                    .await?;
+            }
+            Ok::<(), extism::Error>(())
+        })
+        .map_err(|e| extism::Error::msg(format!("skill_kv_set failed: {e}")))?;
 
- Ok(())
+    Ok(())
 }
 
 /// Result codes returned in the single `i64` output of `host_mqtt_publish`.
@@ -460,10 +461,7 @@ fn redact_query_values(text: &str, url: &Url) -> String {
 /// Fetches `url` and decodes the body as JSON. Error strings are passed
 /// through [`redact_query_values`] — reqwest embeds the full request URL in
 /// its error text, which would otherwise leak query-string secrets.
-async fn fetch_json(
-    http: &reqwest::Client,
-    url: Url,
-) -> Result<serde_json::Value, HostFnError> {
+async fn fetch_json(http: &reqwest::Client, url: Url) -> Result<serde_json::Value, HostFnError> {
     let resp = http
         .get(url.clone())
         .send()
@@ -528,17 +526,17 @@ fn host_play_pcm(
         .take(len)
         .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap_or_default()))
         .collect::<Vec<_>>();
-    let (tokio, event_bus) = with_ctx(&ud, |ctx| (
-        ctx.tokio.clone(),
-        ctx.event_bus.clone(),
-    ))?;
+    let (tokio, event_bus) = with_ctx(&ud, |ctx| (ctx.tokio.clone(), ctx.event_bus.clone()))?;
     if event_bus.receiver_count() > 0 {
         tokio.block_on(async move {
             let _ = event_bus.send(Event::AudioChunk {
                 session: athena_voice_core::ids::SessionId::new_v4(), // FIXME: Use real session
                 format: AudioFormat::F32le,
                 sample_rate,
-                payload: samples.into_iter().flat_map(|f| f.to_le_bytes().to_vec()).collect(),
+                payload: samples
+                    .into_iter()
+                    .flat_map(|f| f.to_le_bytes().to_vec())
+                    .collect(),
             });
         });
     }
@@ -552,10 +550,7 @@ fn host_play_opus(
     ud: UserData<SkillCtx>,
 ) -> Result<(), extism::Error> {
     let frames: Vec<u8> = plugin.memory_get_val(&inputs[0])?;
-    let (tokio, event_bus) = with_ctx(&ud, |ctx| (
-        ctx.tokio.clone(),
-        ctx.event_bus.clone(),
-    ))?;
+    let (tokio, event_bus) = with_ctx(&ud, |ctx| (ctx.tokio.clone(), ctx.event_bus.clone()))?;
     if event_bus.receiver_count() > 0 {
         tokio.block_on(async move {
             let _ = event_bus.send(Event::AudioChunk {
@@ -579,9 +574,11 @@ fn host_tmp_set(
     let key: String = plugin.memory_get_val(&inputs[1])?;
     let val: Vec<u8> = plugin.memory_get_val(&inputs[2])?;
     let expires_sec: u64 = plugin.memory_get_val(&inputs[3])?;
-    
+
     let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
-    store.tmp_set(&skill, &key, val, expires_sec).map_err(extism::Error::msg)
+    store
+        .tmp_set(&skill, &key, val, expires_sec)
+        .map_err(extism::Error::msg)
 }
 
 fn host_tmp_get(
@@ -592,7 +589,7 @@ fn host_tmp_get(
 ) -> Result<(), extism::Error> {
     let skill: String = plugin.memory_get_val(&inputs[0])?;
     let key: String = plugin.memory_get_val(&inputs[1])?;
-    
+
     let store = with_ctx(&ud, |ctx| ctx.store.clone())?;
     let val = store.tmp_get(&skill, &key).map_err(extism::Error::msg)?;
     let handle = plugin.memory_new(val.unwrap_or_default())?;
@@ -659,22 +656,22 @@ mod tests {
         Arc::new(AsyncClientPublisher(client))
     }
 
-async fn make_ctx(name: &str) -> SkillCtx {
-    let store = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
-    SkillCtx {
-        name: name.into(),
-        store,
-        mqtt: dummy_mqtt(),
-        http_allowlist: vec!["api.example.com".into()],
-        mqtt_publish_allowlist: Vec::new(),
-        config: HashMap::from([("greeting".into(), "bonjour".into())]),
-        tokio: Handle::current(),
-        http: reqwest::Client::new(),
-        retention_gc_after_sec: None,
-        event_bus: tokio::sync::broadcast::channel(32).0,
-        config_file: None,
+    async fn make_ctx(name: &str) -> SkillCtx {
+        let store = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
+        SkillCtx {
+            name: name.into(),
+            store,
+            mqtt: dummy_mqtt(),
+            http_allowlist: vec!["api.example.com".into()],
+            mqtt_publish_allowlist: Vec::new(),
+            config: HashMap::from([("greeting".into(), "bonjour".into())]),
+            tokio: Handle::current(),
+            http: reqwest::Client::new(),
+            retention_gc_after_sec: None,
+            event_bus: tokio::sync::broadcast::channel(32).0,
+            config_file: None,
+        }
     }
-}
 
     #[test]
     fn topic_matches_plus_wildcard_matches_one_level_only() {
@@ -768,10 +765,9 @@ async fn make_ctx(name: &str) -> SkillCtx {
 
     #[test]
     fn redact_query_values_scrubs_secrets_keeps_host_and_path() {
-        let url = Url::parse(
-            "http://jeedom.local/core/api/jeeApi.php?apikey=S3CR3T&type=cmd&id=42",
-        )
-        .unwrap();
+        let url =
+            Url::parse("http://jeedom.local/core/api/jeeApi.php?apikey=S3CR3T&type=cmd&id=42")
+                .unwrap();
         let text = format!("error sending request for url ({url})");
         let out = redact_query_values(&text, &url);
         assert!(!out.contains("S3CR3T"), "secret leaked: {out}");
@@ -796,24 +792,24 @@ async fn make_ctx(name: &str) -> SkillCtx {
     async fn host_functions_expose_expected_names() {
         let ctx = make_ctx("clock").await;
         let fns = host_functions(ctx);
-    let names: Vec<&str> = fns.iter().map(Function::name).collect();
-    assert_eq!(
-        names,
-        vec![
-            "host_log",
-            "host_config_get",
-            "host_local_time",
-            "host_state_get",
-            "host_state_set",
-            "host_mqtt_publish",
-            "host_http_get_json",
-            "host_schedule_mqtt",
-            "host_play_pcm",
-            "host_play_opus",
-            "host_tmp_set",
-            "host_tmp_get",
-        ]
-    );
+        let names: Vec<&str> = fns.iter().map(Function::name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "host_log",
+                "host_config_get",
+                "host_local_time",
+                "host_state_get",
+                "host_state_set",
+                "host_mqtt_publish",
+                "host_http_get_json",
+                "host_schedule_mqtt",
+                "host_play_pcm",
+                "host_play_opus",
+                "host_tmp_set",
+                "host_tmp_get",
+            ]
+        );
         for f in &fns {
             assert_eq!(f.namespace(), Some("extism:host/user"));
         }

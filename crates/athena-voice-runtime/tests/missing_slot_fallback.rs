@@ -2,8 +2,8 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use athena_voice_core::event::LlmFallbackReason as FallbackReason;
 use athena_voice_core::event::Event;
+use athena_voice_core::event::LlmFallbackReason as FallbackReason;
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::types::Transcript;
 use athena_voice_runtime::intent::engine::IntentMatcher;

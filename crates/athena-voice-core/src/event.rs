@@ -112,33 +112,39 @@ pub enum Event {
         skill: String,
         id: i64,
     },
-/// Runtime-emitted "skill wants to speak" notification. The scheduler
-/// task uses this to inject skill-triggered TTS (e.g. timer expiration)
-/// into the router's TTS pipeline without going through the intent
-/// matcher.
-SkillNotify {
-    session: SessionId,
-    skill: String,
-    text: String,
-},
-/// Audio chunk emitted by a skill for immediate playback. The runtime
-/// forwards this to the audio sink via the event bus.
-AudioChunk {
-    session: SessionId,
-    format: AudioFormat,
-    /// Sample rate of the payload in Hz. For Opus this is the nominal
-    /// decode rate (48000).
-    #[serde(default = "default_sample_rate")]
-    sample_rate: u32,
-    payload: Vec<u8>,
-},
-/// A skill requested a playback-volume change
-/// (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
-VolumeChanged { session: SessionId, level: f32 },
-/// The exact text handed to the TTS stage for synthesis — what the
-/// assistant is about to say. Mirrored to satellites so text-capable
-/// clients can display the answer alongside (or instead of) the audio.
-TtsText { session: SessionId, text: String },
+    /// Runtime-emitted "skill wants to speak" notification. The scheduler
+    /// task uses this to inject skill-triggered TTS (e.g. timer expiration)
+    /// into the router's TTS pipeline without going through the intent
+    /// matcher.
+    SkillNotify {
+        session: SessionId,
+        skill: String,
+        text: String,
+    },
+    /// Audio chunk emitted by a skill for immediate playback. The runtime
+    /// forwards this to the audio sink via the event bus.
+    AudioChunk {
+        session: SessionId,
+        format: AudioFormat,
+        /// Sample rate of the payload in Hz. For Opus this is the nominal
+        /// decode rate (48000).
+        #[serde(default = "default_sample_rate")]
+        sample_rate: u32,
+        payload: Vec<u8>,
+    },
+    /// A skill requested a playback-volume change
+    /// (0.0 = mute, 1.0 = nominal, 1.5 = 50% boost).
+    VolumeChanged {
+        session: SessionId,
+        level: f32,
+    },
+    /// The exact text handed to the TTS stage for synthesis — what the
+    /// assistant is about to say. Mirrored to satellites so text-capable
+    /// clients can display the answer alongside (or instead of) the audio.
+    TtsText {
+        session: SessionId,
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,23 +232,32 @@ mod tests {
         assert!(json.contains("\"error\":\"timeout\""));
     }
 
-#[test]
-fn outcome_variants_snake_case() {
-    assert_eq!(serde_json::to_string(&Outcome::Ok).unwrap(), "\"ok\"");
-    assert_eq!(
-        serde_json::to_string(&Outcome::Overloaded).unwrap(),
-        "\"overloaded\""
-    );
-    assert_eq!(
-        serde_json::to_string(&Outcome::Orphaned).unwrap(),
-        "\"orphaned\""
-    );
-}
+    #[test]
+    fn outcome_variants_snake_case() {
+        assert_eq!(serde_json::to_string(&Outcome::Ok).unwrap(), "\"ok\"");
+        assert_eq!(
+            serde_json::to_string(&Outcome::Overloaded).unwrap(),
+            "\"overloaded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Outcome::Orphaned).unwrap(),
+            "\"orphaned\""
+        );
+    }
 
-#[test]
-fn audio_format_snake_case() {
-    assert_eq!(serde_json::to_string(&AudioFormat::S16le).unwrap(), "\"s16le\"");
-    assert_eq!(serde_json::to_string(&AudioFormat::Opus).unwrap(), "\"opus\"");
-    assert_eq!(serde_json::to_string(&AudioFormat::F32le).unwrap(), "\"f32le\"");
-}
+    #[test]
+    fn audio_format_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&AudioFormat::S16le).unwrap(),
+            "\"s16le\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AudioFormat::Opus).unwrap(),
+            "\"opus\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AudioFormat::F32le).unwrap(),
+            "\"f32le\""
+        );
+    }
 }

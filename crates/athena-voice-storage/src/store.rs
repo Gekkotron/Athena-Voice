@@ -61,12 +61,7 @@ pub trait Store: Send + Sync + TmpStore {
 
     async fn skill_kv_get(&self, skill: &str, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
 
-    async fn skill_kv_set(
-        &self,
-        skill: &str,
-        key: &str,
-        value: &[u8],
-    ) -> Result<(), StoreError>;
+    async fn skill_kv_set(&self, skill: &str, key: &str, value: &[u8]) -> Result<(), StoreError>;
 
     async fn skill_kv_gc(&self, skill: &str, now_sec: u64) -> Result<(), StoreError>;
 

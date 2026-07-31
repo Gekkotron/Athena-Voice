@@ -53,8 +53,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
     let args = Args::parse();
@@ -171,7 +170,11 @@ fn synthesize_wav(text: &str, locale: &str, voice: &str, rate: u32) -> anyhow::R
     let status = say.arg("-o").arg(&aiff).arg(text).status()?;
     // Unknown voice: retry with the system default rather than failing.
     if !status.success() {
-        let status = Command::new("say").arg("-o").arg(&aiff).arg(text).status()?;
+        let status = Command::new("say")
+            .arg("-o")
+            .arg(&aiff)
+            .arg(text)
+            .status()?;
         anyhow::ensure!(status.success(), "say failed");
     }
 

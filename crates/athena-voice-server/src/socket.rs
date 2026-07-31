@@ -10,7 +10,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::Framed;
 
-
 use crate::metrics::{record_asr, record_hotword};
 use crate::runtime::Runtime;
 use crate::vad::split_voice_segments;
