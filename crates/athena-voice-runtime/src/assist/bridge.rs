@@ -167,7 +167,6 @@ impl AssistBridge {
         );
 
         info!(%device, session = %sid, "assist: device session opened");
-        let mut barge_rx = self.deps.event_bus.subscribe();
         let mut buf = SentenceBuffer::new();
         // Bumped on every question; tags `answer_deadline` so a sentence
         // flushed for a superseded utterance can't consume a newer
@@ -178,10 +177,10 @@ impl AssistBridge {
         // text.
         let mut answer_deadline: Option<(u64, tokio::time::Instant)> = None;
         // Some(deadline) while `buf` holds an unpunctuated fragment waiting
-        // for the idle flush. Anchored to a fixed instant — rebuilt from
-        // `tokio::time::sleep(IDLE_FLUSH)` on every `select!` iteration, it
-        // would never elapse under any unrelated event-bus traffic (every
-        // session's events wake `barge_rx.recv()` and re-enter the loop).
+        // for the idle flush. Anchored to a fixed instant, not a duration:
+        // the `sleep_until` future is reconstructed from this stored
+        // `Instant` on every `select!` iteration, so it still elapses at
+        // the right time regardless of how many other arms fire first.
         let mut flush_deadline: Option<tokio::time::Instant> = None;
         let mut idle_deadline = tokio::time::Instant::now() + self.init.session_idle;
 
@@ -201,25 +200,6 @@ impl AssistBridge {
                     warn!(%device, "assist: no answer within timeout; releasing loader");
                     self.publish_status(&status_topic, "done").await;
                     answer_deadline = None;
-                }
-                ev = barge_rx.recv() => {
-                    if matches!(ev, Ok(Event::BargeIn { session, .. }) if session == sid) {
-                        // Drop the buffered fragment: the previous response
-                        // is dead. NB: we deliberately do NOT also drain
-                        // `tok_rx` here — the router emits BargeIn on every
-                        // second-and-later question in a session (it only
-                        // tracks "was prior work forwarded", not "has it
-                        // finished"), including the common case where Q1's
-                        // answer already completed. This event can arrive
-                        // after Q2's own LLM tokens have already started
-                        // flowing; draining here would risk dropping THIS
-                        // question's legitimate answer. The per-question
-                        // drain in the `question_rx` arm below is the
-                        // deterministic guard against stale content (C5).
-                        buf.clear();
-                        flush_deadline = None;
-                    }
-                    // Lagged/closed/other events: ignore.
                 }
                 () = async {
                     match flush_deadline {

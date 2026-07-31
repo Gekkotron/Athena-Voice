@@ -1,4 +1,5 @@
 [toolchain]
 channel = "1.95"
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
+targets = ["wasm32-wasip1"]
 profile = "minimal"

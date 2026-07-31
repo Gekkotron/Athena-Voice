@@ -94,21 +94,30 @@ over MQTT — no audio stack, no whisper, no TTS engine on the server.
 
     # once: Rust + a C toolchain
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    sudo apt install build-essential pkg-config libasound2-dev
+    sudo apt install build-essential pkg-config libasound2-dev libssl-dev
 
 `libasound2-dev` is required even though the assist profile itself doesn't
 touch audio: the workspace builds `athena-voice-client`'s audio pieces
 along with everything else, and that crate links ALSA on Linux.
+`libssl-dev` is required by the MQTT stack's native-tls dependency (Linux
+only; GitHub's CI runners preinstall it, a fresh box won't).
 
     git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
-    for s in skills-smoke-test skills-weather skills-timer skills-jeedom; do ./$s/build.sh; done
+    for s in skills-smoke-test skills-weather skills-jeedom; do ./$s/build.sh; done
 
     # point [mqtt] host at your LAN broker, then:
     cargo run --release -p athena-voice-cli -- serve --config athena.assist.toml
 
 `rustup` reads `rust-toolchain.toml` and installs the pinned Rust version
-automatically on first `cargo` invocation — no manual toolchain step
-needed. Each `build.sh` above drops its `.wasm` straight into `skills/`.
+automatically on first `cargo` invocation — `targets = ["wasm32-wasip1"]`
+in that file makes it install the wasm target too (every `build.sh` above,
+and even a plain `cargo run`, builds for it). Each `build.sh` drops its
+`.wasm` straight into `skills/`.
+
+`skills-timer` is deliberately left out of this build loop: setting a
+timer works, but the expiry announcement needs scheduler wiring that
+`serve` does not yet spawn in production (tracked in `PLAN.md`), so it
+would never ring.
 
 Broker credentials never live in the TOML: set `username` there and pass
 `ATHENA__MQTT__PASSWORD=...` in the environment (any `[mqtt]` field can be

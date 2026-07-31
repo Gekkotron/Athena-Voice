@@ -57,6 +57,27 @@ fn merge_db_settings(
     merged
 }
 
+/// Bounded TCP probe of an MQTT broker address, used to fail fast at
+/// startup when `[assist]` is enabled: rumqttc connects lazily and would
+/// otherwise warn-loop forever against an unreachable/misconfigured
+/// broker, with `serve` looking "up" the whole time.
+async fn probe_mqtt_broker(host: &str, port: u16) -> anyhow::Result<()> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "MQTT broker unreachable at {host}:{port} — check [mqtt] in your config (timed out after 5s)"
+        )
+    })?
+    .map_err(|e| {
+        anyhow::anyhow!("MQTT broker unreachable at {host}:{port} — check [mqtt] in your config: {e}")
+    })?;
+    Ok(())
+}
+
 /// Ensures the one-time admin token exists (printing it on first run) and
 /// spawns the admin web UI as a background task on `cfg.server.{host,port}`.
 async fn spawn_admin_ui(
@@ -169,6 +190,10 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
 
     if let Some(a) = cfg.assist.as_ref().filter(|a| a.enabled) {
         tracing::info!(prefix = %a.topic_prefix, locale = %a.locale.as_str(), "assist bridge enabled");
+        // Fail fast rather than warn-looping forever against a wrong
+        // [mqtt] host: voice-mode users may deliberately start serve
+        // before the broker is up, so only probe when assist is enabled.
+        probe_mqtt_broker(&cfg.mqtt.host, cfg.mqtt.port).await?;
     }
 
     let runtime = Runtime::spawn(
@@ -187,4 +212,40 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     tracing::info!("shutting down");
     runtime.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::probe_mqtt_broker;
+
+    #[tokio::test]
+    async fn probe_succeeds_against_a_live_listener() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Keep the listener alive for the duration of the probe.
+        drop(tokio::spawn(async move {
+            let _ = listener.accept().await;
+        }));
+
+        probe_mqtt_broker("127.0.0.1", port)
+            .await
+            .expect("probe must succeed against a reachable listener");
+    }
+
+    #[tokio::test]
+    async fn probe_fails_against_a_refused_port() {
+        // Bind to grab a free ephemeral port, then drop the listener so
+        // the port refuses the connection instead of accepting it.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let err = probe_mqtt_broker("127.0.0.1", port)
+            .await
+            .expect_err("probe must fail against a port nothing listens on");
+        assert!(
+            err.to_string().contains("MQTT broker unreachable"),
+            "error message must be actionable: {err}"
+        );
+    }
 }
