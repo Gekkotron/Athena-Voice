@@ -46,15 +46,13 @@ pub struct SatelliteDeps {
 /// session (spawning the full pipeline) or routes frames to an existing one.
 pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
     tokio::spawn(async move {
-        // Subscribe to the satellite wildcard + transcript egress feedback.
-        if let Err(e) = deps
-            .mqtt
-            .subscribe(topics::sat_wildcard(), QoS::AtLeastOnce)
-            .await
-        {
-            warn!(error = %e, "satellite subscribe failed");
-            return;
-        }
+        // Satellite (+ assist, when present) wildcards are (re)subscribed on
+        // every `ConnAck` below — that fires on the first connect too, so
+        // there is no separate startup subscribe here. rumqttc 0.24's
+        // `MqttState::clean()` re-queues only Publish/PubRel on reconnect,
+        // NOT prior Subscribe packets, so without this a broker restart
+        // (clean session is the default) would silently and permanently
+        // drop both subscriptions.
 
         // Spawn transcript egress: subscribes to the event bus and republishes
         // TranscriptPartial/TranscriptFinal onto athena/sat/<sat>/session/<sid>/transcript.
@@ -74,11 +72,14 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
                 }
             };
             match poll_result {
+                Ok(rumqttc::Event::Incoming(rumqttc::Incoming::ConnAck(_))) => {
+                    resubscribe(&deps).await;
+                }
                 Ok(rumqttc::Event::Incoming(rumqttc::Incoming::Publish(p))) => {
-                    if let Some(bridge) = &deps.assist {
-                        if bridge.handle(&p.topic, &p.payload) {
-                            continue;
-                        }
+                    if let Some(bridge) = &deps.assist
+                        && bridge.handle(&p.topic, &p.payload)
+                    {
+                        continue;
                     }
                     handle_publish(&deps, &p.topic, &p.payload);
                 }
@@ -106,6 +107,31 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
         }
         egress_task.abort();
     })
+}
+
+/// (Re)issues the satellite wildcard subscribe (+ the assist wildcard, when
+/// a bridge is configured) after every `ConnAck` — the only point at which
+/// rumqttc guarantees the broker has (re)established a session, whether
+/// this is the first connect or a reconnect following a broker restart.
+async fn resubscribe(deps: &SatelliteDeps) {
+    if let Err(e) = deps
+        .mqtt
+        .subscribe(topics::sat_wildcard(), QoS::AtLeastOnce)
+        .await
+    {
+        warn!(error = %e, "satellite subscribe failed");
+    }
+    let assist = deps.assist.is_some();
+    if let Some(bridge) = &deps.assist {
+        let wildcard = bridge.transcription_wildcard();
+        if let Err(e) = deps.mqtt.subscribe(wildcard, QoS::AtMostOnce).await {
+            warn!(error = %e, "assist subscribe failed");
+        }
+    }
+    info!(
+        assist,
+        "mqtt session (re)established; subscriptions (re)issued"
+    );
 }
 
 fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {

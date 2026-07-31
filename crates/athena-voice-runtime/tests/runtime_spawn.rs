@@ -53,6 +53,13 @@ async fn spawn_and_shutdown_are_clean() {
     // panicking.
 }
 
+// Compile/wiring smoke guard: `Runtime` does not expose the bridge it
+// builds internally, so this only proves `Some(AssistInit)` doesn't break
+// spawn or a clean shutdown. Full assist routing behavior (transcription ->
+// answer, foreign-topic passthrough, device-actor lifecycle) is proven in
+// `assist::bridge::tests`; an MQTT-driven assist end-to-end test, like the
+// other `*_end_to_end` integration tests in this crate, is deferred to a
+// follow-up task.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawn_with_assist_bridge_is_clean() {
     let factory = Arc::new(
@@ -86,5 +93,10 @@ async fn spawn_with_assist_bridge_is_clean() {
         std::time::Duration::from_secs(120),
     )
     .expect("spawn with assist");
-    runtime.shutdown.cancel();
+
+    assert!(runtime.sessions.is_empty());
+
+    // Await the real teardown path (not just cancelling the token) so a
+    // hang introduced by the assist wiring would fail this test.
+    runtime.shutdown().await;
 }

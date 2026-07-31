@@ -151,8 +151,12 @@ impl Runtime {
             ),
         };
 
+        // Subscribing here (rather than firing a one-shot task) would race
+        // the satellite loop's own subscribe-on-ConnAck handling below; the
+        // bridge's wildcard is (re)subscribed there instead, on every
+        // connect and reconnect.
         let assist_bridge = assist.map(|init| {
-            let bridge = assist::AssistBridge::new(
+            assist::AssistBridge::new(
                 init,
                 assist::AssistDeps {
                     publisher: Arc::new(wasm::host_fns::AsyncClientPublisher(client.tx.clone())),
@@ -163,16 +167,7 @@ impl Runtime {
                     event_bus: event_bus.sender(),
                     shutdown: shutdown.clone(),
                 },
-            );
-            let wildcard = bridge.transcription_wildcard();
-            let mqtt = client.tx.clone();
-            drop(tokio::spawn(async move {
-                // Queued like the satellite subscribe; rumqttc retries on reconnect.
-                if let Err(e) = mqtt.subscribe(wildcard, rumqttc::QoS::AtMostOnce).await {
-                    tracing::warn!(error = %e, "assist subscribe failed");
-                }
-            }));
-            bridge
+            )
         });
 
         let deps = SatelliteDeps {
