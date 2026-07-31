@@ -26,6 +26,12 @@ pub fn spawn_tts(
     tokio::spawn(async move {
         let mut buf = SentenceBuffer::new();
         let mut seq: u32 = 0;
+        // Some(deadline) while `buf` holds an unpunctuated fragment waiting
+        // for the idle flush. Anchored to a fixed instant — a `sleep`
+        // rebuilt from `IDLE_FLUSH` on every `select!` iteration would never
+        // elapse under any unrelated event-bus traffic, since every
+        // session's events wake `barge_rx.recv()` and re-enter the loop.
+        let mut flush_deadline: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
                 () = cancel.cancelled() => break,
@@ -33,11 +39,18 @@ pub fn spawn_tts(
                     if is_barge_in_for(&ev, session) {
                         // Drop queued text: the previous response is dead.
                         buf.clear();
+                        flush_deadline = None;
                     }
                     // Ignore lag / other events — a lagged BargeIn is a corner
                     // case that only fires under extreme event-bus pressure.
                 }
-                () = tokio::time::sleep(IDLE_FLUSH), if !buf.is_empty() => {
+                () = async {
+                    match flush_deadline {
+                        Some(d) => tokio::time::sleep_until(d).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    flush_deadline = None;
                     if let Some(sentence) = buf.take() {
                         seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                     }
@@ -49,8 +62,14 @@ pub fn spawn_tts(
                         }
                         break;
                     };
-                    if let Some(sentence) = buf.push(&tok) {
-                        seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                    match buf.push(&tok) {
+                        Some(sentence) => {
+                            flush_deadline = None;
+                            seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                        }
+                        None => {
+                            flush_deadline = Some(tokio::time::Instant::now() + IDLE_FLUSH);
+                        }
                     }
                 }
             }
