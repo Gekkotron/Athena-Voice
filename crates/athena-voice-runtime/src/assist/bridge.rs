@@ -292,16 +292,33 @@ impl AssistBridge {
         // Anything that arrived in the reap window between our last
         // `question_rx.recv()` and the removal above looked routable (the
         // map entry was still live), so a caller's `try_send` succeeded
-        // into a receiver nobody will ever poll again. Drain it and
-        // re-route each leftover — now that our entry is gone, routing
-        // spawns a fresh actor to answer it.
+        // into a receiver nobody will ever poll again. Drain it.
         question_rx.close();
         let mut leftover = Vec::new();
         while let Ok(text) = question_rx.try_recv() {
             leftover.push(text);
         }
-        for text in leftover {
-            self.route(&device, text);
+        if !leftover.is_empty() {
+            if self.deps.shutdown.is_cancelled() {
+                // Global shutdown: re-routing would spawn a fresh actor
+                // whose own (child) cancel token is already cancelled,
+                // which immediately re-exits into this same drain —
+                // unbounded spawn churn. Drop the leftovers; the
+                // pending-`done` publish above already released the
+                // loader.
+                warn!(
+                    %device,
+                    count = leftover.len(),
+                    "assist: dropping leftover question(s) during shutdown"
+                );
+            } else {
+                // Non-shutdown exit (idle reap, dead downstream channel):
+                // our entry is gone, so routing spawns a fresh actor to
+                // answer it.
+                for text in leftover {
+                    self.route(&device, text);
+                }
+            }
         }
 
         cancel.cancel();
@@ -438,6 +455,7 @@ mod tests {
         publisher: Arc<RecordingPublisher>,
         session_idle: Duration,
         llm_override: Option<Arc<dyn Llm>>,
+        shutdown: CancellationToken,
     ) -> Arc<AssistBridge> {
         let mut factory = ProviderFactory::build(
             &ProviderConfig {
@@ -467,13 +485,19 @@ mod tests {
                 rules: Arc::new(ArcSwap::from_pointee(RuleIndex::new())),
                 dispatcher: None,
                 event_bus: event_tx,
-                shutdown: CancellationToken::new(),
+                shutdown,
             },
         )
     }
 
     async fn bridge_with(publisher: Arc<RecordingPublisher>) -> Arc<AssistBridge> {
-        build_bridge(publisher, Duration::from_secs(120), None).await
+        build_bridge(
+            publisher,
+            Duration::from_secs(120),
+            None,
+            CancellationToken::new(),
+        )
+        .await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -572,7 +596,13 @@ mod tests {
         // `idle_deadline` resets only on question arrival, not on answer
         // completion, so this must comfortably exceed `IDLE_FLUSH` (800 ms)
         // or the actor would reap before its own answer ever flushes.
-        let bridge = build_bridge(publisher.clone(), Duration::from_secs(2), None).await;
+        let bridge = build_bridge(
+            publisher.clone(),
+            Duration::from_secs(2),
+            None,
+            CancellationToken::new(),
+        )
+        .await;
 
         assert!(bridge.handle(
             "assist/transcription/pixel",
@@ -612,6 +642,7 @@ mod tests {
             publisher.clone(),
             Duration::from_secs(120),
             Some(Arc::new(SilentLlm)),
+            CancellationToken::new(),
         )
         .await;
 
@@ -703,5 +734,53 @@ mod tests {
             1,
             "Q2 must publish exactly one done: {second_batch:?}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_drops_leftovers_instead_of_respawn_churn() {
+        let publisher = RecordingPublisher::new();
+        let shutdown = CancellationToken::new();
+        let bridge = build_bridge(
+            publisher.clone(),
+            Duration::from_secs(120),
+            None,
+            shutdown.clone(),
+        )
+        .await;
+
+        assert!(bridge.handle(
+            "assist/transcription/pixel",
+            br#"{"text": "quelle heure est-il"}"#
+        ));
+        // Cancel immediately — before the actor is guaranteed to have even
+        // taken its first `select!` turn, so its own `cancel` token (a
+        // child of `shutdown`) is very likely already cancelled by the
+        // time it runs, exercising exactly the shutdown-vs-question_rx
+        // race the fix targets.
+        shutdown.cancel();
+
+        // Give everything (actor exit, any leftover drop/warn, any
+        // pending-done publish) time to settle.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            bridge.devices.len(),
+            0,
+            "shutdown must leave no live device entries"
+        );
+        let settled = publisher.published.lock().unwrap().len();
+
+        // Without the fix, a leftover question re-routed during shutdown
+        // spawns a fresh actor whose own child token is already
+        // cancelled, which (depending on `select!`'s race) can publish
+        // another spurious in-progress/done before repeating the same
+        // drain — churning indefinitely. Assert the publish count has
+        // genuinely stabilized rather than still growing.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let still = publisher.published.lock().unwrap().len();
+        assert_eq!(
+            settled, still,
+            "no further publishes should occur after shutdown settles — spawn churn detected"
+        );
+        assert_eq!(bridge.devices.len(), 0);
     }
 }
