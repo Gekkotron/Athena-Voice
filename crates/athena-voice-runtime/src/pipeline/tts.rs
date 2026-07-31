@@ -11,14 +11,7 @@ use athena_voice_core::event::Event;
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::provider::Tts;
 
-fn is_sentence_boundary(c: char) -> bool {
-    matches!(c, '.' | '!' | '?')
-}
-
-/// Buffered text with no sentence boundary is flushed after this much
-/// token-channel silence — LLM answers don't reliably end in punctuation
-/// ("je ne sais pas"), and without this they would never be spoken.
-const IDLE_FLUSH: std::time::Duration = std::time::Duration::from_millis(800);
+use crate::pipeline::sentence::{IDLE_FLUSH, SentenceBuffer};
 
 pub fn spawn_tts(
     session: SessionId,
@@ -31,7 +24,7 @@ pub fn spawn_tts(
 ) -> JoinHandle<()> {
     let mut barge_rx = event_tx.subscribe();
     tokio::spawn(async move {
-        let mut buf = String::new();
+        let mut buf = SentenceBuffer::new();
         let mut seq: u32 = 0;
         loop {
             tokio::select! {
@@ -44,29 +37,20 @@ pub fn spawn_tts(
                     // Ignore lag / other events — a lagged BargeIn is a corner
                     // case that only fires under extreme event-bus pressure.
                 }
-                () = tokio::time::sleep(IDLE_FLUSH), if !buf.trim().is_empty() => {
-                    // Token channel went quiet mid-sentence: speak what we have.
-                    seq = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
-                    buf.clear();
+                () = tokio::time::sleep(IDLE_FLUSH), if !buf.is_empty() => {
+                    if let Some(sentence) = buf.take() {
+                        seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                    }
                 }
                 maybe = token_rx.recv() => {
                     let Some(tok) = maybe else {
-                        // Drain remaining buffered text as one final sentence.
-                        if !buf.trim().is_empty() {
-                            let _ = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                        if let Some(sentence) = buf.take() {
+                            let _ = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                         }
                         break;
                     };
-                    // Tokens are VERBATIM text fragments — producers own their
-                    // spacing. LLMs stream sub-word pieces ("Le", " temps"),
-                    // so inserting separators here would corrupt the text.
-                    buf.push_str(&tok);
-                    // Flush on sentence boundary or when buffer is large.
-                    let should_flush = buf.trim_end().chars().last().is_some_and(is_sentence_boundary)
-                        || buf.len() >= 100;
-                    if should_flush && !buf.trim().is_empty() {
-                        seq = flush(&tts, session, &locale, buf.trim(), seq, &chunk_tx, &event_tx, &mut barge_rx).await;
-                        buf.clear();
+                    if let Some(sentence) = buf.push(&tok) {
+                        seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                     }
                 }
             }
