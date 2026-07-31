@@ -163,6 +163,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         runtime_mqtt,
         factory,
         skills,
+        None, // TODO(task 6): wire [assist] config into AssistInit
         std::time::Duration::from_secs(cfg.server.session_idle_secs),
     )?;
     tracing::info!("runtime spawned; awaiting SIGINT");

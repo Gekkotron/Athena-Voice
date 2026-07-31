@@ -13,6 +13,7 @@ use athena_voice_core::ids::{Locale, SatelliteId, SessionId};
 use athena_voice_core::types::{AudioFrame, Transcript};
 use athena_voice_providers::ProviderFactory;
 
+use crate::assist::AssistBridge;
 use crate::intent::{IntentMatcher, RuleIndex};
 use crate::mqtt::topics::{self, ParsedTopic};
 use crate::pipeline::router::RouterDeps;
@@ -34,6 +35,9 @@ pub struct SatelliteDeps {
     /// Skill dispatcher — when present, matched intents route through the
     /// skill instead of falling back to the LLM.
     pub dispatcher: Option<SkillDispatcherHandle>,
+    /// Text-question bridge for the home-automation app; `None` when the
+    /// `[assist]` config block is absent.
+    pub assist: Option<Arc<AssistBridge>>,
     pub shutdown: CancellationToken,
 }
 
@@ -71,6 +75,11 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
             };
             match poll_result {
                 Ok(rumqttc::Event::Incoming(rumqttc::Incoming::Publish(p))) => {
+                    if let Some(bridge) = &deps.assist {
+                        if bridge.handle(&p.topic, &p.payload) {
+                            continue;
+                        }
+                    }
                     handle_publish(&deps, &p.topic, &p.payload);
                 }
                 Ok(_) => {}

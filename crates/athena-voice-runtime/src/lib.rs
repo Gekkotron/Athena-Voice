@@ -94,6 +94,7 @@ impl Runtime {
         mqtt_cfg: MqttConfig,
         factory: Arc<ProviderFactory>,
         skills: Option<SkillsInit>,
+        assist: Option<assist::AssistInit>,
         session_idle: std::time::Duration,
     ) -> Result<Self, RuntimeError> {
         let client = MqttClient::connect(mqtt_cfg)?;
@@ -150,6 +151,30 @@ impl Runtime {
             ),
         };
 
+        let assist_bridge = assist.map(|init| {
+            let bridge = assist::AssistBridge::new(
+                init,
+                assist::AssistDeps {
+                    publisher: Arc::new(wasm::host_fns::AsyncClientPublisher(client.tx.clone())),
+                    factory: factory.clone(),
+                    matcher: matcher.clone(),
+                    rules: rules.clone(),
+                    dispatcher: dispatcher.clone(),
+                    event_bus: event_bus.sender(),
+                    shutdown: shutdown.clone(),
+                },
+            );
+            let wildcard = bridge.transcription_wildcard();
+            let mqtt = client.tx.clone();
+            drop(tokio::spawn(async move {
+                // Queued like the satellite subscribe; rumqttc retries on reconnect.
+                if let Err(e) = mqtt.subscribe(wildcard, rumqttc::QoS::AtMostOnce).await {
+                    tracing::warn!(error = %e, "assist subscribe failed");
+                }
+            }));
+            bridge
+        });
+
         let deps = SatelliteDeps {
             mqtt: client.tx.clone(),
             event_loop: client.event_loop.clone(),
@@ -159,6 +184,7 @@ impl Runtime {
             matcher,
             rules,
             dispatcher,
+            assist: assist_bridge,
             shutdown: shutdown.clone(),
         };
         let satellite_task = spawn_satellite(deps);
