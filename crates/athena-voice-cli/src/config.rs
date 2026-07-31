@@ -24,6 +24,8 @@ pub struct Config {
     pub providers: ProviderConfig,
     #[serde(default)]
     pub skills: SkillsConfig,
+    #[serde(default)]
+    pub assist: Option<AssistConfig>,
 }
 
 /// `[skills]` section: WASM skill loader configuration.
@@ -71,6 +73,31 @@ pub struct PerSkillConfig {
     /// `host_config_get` (takes precedence over the `config` map).
     #[serde(default)]
     pub config_file: Option<String>,
+}
+
+/// `[assist]` section: text bridge for the owner's home-automation app.
+/// Absent block = bridge off; `enabled = false` also turns it off without
+/// deleting the section.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AssistConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_assist_prefix")]
+    pub topic_prefix: String,
+    #[serde(default = "default_assist_locale")]
+    pub locale: Locale,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_assist_prefix() -> String {
+    "assist".into()
+}
+
+fn default_assist_locale() -> Locale {
+    Locale::new("fr").expect("static locale")
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -212,5 +239,62 @@ config = { units = "metric" }
             weather.config.get("units").map(String::as_str),
             Some("metric")
         );
+    }
+
+    #[test]
+    fn parses_assist_block_and_defaults() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+locales = ["fr"]
+[server]
+host = "0.0.0.0"
+port = 8080
+[storage]
+database_url = "sqlite::memory:"
+[mqtt]
+host = "127.0.0.1"
+port = 1883
+client_id = "test"
+[providers]
+stt = "fake"
+llm = "fake"
+tts = "fake"
+[assist]
+enabled = true
+"#,
+        )
+        .unwrap();
+        let cfg = load(tmp.path()).unwrap();
+        let assist = cfg.assist.expect("assist block parsed");
+        assert!(assist.enabled);
+        assert_eq!(assist.topic_prefix, "assist");
+        assert_eq!(assist.locale.as_str(), "fr");
+    }
+
+    #[test]
+    fn missing_assist_block_is_none() {
+        // athena.example.toml has no [assist] block.
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let cfg = load(&repo_root.join("athena.example.toml")).expect("example parses");
+        assert!(cfg.assist.is_none());
+    }
+
+    #[test]
+    fn parses_assist_profile_toml() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let cfg = load(&repo_root.join("athena.assist.toml")).expect("assist profile parses");
+        assert!(cfg.assist.is_some());
+        let assist = cfg.assist.unwrap();
+        assert!(assist.enabled);
+        assert_eq!(assist.topic_prefix, "assist");
+        assert_eq!(assist.locale.as_str(), "fr");
     }
 }

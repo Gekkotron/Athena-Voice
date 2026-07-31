@@ -159,11 +159,23 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         disabled,
     });
 
+    let assist = cfg.assist.as_ref().filter(|a| a.enabled).map(|a| {
+        athena_voice_runtime::assist::AssistInit {
+            topic_prefix: a.topic_prefix.clone(),
+            locale: a.locale.clone(),
+            session_idle: std::time::Duration::from_secs(cfg.server.session_idle_secs),
+        }
+    });
+
+    if let Some(a) = cfg.assist.as_ref().filter(|a| a.enabled) {
+        tracing::info!(prefix = %a.topic_prefix, locale = %a.locale.as_str(), "assist bridge enabled");
+    }
+
     let runtime = Runtime::spawn(
         runtime_mqtt,
         factory,
         skills,
-        None, // TODO(task 6): wire [assist] config into AssistInit
+        assist,
         std::time::Duration::from_secs(cfg.server.session_idle_secs),
     )?;
     tracing::info!("runtime spawned; awaiting SIGINT");

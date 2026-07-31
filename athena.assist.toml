@@ -1,0 +1,46 @@
+# Athena-Voice — GEEKOM / home-server profile.
+#
+# One process, no audio: questions arrive as TEXT from the DomoticApp
+# (on-device speech recognition) via the LAN MQTT broker, answers go back
+# as TEXT and are spoken by the phone. No STT/TTS worker needed; the
+# "fake" providers below are never invoked for assist sessions.
+#
+# Fill in [mqtt] host with your broker's LAN address. If the broker needs
+# credentials, set username here and pass the password via the environment:
+#   ATHENA__MQTT__PASSWORD=... athena-voice-cli serve --config athena.assist.toml
+
+locales = ["fr", "en"]
+
+[server]
+host = "0.0.0.0"          # admin web UI
+port = 8080
+session_idle_secs = 120
+
+[storage]
+database_url = "sqlite://athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "192.168.1.2"      # <-- your LAN broker
+port = 1883
+client_id = "athena-voice"
+# username = "athena"
+
+[providers]
+stt = "fake"              # unused by the assist bridge
+llm = "none"              # unmatched questions get a spoken capabilities answer
+tts = "fake"              # unused by the assist bridge
+
+[assist]
+enabled = true
+topic_prefix = "assist"
+locale = "fr"
+
+[skills]
+dir = "./skills"
+
+[skills.weather]
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+
+[skills.jeedom]
+# Configure base_url/api_key via the admin web UI (stored in SQLite, not here).
+http_allowlist = []
