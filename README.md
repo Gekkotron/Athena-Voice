@@ -87,6 +87,64 @@ then `cargo run -p athena-voice-cli -- serve --config <config>`.
 Skills can describe their settings by exporting `config_schema` (see
 `skills-jeedom/src/lib.rs`); skills without it get a raw key/value editor.
 
+## Run on a Linux box (GEEKOM / home server)
+
+The assist profile answers **text** questions from a home-automation app
+over MQTT — no audio stack, no whisper, no TTS engine on the server.
+
+    # once: Rust + a C toolchain
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    sudo apt install build-essential pkg-config libasound2-dev
+
+`libasound2-dev` is required even though the assist profile itself doesn't
+touch audio: the workspace builds `athena-voice-client`'s audio pieces
+along with everything else, and that crate links ALSA on Linux.
+
+    git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
+    for s in skills-smoke-test skills-weather skills-timer skills-jeedom; do ./$s/build.sh; done
+
+    # point [mqtt] host at your LAN broker, then:
+    cargo run --release -p athena-voice-cli -- serve --config athena.assist.toml
+
+`rustup` reads `rust-toolchain.toml` and installs the pinned Rust version
+automatically on first `cargo` invocation — no manual toolchain step
+needed. Each `build.sh` above drops its `.wasm` straight into `skills/`.
+
+Broker credentials never live in the TOML: set `username` there and pass
+`ATHENA__MQTT__PASSWORD=...` in the environment (any `[mqtt]` field can be
+overridden as `ATHENA__MQTT__<FIELD>`). Subscriptions survive broker
+restarts — the bridge resubscribes automatically on reconnect.
+
+### Talking to it (DomoticApp protocol)
+
+| Topic | Direction | Payload |
+| --- | --- | --- |
+| `assist/transcription/{device}` | app → Athena | `{"text": "quelle heure est-il"}` |
+| `assist/tts/{device}` | Athena → app | `{"text": "il est 15 h 14"}` (one message per sentence) |
+| `assist/llm/{device}/status` | Athena → app | `{"status": "in progress"}` then `{"status": "done"}` |
+
+Try it without the app:
+
+    mosquitto_sub -h <broker> -t 'assist/tts/#' -v &
+    mosquitto_pub -h <broker> -t assist/transcription/cli \
+      -m '{"text": "quelle heure est-il"}'
+
+### Keep it running (systemd)
+
+    # /etc/systemd/system/athena-voice.service
+    [Unit]
+    Description=Athena-Voice assist bridge
+    After=network-online.target
+
+    [Service]
+    WorkingDirectory=/home/<you>/Athena-Voice
+    Environment=ATHENA__MQTT__PASSWORD=<secret>   # or use an EnvironmentFile
+    ExecStart=/home/<you>/Athena-Voice/target/release/athena-voice serve --config athena.assist.toml
+    Restart=on-failure
+
+    [Install]
+    WantedBy=multi-user.target
+
 ## Enabling the Jeedom skill
 
 1. In Jeedom: Settings → System → Configuration → API — copy (or create)

@@ -59,6 +59,9 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Done
 
+- [x] Assist text bridge + GEEKOM Linux profile (2026-07-31)
+      New `[assist]` block: runtime subscribes `assist/transcription/+` on the LAN broker, routes text through the normal intent/skill/LLM pipeline per device, and answers as `{"text": …}` on `assist/tts/{device}` with loader statuses on `assist/llm/{device}/status` — DomoticApp protocol, zero app changes. SentenceBuffer extracted from the TTS actor and shared. `athena.assist.toml` profile (no audio providers used), README Linux run-book + systemd unit, ci.yml YAML repaired (Linux CI green again). Live-verified with mosquitto_pub/sub. Spec: docs/superpowers/specs/2026-07-31-assist-bridge-geekom-design.md.
+
 - [x] Redact the Jeedom API key from HTTP error logs (2026-07-30)
       Host boundary fix in `wasm/host_fns.rs`: new `redact_query_values` scrubs every query-param value (→ `REDACTED`) from error text while keeping param names, scheme, host, and path; the fetch path is extracted into a testable `fetch_json` that redacts both send and JSON-decode errors before they become skill-visible `{"error": …}` payloads. Regression test proves it live: reqwest 0.12 really does embed `?apikey=SUPERSECRET` in its connect-error text (watched the test fail first), and the redacted error still names the host. 255 workspace tests + SHOWCASE.sh green.
 
