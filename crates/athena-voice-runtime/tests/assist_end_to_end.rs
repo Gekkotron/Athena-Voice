@@ -196,8 +196,16 @@ async fn french_time_question_answered_as_text() {
         br#"{"text": "quelle heure est-il"}"#
     ));
 
+    // Wait for BOTH the tts answer and the done status: `done` is published
+    // in a later await than the tts publish (publish_answer → then
+    // publish_status), so waiting on the tts publish alone races the
+    // `done`-status lookup below under CI contention.
     publisher
-        .wait_for(|p| p.iter().any(|(t, _)| t == "assist/tts/pixel"))
+        .wait_for(|p| {
+            p.iter().any(|(t, _)| t == "assist/tts/pixel")
+                && p.iter()
+                    .any(|(t, m)| t == "assist/llm/pixel/status" && m.contains("done"))
+        })
         .await;
     let published = publisher.published.lock().unwrap().clone();
     let (_, answer) = published
@@ -238,9 +246,45 @@ async fn second_question_supersedes_first() {
         br#"{"text": "quelle heure est-il"}"#
     ));
 
-    // At least one answer must arrive.
+    // Both questions must actually be forwarded to the router: each question
+    // arm publishes its own "in progress" status synchronously before the
+    // transcript is sent downstream, so this is deterministic — a regression
+    // that silently dropped the second question would leave this at 1.
     publisher
-        .wait_for(|p| p.iter().any(|(t, _)| t == "assist/tts/pixel"))
+        .wait_for(|p| {
+            p.iter()
+                .filter(|(t, m)| t == "assist/llm/pixel/status" && m.contains("in progress"))
+                .count()
+                >= 2
+        })
+        .await;
+    let in_progress_count = publisher
+        .published
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(t, m)| t == "assist/llm/pixel/status" && m.contains("in progress"))
+        .count();
+    assert_eq!(
+        in_progress_count, 2,
+        "both questions must reach the router and open their own in-progress status"
+    );
+
+    // Wait for the settled answer AND its done status before starting the
+    // quiescence window below — otherwise an answer landing between the two
+    // snapshots (e.g. Q2's WASM dispatch slipping past the first 1 s sleep)
+    // would spuriously fail the stability check. Only one tts answer is ever
+    // expected here: the router's barge-in reliably cancels Q1's dispatch
+    // outcome (epoch mismatch) before it can reach `tts_tok_tx`, confirmed
+    // empirically stable across repeated runs — so gating on `done` (which
+    // always follows the one real answer) is the deterministic signal that
+    // both questions have fully settled.
+    publisher
+        .wait_for(|p| {
+            p.iter().any(|(t, _)| t == "assist/tts/pixel")
+                && p.iter()
+                    .any(|(t, m)| t == "assist/llm/pixel/status" && m.contains("done"))
+        })
         .await;
 
     // Let anything still in flight settle, then assert quiescence: no
