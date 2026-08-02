@@ -145,6 +145,8 @@ only; GitHub's CI runners preinstall it, a fresh box won't).
     git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
     for s in skills-smoke-test skills-weather skills-jeedom; do ./$s/build.sh; done
 
+    # your copy is gitignored — edits never block ./update.sh
+    cp athena.assist.example.toml athena.assist.toml
     # point [mqtt] host at your LAN broker, then:
     cargo run --release -p athena-voice-cli -- serve --config athena.assist.toml
 

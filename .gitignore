@@ -50,3 +50,6 @@ lcov.info
 *.db
 *.db-shm
 *.db-wal
+
+# User-edited native-mode profile (copy of athena.assist.example.toml)
+athena.assist.toml
