@@ -1,0 +1,23 @@
+services:
+  athena:
+    image: ghcr.io/gekkotron/athena-voice:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"        # admin web UI
+    volumes:
+      - athena-data:/data  # SQLite: admin token + web-edited skill settings
+
+  # Optional bundled broker for setups without an existing MQTT broker:
+  #   set COMPOSE_PROFILES=broker and ATHENA__MQTT__HOST=mosquitto in .env
+  mosquitto:
+    image: eclipse-mosquitto:2
+    profiles: ["broker"]
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+volumes:
+  athena-data:
