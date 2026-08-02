@@ -14,8 +14,11 @@
 
 locales = ["fr", "en"]
 
+# DO NOT change host/port here for Docker: these are CONTAINER-INTERNAL.
+# The LAN-facing port is docker-compose.yml's mapping (host 9000 → 8080),
+# overridable with ATHENA_ADMIN_PORT — never by editing this block.
 [server]
-host = "0.0.0.0"          # admin web UI, published by docker-compose on :8080
+host = "0.0.0.0"
 port = 8080
 session_idle_secs = 120
 
