@@ -125,3 +125,9 @@ the bundled-broker choice moved from `COMPOSE_PROFILES` in `.env` to an
 explicit `--profile broker` flag (`update.sh` now passes its arguments
 through to docker compose), and `ATHENA__*` env overrides remain available
 but optional.
+
+- 2026-08-03 follow-up: the TOML is delivered via a compose `configs`
+  file mount instead of a bind volume — a missing `./athena.docker.toml`
+  now fails `up` with a clear error instead of Docker auto-creating a
+  directory at the path (which bit the first real install). Config edits
+  require `docker compose up -d` to recreate the container.

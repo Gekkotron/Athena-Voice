@@ -103,10 +103,10 @@ No Rust, no packages, no compiling — a prebuilt image is published by CI:
     # edit the [mqtt] block: your LAN broker's address (+ credentials if any)
     docker compose up -d
 
-Copy the file BEFORE the first `up -d` — compose bind-mounts
-`./athena.docker.toml` into the container, and Docker creates an empty
-*directory* at a missing bind source (delete it, copy the file, `up -d`
-again if that happens).
+If you forget the `cp`, compose refuses to start with a clear
+"file not found" error for `./athena.docker.toml` — copy the example and
+`up -d` again. (Config changes need `docker compose up -d` to take effect —
+the file is snapshotted into the container at creation, not live-mounted.)
 
 No broker yet? Set `host = "mosquitto"` in the `[mqtt]` block and start
 the bundled one (updates then need the same flag: `./update.sh --profile broker`):

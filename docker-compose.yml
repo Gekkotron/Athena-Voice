@@ -6,12 +6,14 @@ services:
       - "8080:8080"        # admin web UI
     volumes:
       - athena-data:/data  # SQLite: admin token + web-edited skill settings
-      # Your config (broker address, credentials). COPY THE EXAMPLE FIRST:
-      #   cp athena.docker.example.toml athena.docker.toml
-      # (If you `up` without copying, Docker creates a DIRECTORY at this
-      # path and the container fails with "is a directory" — rm -r it,
-      # copy the file, and `docker compose up -d` again.)
-      - ./athena.docker.toml:/app/athena.docker.toml:ro
+    # Your config (broker address, credentials). Create it first:
+    #   cp athena.docker.example.toml athena.docker.toml
+    # A `configs` mount (not a bind volume) so a missing file makes compose
+    # refuse to start with a clear error instead of silently creating a
+    # directory at the path.
+    configs:
+      - source: athena_config
+        target: /app/athena.docker.toml
 
   # Optional bundled broker for setups without an existing MQTT broker:
   #   docker compose --profile broker up -d      (and ./update.sh --profile broker)
@@ -27,3 +29,7 @@ services:
 
 volumes:
   athena-data:
+
+configs:
+  athena_config:
+    file: ./athena.docker.toml
