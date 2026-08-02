@@ -143,13 +143,16 @@ Try it without the app:
     # /etc/systemd/system/athena-voice.service
     [Unit]
     Description=Athena-Voice assist bridge
-    After=network-online.target
+    Wants=network-online.target
+    After=network-online.target mosquitto.service
+    StartLimitIntervalSec=0
 
     [Service]
     WorkingDirectory=/home/<you>/Athena-Voice
     Environment=ATHENA__MQTT__PASSWORD=<secret>   # or use an EnvironmentFile
     ExecStart=/home/<you>/Athena-Voice/target/release/athena-voice serve --config athena.assist.toml
     Restart=on-failure
+    RestartSec=5
 
     [Install]
     WantedBy=multi-user.target

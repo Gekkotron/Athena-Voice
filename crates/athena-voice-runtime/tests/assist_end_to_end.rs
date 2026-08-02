@@ -235,8 +235,8 @@ async fn second_question_supersedes_first() {
     let bridge = build_bridge(publisher.clone()).await;
 
     // Send the same question twice, back-to-back with no delay, to exercise
-    // the bridge's barge-in path (the second supersedes the first's
-    // in-flight buffer/answer_deadline).
+    // the per-question supersede drain (epoch bump + token drain in the
+    // question arm).
     assert!(bridge.handle(
         "assist/transcription/pixel",
         br#"{"text": "quelle heure est-il"}"#
