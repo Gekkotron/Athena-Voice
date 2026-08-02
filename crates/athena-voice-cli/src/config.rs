@@ -309,6 +309,10 @@ enabled = true
         assert!(assist.enabled);
         assert_eq!(assist.topic_prefix, "assist");
         assert!(cfg.storage.database_url.contains("/data/"));
-        assert_eq!(cfg.skills.dir.as_deref(), Some(Path::new("/app/skills")));
+        assert_eq!(cfg.skills.dir.as_deref(), Some(Path::new("/data/skills")));
+        assert_eq!(
+            cfg.skills.bundled_dir.as_deref(),
+            Some(Path::new("/app/skills"))
+        );
     }
 }

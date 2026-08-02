@@ -32,7 +32,8 @@ topic_prefix = "assist"
 locale = "fr"
 
 [skills]
-dir = "/app/skills"
+dir = "/data/skills"
+bundled_dir = "/app/skills"
 
 [skills.weather]
 http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
