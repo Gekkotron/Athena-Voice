@@ -94,6 +94,8 @@ over MQTT — no audio stack, no whisper, no TTS engine on the server.
 
 ### Run with Docker (recommended)
 
+Requires [Docker Engine and the compose plugin](https://docs.docker.com/engine/install/) (Debian/Ubuntu docs linked). The admin UI lands at `http://<server-ip>:8080` after `docker compose up -d` (replace with your server's LAN IP).
+
 No Rust, no packages, no compiling — a prebuilt image is published by CI:
 
     git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
@@ -123,7 +125,10 @@ Updating:
 Data (admin token, web-edited skill settings) lives in the `athena-data`
 volume and survives updates and restarts. Bundled skills are seeded into
 that same volume on first boot; the admin UI can also upload or reinstall
-skills there, and they persist across image updates.
+skills there, and they persist across image updates. After an image update,
+NEW bundled skills included in that image do not auto-appear — the volume
+is seeded only on first boot; install them via the admin UI's
+bundled-skill picker.
 
 ### Native install (no Docker)
 

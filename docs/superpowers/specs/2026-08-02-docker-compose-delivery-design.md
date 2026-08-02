@@ -108,3 +108,8 @@ updates, both broker setups.
 - arm64 image (follow-up if a Pi user appears).
 - Publishing versioned release tags (only `latest` + sha for now).
 - Containerizing the voice-mode workers (whisper/say) — assist profile only.
+
+## Implementation deviations (recorded post-review)
+
+- No `depends_on` onto the profiled mosquitto: Docker Compose rejects profile-scoped `depends_on`; the fail-fast probe in the connect loop plus the `restart: unless-stopped` policy cover boot ordering.
+- Missing `.env`: When `.env` is absent, compose fails with a clear error message ("environment variable not set") rather than starting with placeholder values, making the cause more actionable than the spec originally claimed.
