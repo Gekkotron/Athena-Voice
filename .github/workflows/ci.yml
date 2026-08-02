@@ -87,6 +87,9 @@ jobs:
     name: docker image
     runs-on: ubuntu-latest
     needs: test
+    concurrency:
+      group: docker-publish
+      cancel-in-progress: false
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read

@@ -59,6 +59,9 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Done
 
+- [x] Docker Compose delivery with prebuilt GHCR image (2026-08-02)
+      Multi-stage Dockerfile (rust:1.95 build → bookworm-slim runtime, non-root, /data volume) bundling the smoke-test/weather/jeedom skills and athena.docker.toml (broker via ATHENA__MQTT__* env). docker-compose.yml with optional broker-profile mosquitto, .env.example, update.sh (pull --rebase + compose pull + up -d). CI `docker` job publishes ghcr.io/gekkotron/athena-voice (latest + sha) after nextest passes. Image built and published by CI (run 30762052625, first attempt); runtime round-trip to be verified on the GEEKOM after the owner makes the GHCR package public. MANUAL owner step pending: make the GHCR package public. Spec: docs/superpowers/specs/2026-08-02-docker-compose-delivery-design.md.
+
 - [x] Assist text bridge + GEEKOM Linux profile (2026-07-31)
       New `[assist]` block: runtime subscribes `assist/transcription/+` on the LAN broker, routes text through the normal intent/skill/LLM pipeline per device, and answers as `{"text": …}` on `assist/tts/{device}` with loader statuses on `assist/llm/{device}/status` — DomoticApp protocol, zero app changes. SentenceBuffer extracted from the TTS actor and shared. `athena.assist.toml` profile (no audio providers used), README Linux run-book + systemd unit, ci.yml YAML repaired and Linux toolchain/deps fixed (fmt+coverage green; clippy/deny red on pre-existing debt). Live-verified with mosquitto_pub/sub. Spec: docs/superpowers/specs/2026-07-31-assist-bridge-geekom-design.md.
 

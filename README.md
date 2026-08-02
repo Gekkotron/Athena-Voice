@@ -92,6 +92,41 @@ Skills can describe their settings by exporting `config_schema` (see
 The assist profile answers **text** questions from a home-automation app
 over MQTT — no audio stack, no whisper, no TTS engine on the server.
 
+### Run with Docker (recommended)
+
+No Rust, no packages, no compiling — a prebuilt image is published by CI:
+
+    git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
+    cp .env.example .env      # point ATHENA__MQTT__HOST at your LAN broker
+    docker compose up -d
+
+No broker yet? Uncomment Setup B in `.env` (bundled mosquitto):
+
+    docker compose --profile broker up -d
+
+The bundled `--profile broker` mosquitto allows anonymous access and is
+published on the host's LAN interfaces — fine for a home LAN, not for a
+host exposed beyond it.
+
+The one-time admin token prints in the logs on first start:
+
+    docker compose logs athena     # look for the "Admin UI token" block
+
+The first `docker compose pull` needs the GHCR package to be **public**
+(a one-time owner step in the package's GitHub settings) or a prior
+`docker login ghcr.io`.
+
+Updating:
+
+    ./update.sh                    # git pull --rebase + compose pull + up -d
+
+Data (admin token, web-edited skill settings) lives in the `athena-data`
+volume and survives updates and restarts. Bundled skills are seeded into
+that same volume on first boot; the admin UI can also upload or reinstall
+skills there, and they persist across image updates.
+
+### Native install (no Docker)
+
     # once: Rust + a C toolchain
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     sudo apt install build-essential pkg-config libasound2-dev libssl-dev
