@@ -94,7 +94,7 @@ over MQTT — no audio stack, no whisper, no TTS engine on the server.
 
 ### Run with Docker (recommended)
 
-Requires [Docker Engine and the compose plugin](https://docs.docker.com/engine/install/) (Debian/Ubuntu docs linked). The admin UI lands at `http://<server-ip>:8080` after `docker compose up -d` (replace with your server's LAN IP).
+Requires [Docker Engine and the compose plugin](https://docs.docker.com/engine/install/) (Debian/Ubuntu docs linked). The admin UI lands at `http://<server-ip>:8081` after `docker compose up -d` (host port 8081 because 8080 is often taken by tools like Zigbee2MQTT; override with `ATHENA_ADMIN_PORT=<port> docker compose up -d`).
 
 No Rust, no packages, no compiling — a prebuilt image is published by CI:
 

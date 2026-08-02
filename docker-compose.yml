@@ -3,7 +3,10 @@ services:
     image: ghcr.io/gekkotron/athena-voice:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"        # admin web UI
+      # Admin web UI. Host port 8081 by default (8080 is commonly taken —
+      # e.g. Zigbee2MQTT); override without editing this file:
+      #   ATHENA_ADMIN_PORT=9000 docker compose up -d
+      - "${ATHENA_ADMIN_PORT:-8081}:8080"
     volumes:
       - athena-data:/data  # SQLite: admin token + web-edited skill settings
     # Your config (broker address, credentials). Create it first:
