@@ -1,0 +1,42 @@
+# Athena-Voice — container profile (used by the Docker image; see Dockerfile).
+#
+# Broker settings come from the environment, NOT this file:
+#   ATHENA__MQTT__HOST=192.168.1.x     (required — placeholder below fails fast)
+#   ATHENA__MQTT__USERNAME=...         (optional)
+#   ATHENA__MQTT__PASSWORD=...         (optional)
+# Any [section] key can be overridden as ATHENA__SECTION__KEY.
+
+locales = ["fr", "en"]
+
+[server]
+host = "0.0.0.0"          # admin web UI, published by docker-compose on :8080
+port = 8080
+session_idle_secs = 120
+
+[storage]
+database_url = "sqlite:///data/athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "set-ATHENA__MQTT__HOST"   # placeholder: unreachable on purpose → fail-fast names it
+port = 1883
+client_id = "athena-voice"
+
+[providers]
+stt = "fake"              # unused by the assist bridge
+llm = "none"              # unmatched questions get a spoken capabilities answer
+tts = "fake"              # unused by the assist bridge
+
+[assist]
+enabled = true
+topic_prefix = "assist"
+locale = "fr"
+
+[skills]
+dir = "/app/skills"
+
+[skills.weather]
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+
+[skills.jeedom]
+# Configure base_url/api_key via the admin web UI (stored in SQLite, not here).
+http_allowlist = []

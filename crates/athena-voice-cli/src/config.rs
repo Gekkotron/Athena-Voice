@@ -297,4 +297,18 @@ enabled = true
         assert_eq!(assist.topic_prefix, "assist");
         assert_eq!(assist.locale.as_str(), "fr");
     }
+
+    #[test]
+    fn parses_docker_profile_toml() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("workspace root");
+        let cfg = load(&repo_root.join("athena.docker.toml")).expect("docker profile parses");
+        let assist = cfg.assist.expect("assist enabled in docker profile");
+        assert!(assist.enabled);
+        assert_eq!(assist.topic_prefix, "assist");
+        assert!(cfg.storage.database_url.contains("/data/"));
+        assert_eq!(cfg.skills.dir.as_deref(), Some(Path::new("/app/skills")));
+    }
 }

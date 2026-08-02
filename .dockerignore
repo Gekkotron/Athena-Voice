@@ -1,0 +1,14 @@
+target
+skills-*/target
+test-minimal/target
+whisper.cpp
+models
+*.wav
+docs
+.superpowers
+.github
+.git
+.env
+*.db
+coverage
+lcov.info
