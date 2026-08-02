@@ -78,28 +78,13 @@ async fn probe_mqtt_broker(host: &str, port: u16) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Ensures the one-time admin token exists (printing it on first run) and
-/// spawns the admin web UI as a background task on `cfg.server.{host,port}`.
-async fn spawn_admin_ui(
+/// Spawns the admin web UI as a background task on `cfg.server.{host,port}`.
+fn spawn_admin_ui(
     cfg: &config::Config,
     store: Arc<dyn Store>,
     runtime: &Runtime,
     base_per_skill: HashMap<String, RuntimeSkillConfig>,
 ) -> anyhow::Result<()> {
-    if let Some(token) = athena_voice_admin::auth::ensure_token(&store).await? {
-        println!("\n==============================================================");
-        println!(" Admin UI token (shown once — save it now):");
-        println!("   {token}");
-        println!(
-            " Open http://{}:{} and paste it when prompted.",
-            cfg.server.host, cfg.server.port
-        );
-        println!("==============================================================\n");
-    }
-    let token_hash = store
-        .admin_token_hash()
-        .await?
-        .expect("ensure_token guarantees a stored hash");
     let admin_addr: std::net::SocketAddr = format!("{}:{}", cfg.server.host, cfg.server.port)
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid [server] host/port: {e}"))?;
@@ -107,7 +92,6 @@ async fn spawn_admin_ui(
         store,
         skills: runtime.skills.clone(),
         base_per_skill,
-        token_hash,
         bundled_dir: cfg.skills.bundled_dir.clone(),
     };
     drop(tokio::spawn(async move {
@@ -205,8 +189,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     )?;
     tracing::info!("runtime spawned; awaiting SIGINT");
 
-    // Admin web UI — first run prints the token exactly once.
-    spawn_admin_ui(&cfg, store.clone(), &runtime, base_per_skill).await?;
+    spawn_admin_ui(&cfg, store.clone(), &runtime, base_per_skill)?;
 
     tokio::signal::ctrl_c().await.ok();
     tracing::info!("shutting down");

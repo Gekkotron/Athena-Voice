@@ -290,7 +290,8 @@ enabled = true
             .parent()
             .and_then(Path::parent)
             .expect("workspace root");
-        let cfg = load(&repo_root.join("athena.assist.example.toml")).expect("assist profile parses");
+        let cfg =
+            load(&repo_root.join("athena.assist.example.toml")).expect("assist profile parses");
         assert!(cfg.assist.is_some());
         let assist = cfg.assist.unwrap();
         assert!(assist.enabled);
@@ -304,7 +305,8 @@ enabled = true
             .parent()
             .and_then(Path::parent)
             .expect("workspace root");
-        let cfg = load(&repo_root.join("athena.docker.example.toml")).expect("docker profile parses");
+        let cfg =
+            load(&repo_root.join("athena.docker.example.toml")).expect("docker profile parses");
         let assist = cfg.assist.expect("assist enabled in docker profile");
         assert!(assist.enabled);
         assert_eq!(assist.topic_prefix, "assist");

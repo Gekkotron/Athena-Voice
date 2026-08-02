@@ -59,6 +59,9 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Done
 
+- [x] Admin UI: token authentication removed (2026-08-03)
+      Owner decision for the home-LAN deployment: the web UI is now open — no token, no first-run print. Secrets stay write-only (GET masks values, blank writes never clobber stored secrets — tests unchanged). README documents the trade-off and the 127.0.0.1 bind for restricting access.
+
 - [x] Docker Compose delivery with prebuilt GHCR image (2026-08-02)
       Multi-stage Dockerfile (rust:1.95 build → bookworm-slim runtime, non-root, /data volume) bundling the smoke-test/weather/jeedom skills and athena.docker.toml (broker via ATHENA__MQTT__* env). docker-compose.yml with optional broker-profile mosquitto, .env.example, update.sh (pull --rebase + compose pull + up -d). CI `docker` job publishes ghcr.io/gekkotron/athena-voice (latest + sha) after nextest passes. Image built and published by CI (run 30762052625, first attempt); runtime round-trip to be verified on the GEEKOM after the owner makes the GHCR package public. MANUAL owner step pending: make the GHCR package public. Spec: docs/superpowers/specs/2026-08-02-docker-compose-delivery-design.md.
 

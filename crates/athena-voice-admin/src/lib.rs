@@ -1,8 +1,7 @@
 #![deny(warnings)]
-//! Admin web interface: token-protected JSON API + embedded static UI.
+//! Admin web interface: JSON API + embedded static UI.
 
 pub(crate) mod api;
-pub mod auth;
 pub(crate) mod jeedom;
 pub(crate) mod validate;
 
@@ -12,9 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::State;
 use axum::http::{StatusCode, Uri, header};
-use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use include_dir::{Dir, include_dir};
@@ -30,7 +28,6 @@ pub struct AdminDeps {
     pub skills: Option<SkillsHandle>,
     /// TOML-derived per-skill config — the merge base; DB rows override it.
     pub base_per_skill: HashMap<String, SkillConfig>,
-    pub token_hash: String,
     pub bundled_dir: Option<PathBuf>,
 }
 
@@ -39,7 +36,6 @@ pub(crate) struct AppState {
     pub store: Arc<dyn Store>,
     pub skills: Option<SkillsHandle>,
     pub base_per_skill: Arc<HashMap<String, SkillConfig>>,
-    pub token_hash: Arc<String>,
     pub bundled_dir: Option<PathBuf>,
     pub http: reqwest::Client,
 }
@@ -49,7 +45,6 @@ pub fn router(deps: AdminDeps) -> Router {
         store: deps.store,
         skills: deps.skills,
         base_per_skill: Arc::new(deps.base_per_skill),
-        token_hash: Arc::new(deps.token_hash),
         bundled_dir: deps.bundled_dir,
         http: reqwest::Client::new(),
     };
@@ -81,7 +76,6 @@ pub fn router(deps: AdminDeps) -> Router {
             "/bundled/{name}/install",
             axum::routing::post(api::install_bundled),
         )
-        .layer(middleware::from_fn_with_state(state.clone(), require_token))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state);
     Router::new().nest("/api", api).fallback(get(static_asset))
@@ -93,20 +87,6 @@ pub async fn serve(addr: SocketAddr, deps: AdminDeps) -> anyhow::Result<()> {
     tracing::info!(%addr, "admin UI listening");
     axum::serve(listener, router(deps)).await?;
     Ok(())
-}
-
-async fn require_token(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    let ok = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| auth::verify(&state.token_hash, t));
-    if ok {
-        next.run(req).await
-    } else {
-        StatusCode::UNAUTHORIZED.into_response()
-    }
 }
 
 async fn status(State(state): State<AppState>) -> Response {

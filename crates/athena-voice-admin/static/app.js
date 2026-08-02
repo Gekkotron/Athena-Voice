@@ -2,9 +2,7 @@
 
 const T = {
   en: {
-    token_title: 'Admin token', save: 'Save', skills: 'Skills',
-    token_help: 'Paste the token printed in the terminal on first start.',
-    bad_token: 'That token was not accepted.',
+    save: 'Save', skills: 'Skills',
     enabled: 'enabled', disabled: 'disabled', loaded: 'loaded', not_loaded: 'not loaded',
     enable: 'Enable', disable: 'Disable', back: '← Back', add_row: 'Add row', remove: 'Remove',
     saved: 'Saved.', reload_failed: 'Saved, but reload failed: ',
@@ -20,9 +18,7 @@ const T = {
     add_selection: 'Add selection', nothing_discovered: 'No readable commands found',
   },
   fr: {
-    token_title: 'Jeton administrateur', save: 'Enregistrer', skills: 'Compétences',
-    token_help: 'Collez le jeton affiché dans le terminal au premier démarrage.',
-    bad_token: 'Jeton refusé.',
+    save: 'Enregistrer', skills: 'Compétences',
     enabled: 'activée', disabled: 'désactivée', loaded: 'chargée', not_loaded: 'non chargée',
     enable: 'Activer', disable: 'Désactiver', back: '← Retour', add_row: 'Ajouter', remove: 'Retirer',
     saved: 'Enregistré.', reload_failed: 'Enregistré, mais rechargement échoué : ',
@@ -65,20 +61,15 @@ function composeSensorName(cmdName, eqName, room) {
 }
 
 const app = document.getElementById('app');
-let token = localStorage.getItem('athena-admin-token') || '';
 
 async function api(path, opts = {}) {
   let res;
   try {
-    res = await fetch(path, {
-      ...opts,
-      headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
-    });
+    res = await fetch(path, opts);
   } catch {
     document.getElementById('status').textContent = 'API unreachable';
     throw new Error('network error');
   }
-  if (res.status === 401) { renderTokenPrompt(true); throw new Error('unauthorized'); }
   if (!res.ok && res.status >= 500) {
     document.getElementById('status').textContent = `API error ${res.status}`;
   }
@@ -94,17 +85,6 @@ function el(tag, attrs = {}, ...children) {
   }
   node.append(...children);
   return node;
-}
-
-function renderTokenPrompt(failed = false) {
-  app.replaceChildren(document.getElementById('tpl-token').content.cloneNode(true));
-  app.querySelectorAll('[data-i18n]').forEach((n) => (n.textContent = t(n.dataset.i18n)));
-  if (failed) document.getElementById('token-error').textContent = t('bad_token');
-  document.getElementById('token-save').onclick = async () => {
-    token = document.getElementById('token-input').value.trim();
-    localStorage.setItem('athena-admin-token', token);
-    renderList();
-  };
 }
 
 async function renderList() {
@@ -332,4 +312,4 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
   }));
 }
 
-if (token) renderList(); else renderTokenPrompt();
+renderList();

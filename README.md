@@ -71,16 +71,18 @@ then `cargo run -p athena-voice-cli -- serve --config <config>`.
 `serve` now hosts a small admin UI on `[server] host/port`
 (default `http://127.0.0.1:8080`).
 
-- **First start prints a one-time admin token** — save it; only its hash is
-  stored. To reset it, delete the `admin_auth` row in the SQLite DB and
-  restart.
+- **The UI is unauthenticated** — a home-LAN deployment decision. Anyone
+  who can reach `[server] host/port` can reconfigure skills. Secrets stay
+  write-only (GET requests mask stored secret values; blank submissions
+  never overwrite a stored secret). To restrict access, bind
+  `[server] host = "127.0.0.1"` so only the local machine can reach it.
 - Configure skills (including the Jeedom API key and sensor list) in the
   browser: values land in the SQLite database, **never in TOML files**, and
   override `[skills.<name>]` TOML keys one by one.
 - Enable/disable skills and upload new `.wasm` skills from the same page;
   changes apply live, no restart.
 - To reach the UI from another machine, set `[server] host = "0.0.0.0"` —
-  the token is still required.
+  anyone on that network can then reach it.
 - Any config value can also be overridden by environment variables:
   `ATHENA__SERVER__PORT=9090` (double underscore = nesting).
 
@@ -117,10 +119,6 @@ The bundled `--profile broker` mosquitto allows anonymous access and is
 published on the host's LAN interfaces — fine for a home LAN, not for a
 host exposed beyond it.
 
-The one-time admin token prints in the logs on first start:
-
-    docker compose logs athena     # look for the "Admin UI token" block
-
 The first `docker compose pull` needs the GHCR package to be **public**
 (a one-time owner step in the package's GitHub settings) or a prior
 `docker login ghcr.io`.
@@ -129,7 +127,7 @@ Updating:
 
     ./update.sh                    # git pull --rebase + compose pull + up -d
 
-Data (admin token, web-edited skill settings) lives in the `athena-data`
+Data (web-edited skill settings) lives in the `athena-data`
 volume and survives updates and restarts. Bundled skills are seeded into
 that same volume on first boot; the admin UI can also upload or reinstall
 skills there, and they persist across image updates. After an image update,

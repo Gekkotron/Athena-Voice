@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use athena_voice_admin::{AdminDeps, auth, router};
+use athena_voice_admin::{AdminDeps, router};
 use athena_voice_runtime::SkillsHandle;
 use athena_voice_runtime::wasm::registry::{SkillConfig, SkillDeps, SkillRegistry};
 use athena_voice_storage::{SqliteStore, Store};
@@ -11,70 +11,26 @@ use axum::http::{Request, StatusCode, header};
 use tokio::sync::broadcast;
 use tower::ServiceExt; // oneshot
 
-async fn test_deps() -> (AdminDeps, String) {
-    let store: Arc<dyn Store> = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
-    let token = auth::ensure_token(&store)
-        .await
-        .unwrap()
-        .expect("first run yields a token");
-    let hash = store.admin_token_hash().await.unwrap().unwrap();
-    (
-        AdminDeps {
-            store,
-            skills: None,
-            base_per_skill: HashMap::new(),
-            token_hash: hash,
-            bundled_dir: None,
-        },
-        token,
-    )
+async fn test_store() -> Arc<dyn Store> {
+    Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap())
 }
 
-fn get(uri: &str, token: Option<&str>) -> Request<Body> {
-    let mut b = Request::builder().uri(uri);
-    if let Some(t) = token {
-        b = b.header(header::AUTHORIZATION, format!("Bearer {t}"));
+async fn test_deps() -> AdminDeps {
+    AdminDeps {
+        store: test_store().await,
+        skills: None,
+        base_per_skill: HashMap::new(),
+        bundled_dir: None,
     }
-    b.body(Body::empty()).unwrap()
 }
 
-#[tokio::test]
-async fn status_requires_token() {
-    let (deps, token) = test_deps().await;
-    let app = router(deps);
-    let unauth = app.clone().oneshot(get("/api/status", None)).await.unwrap();
-    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
-    let bad = app
-        .clone()
-        .oneshot(get("/api/status", Some("wrong")))
-        .await
-        .unwrap();
-    assert_eq!(bad.status(), StatusCode::UNAUTHORIZED);
-    let ok = app.oneshot(get("/api/status", Some(&token))).await.unwrap();
-    assert_eq!(ok.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn ensure_token_is_first_run_only() {
-    let store: Arc<dyn Store> = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
-    let first = auth::ensure_token(&store).await.unwrap();
-    assert!(first.is_some());
-    let second = auth::ensure_token(&store).await.unwrap();
-    assert!(second.is_none(), "token must not regenerate once stored");
-}
-
-#[tokio::test]
-async fn index_is_served_without_token() {
-    // The static UI itself is public; every /api/* call it makes needs the token.
-    let (deps, _) = test_deps().await;
-    let app = router(deps);
-    let res = app.oneshot(get("/", None)).await.unwrap();
-    assert_eq!(res.status(), StatusCode::OK);
+fn get(uri: &str) -> Request<Body> {
+    Request::builder().uri(uri).body(Body::empty()).unwrap()
 }
 
 #[tokio::test]
 async fn skills_list_masks_secrets_and_shows_disabled() {
-    let (mut deps, token) = test_deps().await;
+    let mut deps = test_deps().await;
     // Base TOML config for a skill that is not loaded (skills: None).
     let mut base = HashMap::new();
     base.insert(
@@ -97,7 +53,7 @@ async fn skills_list_masks_secrets_and_shows_disabled() {
     deps.store.skill_enabled_set("jeedom", false).await.unwrap();
 
     let app = router(deps);
-    let res = app.oneshot(get("/api/skills", Some(&token))).await.unwrap();
+    let res = app.oneshot(get("/api/skills")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
@@ -123,7 +79,7 @@ async fn skills_list_masks_secrets_and_shows_disabled() {
 
 #[tokio::test]
 async fn put_config_persists_and_rejects_invalid() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let store = deps.store.clone();
     let app = router(deps);
 
@@ -131,7 +87,6 @@ async fn put_config_persists_and_rejects_invalid() {
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
             r#"{"values":{"base_url":"http://192.168.1.91"}}"#,
@@ -147,7 +102,6 @@ async fn put_config_persists_and_rejects_invalid() {
     let bad = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"nope": 1}"#))
         .unwrap();
@@ -161,14 +115,13 @@ async fn put_config_rejects_reserved_key_before_persisting() {
     // loaded schema) — that path is covered at the unit level in
     // validate.rs. This pins the reject-before-persist ordering using the
     // `$`-reserved-key path instead, which runs regardless of schema.
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let store = deps.store.clone();
     let app = router(deps);
 
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"values":{"$http_allowlist":"[]"}}"#))
         .unwrap();
@@ -182,23 +135,22 @@ async fn put_config_rejects_reserved_key_before_persisting() {
     );
 }
 
-fn post(uri: &str, token: &str) -> Request<Body> {
+fn post(uri: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap()
 }
 
 #[tokio::test]
 async fn enable_disable_toggles_state() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let store = deps.store.clone();
     let app = router(deps);
     let res = app
         .clone()
-        .oneshot(post("/api/skills/timer/disable", &token))
+        .oneshot(post("/api/skills/timer/disable"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -206,17 +158,14 @@ async fn enable_disable_toggles_state() {
         store.skills_disabled().await.unwrap(),
         vec!["timer".to_string()]
     );
-    let res = app
-        .oneshot(post("/api/skills/timer/enable", &token))
-        .await
-        .unwrap();
+    let res = app.oneshot(post("/api/skills/timer/enable")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     assert!(store.skills_disabled().await.unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn upload_rejects_bad_names() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let app = router(deps);
     let body = concat!(
         "--BOUND\r\n",
@@ -228,7 +177,6 @@ async fn upload_rejects_bad_names() {
     let req = Request::builder()
         .method("POST")
         .uri("/api/skills/upload")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
         .body(Body::from(body))
         .unwrap();
@@ -243,13 +191,12 @@ async fn put_config_rejects_traversal_name() {
     // but the `Path` extractor hands the handler the decoded `/etc/evil` —
     // which must be rejected by `valid_skill_name` before it ever reaches a
     // store write or `dir.join(...)`.
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let store = deps.store.clone();
     let app = router(deps);
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/%2Fetc%2Fevil/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"values":{"x":"y"}}"#))
         .unwrap();
@@ -264,12 +211,9 @@ async fn put_config_rejects_traversal_name() {
 
 #[tokio::test]
 async fn list_bundled_empty_when_unset() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let app = router(deps);
-    let res = app
-        .oneshot(get("/api/bundled", Some(&token)))
-        .await
-        .unwrap();
+    let res = app.oneshot(get("/api/bundled")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
@@ -280,15 +224,12 @@ async fn list_bundled_empty_when_unset() {
 
 #[tokio::test]
 async fn list_bundled_lists_wasm_stems() {
-    let (mut deps, token) = test_deps().await;
+    let mut deps = test_deps().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("demo.wasm"), b"AGFzbQ").unwrap();
     deps.bundled_dir = Some(dir.path().to_path_buf());
     let app = router(deps);
-    let res = app
-        .oneshot(get("/api/bundled", Some(&token)))
-        .await
-        .unwrap();
+    let res = app.oneshot(get("/api/bundled")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
@@ -299,10 +240,10 @@ async fn list_bundled_lists_wasm_stems() {
 
 #[tokio::test]
 async fn install_bundled_rejects_bad_name() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/bundled/%2Fetc%2Fevil/install", &token))
+        .oneshot(post("/api/bundled/%2Fetc%2Fevil/install"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -310,10 +251,10 @@ async fn install_bundled_rejects_bad_name() {
 
 #[tokio::test]
 async fn install_bundled_conflict_when_unconfigured() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/bundled/demo/install", &token))
+        .oneshot(post("/api/bundled/demo/install"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::CONFLICT);
@@ -321,14 +262,14 @@ async fn install_bundled_conflict_when_unconfigured() {
 
 #[tokio::test]
 async fn static_assets_served_with_mime() {
-    let (deps, _) = test_deps().await;
+    let deps = test_deps().await;
     let app = router(deps);
     for (path, mime) in [
         ("/", "text/html; charset=utf-8"),
         ("/app.js", "text/javascript; charset=utf-8"),
         ("/style.css", "text/css; charset=utf-8"),
     ] {
-        let res = app.clone().oneshot(get(path, None)).await.unwrap();
+        let res = app.clone().oneshot(get(path)).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK, "{path}");
         assert_eq!(
             res.headers()
@@ -340,7 +281,7 @@ async fn static_assets_served_with_mime() {
             "{path}"
         );
     }
-    let missing = app.oneshot(get("/nope.png", None)).await.unwrap();
+    let missing = app.oneshot(get("/nope.png")).await.unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
@@ -366,15 +307,6 @@ async fn static_assets_served_with_mime() {
 // present without any extra setup step.
 // ---------------------------------------------------------------------
 
-async fn store_with_token() -> (Arc<dyn Store>, String) {
-    let store: Arc<dyn Store> = Arc::new(SqliteStore::open("sqlite::memory:").await.unwrap());
-    let token = auth::ensure_token(&store)
-        .await
-        .unwrap()
-        .expect("first run yields a token");
-    (store, token)
-}
-
 fn test_skill_deps(store: Arc<dyn Store>) -> SkillDeps {
     let (mqtt, _event_loop) = rumqttc::AsyncClient::new(
         rumqttc::MqttOptions::new("admin-test", "127.0.0.1", 1883),
@@ -393,7 +325,7 @@ fn test_skill_deps(store: Arc<dyn Store>) -> SkillDeps {
     }
 }
 
-async fn admin_deps(
+fn admin_deps(
     store: Arc<dyn Store>,
     registry: Arc<SkillRegistry>,
     dir: PathBuf,
@@ -401,7 +333,6 @@ async fn admin_deps(
     bundled_dir: Option<PathBuf>,
 ) -> AdminDeps {
     let skill_deps = test_skill_deps(store.clone());
-    let hash = store.admin_token_hash().await.unwrap().unwrap();
     AdminDeps {
         store,
         skills: Some(SkillsHandle {
@@ -410,14 +341,13 @@ async fn admin_deps(
             dir,
         }),
         base_per_skill,
-        token_hash: hash,
         bundled_dir,
     }
 }
 
 #[tokio::test]
 async fn upload_installs_and_loads_a_real_skill() {
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     let deps = admin_deps(
         store,
@@ -425,8 +355,7 @@ async fn upload_installs_and_loads_a_real_skill() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         None,
-    )
-    .await;
+    );
     let registry = deps.skills.as_ref().unwrap().registry.clone();
     let app = router(deps);
 
@@ -439,7 +368,6 @@ async fn upload_installs_and_loads_a_real_skill() {
     let req = Request::builder()
         .method("POST")
         .uri("/api/skills/upload")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
         .body(Body::from(body))
         .unwrap();
@@ -457,7 +385,7 @@ async fn upload_installs_and_loads_a_real_skill() {
 
 #[tokio::test]
 async fn install_bundled_installs_and_loads_a_real_skill() {
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     let bundled_dir = tempfile::tempdir().unwrap();
     std::fs::copy(
@@ -472,13 +400,12 @@ async fn install_bundled_installs_and_loads_a_real_skill() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         Some(bundled_dir.path().to_path_buf()),
-    )
-    .await;
+    );
     let registry = deps.skills.as_ref().unwrap().registry.clone();
     let app = router(deps);
 
     let res = app
-        .oneshot(post("/api/bundled/smoke-test/install", &token))
+        .oneshot(post("/api/bundled/smoke-test/install"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -499,7 +426,7 @@ async fn install_bundled_installs_and_loads_a_real_skill() {
 /// secret and `base_url` url-typed) into a fresh registry, so callers can
 /// exercise masking / validation against an actual guest export rather than
 /// a hand-rolled schema.
-async fn admin_deps_with_loaded_jeedom(
+fn admin_deps_with_loaded_jeedom(
     store: Arc<dyn Store>,
     base_per_skill: HashMap<String, SkillConfig>,
 ) -> (AdminDeps, tempfile::TempDir) {
@@ -520,8 +447,7 @@ async fn admin_deps_with_loaded_jeedom(
         skills_dir.path().to_path_buf(),
         base_per_skill,
         None,
-    )
-    .await;
+    );
     (deps, skills_dir)
 }
 
@@ -531,7 +457,7 @@ async fn skills_list_masks_schema_secret_sourced_only_from_toml() {
     // below. The registry's cached `config_schema` (from the real jeedom
     // wasm) marks `api_key` secret regardless, so GET /api/skills must still
     // mask it, and the raw TOML value must never appear in the response.
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let toml_secret = "toml-only-s3cret-999";
     let mut base = HashMap::new();
     base.insert(
@@ -541,10 +467,10 @@ async fn skills_list_masks_schema_secret_sourced_only_from_toml() {
             ..Default::default()
         },
     );
-    let (deps, _skills_dir) = admin_deps_with_loaded_jeedom(store, base).await;
+    let (deps, _skills_dir) = admin_deps_with_loaded_jeedom(store, base);
     let app = router(deps);
 
-    let res = app.oneshot(get("/api/skills", Some(&token))).await.unwrap();
+    let res = app.oneshot(get("/api/skills")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
@@ -571,14 +497,13 @@ async fn skills_list_masks_schema_secret_sourced_only_from_toml() {
 async fn put_config_rejects_invalid_schema_value_without_persisting() {
     // `base_url` is url-typed per the real jeedom schema; a scheme-less value
     // must be rejected by schema validation before anything is persisted.
-    let (store, token) = store_with_token().await;
-    let (deps, _skills_dir) = admin_deps_with_loaded_jeedom(store.clone(), HashMap::new()).await;
+    let store = test_store().await;
+    let (deps, _skills_dir) = admin_deps_with_loaded_jeedom(store.clone(), HashMap::new());
     let app = router(deps);
 
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"values":{"base_url":"no-scheme"}}"#))
         .unwrap();
@@ -604,7 +529,7 @@ async fn put_config_does_not_resurrect_disabled_skill() {
     // value without reloading the skill: reload_skill's `wasm.is_file()`
     // check alone can't tell "disabled" from "installed and enabled", so it
     // must consult `skills_disabled()` before touching the registry.
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     std::fs::copy(
         athena_voice_runtime::test_support::JEEDOM_TEST_WASM,
@@ -619,15 +544,13 @@ async fn put_config_does_not_resurrect_disabled_skill() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         None,
-    )
-    .await;
+    );
     let registry = deps.skills.as_ref().unwrap().registry.clone();
     let app = router(deps);
 
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
             r#"{"values":{"base_url":"http://192.168.1.91"}}"#,
@@ -653,7 +576,7 @@ async fn put_config_does_not_resurrect_disabled_skill() {
 
 #[tokio::test]
 async fn put_config_blank_value_does_not_clobber_stored_secret_without_schema() {
-    let (deps, token) = test_deps().await;
+    let deps = test_deps().await;
     let store = deps.store.clone();
     store
         .skill_setting_set("jeedom", "api_key", "real", true)
@@ -664,7 +587,6 @@ async fn put_config_blank_value_does_not_clobber_stored_secret_without_schema() 
     let put = Request::builder()
         .method("PUT")
         .uri("/api/skills/jeedom/config")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"values":{"api_key":""}}"#))
         .unwrap();
@@ -686,7 +608,7 @@ async fn upload_quarantines_file_when_first_install_fails() {
     // No prior file for this name: a failed reload means the just-written
     // file must be deleted so a bad upload can't survive to the next
     // startup, where `load_dir` would otherwise trip over it again.
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     let deps = admin_deps(
         store,
@@ -694,8 +616,7 @@ async fn upload_quarantines_file_when_first_install_fails() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         None,
-    )
-    .await;
+    );
     let app = router(deps);
 
     let mut body = Vec::new();
@@ -705,7 +626,6 @@ async fn upload_quarantines_file_when_first_install_fails() {
     let req = Request::builder()
         .method("POST")
         .uri("/api/skills/upload")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
         .body(Body::from(body))
         .unwrap();
@@ -731,7 +651,7 @@ async fn upload_keeps_file_when_overwrite_of_working_skill_fails() {
     // A working skill is already installed; a failed re-upload must NOT
     // delete the file out from under the running process — only the
     // never-previously-loaded case gets quarantined.
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     std::fs::copy(
         athena_voice_runtime::test_support::SMOKE_TEST_WASM,
@@ -746,8 +666,7 @@ async fn upload_keeps_file_when_overwrite_of_working_skill_fails() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         None,
-    )
-    .await;
+    );
     let app = router(deps);
 
     let mut body = Vec::new();
@@ -757,7 +676,6 @@ async fn upload_keeps_file_when_overwrite_of_working_skill_fails() {
     let req = Request::builder()
         .method("POST")
         .uri("/api/skills/upload")
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .header(header::CONTENT_TYPE, "multipart/form-data; boundary=BOUND")
         .body(Body::from(body))
         .unwrap();
@@ -783,7 +701,7 @@ async fn install_bundled_quarantines_file_when_first_install_fails() {
     // Same quarantine contract for the `install_bundled` path: a "bundled"
     // wasm that's actually garbage (e.g. a corrupted asset) must not leave
     // a file behind that the next startup would try (and fail) to load.
-    let (store, token) = store_with_token().await;
+    let store = test_store().await;
     let skills_dir = tempfile::tempdir().unwrap();
     let bundled_dir = tempfile::tempdir().unwrap();
     std::fs::write(bundled_dir.path().join("badskill.wasm"), b"not really wasm").unwrap();
@@ -793,12 +711,11 @@ async fn install_bundled_quarantines_file_when_first_install_fails() {
         skills_dir.path().to_path_buf(),
         HashMap::new(),
         Some(bundled_dir.path().to_path_buf()),
-    )
-    .await;
+    );
     let app = router(deps);
 
     let res = app
-        .oneshot(post("/api/bundled/badskill/install", &token))
+        .oneshot(post("/api/bundled/badskill/install"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -818,8 +735,8 @@ async fn install_bundled_quarantines_file_when_first_install_fails() {
 }
 
 // Jeedom connection test endpoint tests
-async fn deps_with_jeedom_config(base_url: &str) -> (AdminDeps, String) {
-    let (deps, token) = test_deps().await;
+async fn deps_with_jeedom_config(base_url: &str) -> AdminDeps {
+    let deps = test_deps().await;
     deps.store
         .skill_setting_set("jeedom", "base_url", base_url, false)
         .await
@@ -828,7 +745,7 @@ async fn deps_with_jeedom_config(base_url: &str) -> (AdminDeps, String) {
         .skill_setting_set("jeedom", "api_key", "sekret-key-123", true)
         .await
         .unwrap();
-    (deps, token)
+    deps
 }
 
 #[tokio::test]
@@ -841,12 +758,9 @@ async fn jeedom_test_reports_ok_with_version() {
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("4.4.19"))
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
-    let res = app
-        .oneshot(post("/api/skills/jeedom/test", &token))
-        .await
-        .unwrap();
+    let res = app.oneshot(post("/api/skills/jeedom/test")).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
         .await
@@ -868,11 +782,11 @@ async fn jeedom_test_classifies_failures() {
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("Clé API non valide"))
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
     let res = app
         .clone()
-        .oneshot(post("/api/skills/jeedom/test", &token))
+        .oneshot(post("/api/skills/jeedom/test"))
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_slice(
@@ -885,12 +799,9 @@ async fn jeedom_test_classifies_failures() {
 
     // unreachable: explicit unreachable port.
     drop(server);
-    let (deps, token) = deps_with_jeedom_config("http://127.0.0.1:1").await;
+    let deps = deps_with_jeedom_config("http://127.0.0.1:1").await;
     let app = router(deps);
-    let res = app
-        .oneshot(post("/api/skills/jeedom/test", &token))
-        .await
-        .unwrap();
+    let res = app.oneshot(post("/api/skills/jeedom/test")).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(res.into_body(), 1 << 20)
             .await
@@ -901,25 +812,10 @@ async fn jeedom_test_classifies_failures() {
 }
 
 #[tokio::test]
-async fn jeedom_test_unconfigured_and_auth_gated() {
-    let (deps, token) = test_deps().await; // no jeedom config at all
+async fn jeedom_test_unconfigured() {
+    let deps = test_deps().await; // no jeedom config at all
     let app = router(deps);
-    let unauth = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/skills/jeedom/test")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
-    let res = app
-        .oneshot(post("/api/skills/jeedom/test", &token))
-        .await
-        .unwrap();
+    let res = app.oneshot(post("/api/skills/jeedom/test")).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(res.into_body(), 1 << 20)
             .await
@@ -953,10 +849,10 @@ async fn jeedom_discover_returns_info_command_tree() {
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(FULLDATA_FIXTURE))
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .oneshot(post("/api/skills/jeedom/discover"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -986,10 +882,10 @@ async fn jeedom_discover_bad_payload_is_bad_response() {
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("<html>login</html>"))
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .oneshot(post("/api/skills/jeedom/discover"))
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_slice(
@@ -1011,10 +907,10 @@ async fn jeedom_discover_aborts_on_oversized_response() {
         )
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .oneshot(post("/api/skills/jeedom/discover"))
         .await
         .unwrap();
     let body: serde_json::Value = serde_json::from_slice(
@@ -1061,10 +957,10 @@ async fn jeedom_discover_prunes_empty_equipment_and_rooms() {
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(pruning_fixture))
         .mount(&server)
         .await;
-    let (deps, token) = deps_with_jeedom_config(&server.uri()).await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
     let app = router(deps);
     let res = app
-        .oneshot(post("/api/skills/jeedom/discover", &token))
+        .oneshot(post("/api/skills/jeedom/discover"))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
