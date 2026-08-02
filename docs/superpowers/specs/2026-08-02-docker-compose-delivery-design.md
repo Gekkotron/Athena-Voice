@@ -90,8 +90,9 @@ updates, both broker setups.
   (no systemd start-limit latching).
 - Broker profile race at boot: `depends_on: mosquitto` (profile-scoped)
   plus the probe's failure-restart loop.
-- Missing `.env`: compose still starts; the probe fails on the placeholder
-  host with a message naming `[mqtt]`/`ATHENA__MQTT__HOST`.
+- Missing `.env`: compose refuses to start with a clear "env file not
+  found" error (see Implementation deviations below — this superseded the
+  original assumption that compose would start anyway).
 
 ## Testing
 
