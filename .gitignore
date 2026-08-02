@@ -53,3 +53,6 @@ lcov.info
 
 # User-edited native-mode profile (copy of athena.assist.example.toml)
 athena.assist.toml
+
+# User-edited container profile (copy of athena.docker.example.toml, bind-mounted by compose)
+athena.docker.toml

@@ -28,7 +28,8 @@ COPY --from=build /src/target/release/athena-voice /app/athena-voice
 # seeded into /data/skills; the web UI's bundled-skill picker can reinstall
 # an updated bundled skill on demand.
 COPY --from=build --chown=athena:athena /src/skills /app/skills
-COPY athena.docker.toml /app/athena.docker.toml
+# Baked-in default config; docker-compose bind-mounts the user's copy over it.
+COPY athena.docker.example.toml /app/athena.docker.toml
 COPY --chown=athena:athena docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 USER athena

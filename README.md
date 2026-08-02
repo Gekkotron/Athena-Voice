@@ -99,10 +99,17 @@ Requires [Docker Engine and the compose plugin](https://docs.docker.com/engine/i
 No Rust, no packages, no compiling — a prebuilt image is published by CI:
 
     git clone https://github.com/Gekkotron/Athena-Voice && cd Athena-Voice
-    cp .env.example .env      # point ATHENA__MQTT__HOST at your LAN broker
+    cp athena.docker.example.toml athena.docker.toml   # your copy is gitignored
+    # edit the [mqtt] block: your LAN broker's address (+ credentials if any)
     docker compose up -d
 
-No broker yet? Uncomment Setup B in `.env` (bundled mosquitto):
+Copy the file BEFORE the first `up -d` — compose bind-mounts
+`./athena.docker.toml` into the container, and Docker creates an empty
+*directory* at a missing bind source (delete it, copy the file, `up -d`
+again if that happens).
+
+No broker yet? Set `host = "mosquitto"` in the `[mqtt]` block and start
+the bundled one (updates then need the same flag: `./update.sh --profile broker`):
 
     docker compose --profile broker up -d
 

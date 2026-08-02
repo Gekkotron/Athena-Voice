@@ -1,10 +1,16 @@
-# Athena-Voice — container profile (used by the Docker image; see Dockerfile).
+# Athena-Voice — container profile.
 #
-# Broker settings come from the environment, NOT this file:
-#   ATHENA__MQTT__HOST=192.168.1.x     (required — placeholder below fails fast)
-#   ATHENA__MQTT__USERNAME=...         (optional)
-#   ATHENA__MQTT__PASSWORD=...         (optional)
-# Any [section] key can be overridden as ATHENA__SECTION__KEY.
+#   cp athena.docker.example.toml athena.docker.toml
+#
+# then edit the [mqtt] block below with your broker's address (and
+# credentials if it needs them). Your copy is gitignored — it never blocks
+# ./update.sh and can never be committed. docker-compose bind-mounts it
+# into the container; a copy of this example is also baked into the image
+# as the fail-fast default.
+#
+# Every key can also be overridden by environment variables if you prefer:
+# ATHENA__SECTION__KEY (e.g. ATHENA__MQTT__PASSWORD=... in the compose
+# environment).
 
 locales = ["fr", "en"]
 
@@ -17,9 +23,11 @@ session_idle_secs = 120
 database_url = "sqlite:///data/athena-voice.db?mode=rwc"
 
 [mqtt]
-host = "set-ATHENA__MQTT__HOST"   # placeholder: unreachable on purpose → fail-fast names it
+host = "192.168.1.2"      # <-- your LAN broker (or "mosquitto" with --profile broker)
 port = 1883
 client_id = "athena-voice"
+# username = "athena"
+# password = "change-me"  # or keep secrets out of the file via ATHENA__MQTT__PASSWORD
 
 [providers]
 stt = "fake"              # unused by the assist bridge

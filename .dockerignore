@@ -13,3 +13,5 @@ docs
 *.db
 coverage
 lcov.info
+athena.docker.toml
+.env

@@ -2,14 +2,20 @@ services:
   athena:
     image: ghcr.io/gekkotron/athena-voice:latest
     restart: unless-stopped
-    env_file: .env
     ports:
       - "8080:8080"        # admin web UI
     volumes:
       - athena-data:/data  # SQLite: admin token + web-edited skill settings
+      # Your config (broker address, credentials). COPY THE EXAMPLE FIRST:
+      #   cp athena.docker.example.toml athena.docker.toml
+      # (If you `up` without copying, Docker creates a DIRECTORY at this
+      # path and the container fails with "is a directory" — rm -r it,
+      # copy the file, and `docker compose up -d` again.)
+      - ./athena.docker.toml:/app/athena.docker.toml:ro
 
   # Optional bundled broker for setups without an existing MQTT broker:
-  #   set COMPOSE_PROFILES=broker and ATHENA__MQTT__HOST=mosquitto in .env
+  #   docker compose --profile broker up -d      (and ./update.sh --profile broker)
+  #   with [mqtt] host = "mosquitto" in athena.docker.toml
   mosquitto:
     image: eclipse-mosquitto:2
     profiles: ["broker"]

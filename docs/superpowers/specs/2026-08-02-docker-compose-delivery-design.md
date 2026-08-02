@@ -114,3 +114,14 @@ updates, both broker setups.
 
 - No `depends_on` onto the profiled mosquitto: Docker Compose rejects profile-scoped `depends_on`; the fail-fast probe in the connect loop plus the `restart: unless-stopped` policy cover boot ordering.
 - Missing `.env`: When `.env` is absent, compose fails with a clear error message ("environment variable not set") rather than starting with placeholder values, making the cause more actionable than the spec originally claimed.
+
+## Owner directive 2026-08-03: .env removed
+
+The `.env`/`.env.example` pair is gone. User configuration for the Docker
+path is a gitignored `athena.docker.toml` (copied from the tracked
+`athena.docker.example.toml`) bind-mounted read-only over the image's baked
+default — one config format across native and Docker modes. Consequences:
+the bundled-broker choice moved from `COMPOSE_PROFILES` in `.env` to an
+explicit `--profile broker` flag (`update.sh` now passes its arguments
+through to docker compose), and `ATHENA__*` env overrides remain available
+but optional.
