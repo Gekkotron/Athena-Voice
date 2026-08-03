@@ -156,7 +156,7 @@ impl Runtime {
         // bridge's wildcard is (re)subscribed there instead, on every
         // connect and reconnect.
         let assist_bridge = assist.map(|init| {
-            assist::AssistBridge::new(
+            let bridge = assist::AssistBridge::new(
                 init,
                 assist::AssistDeps {
                     publisher: Arc::new(wasm::host_fns::AsyncClientPublisher(client.tx.clone())),
@@ -167,7 +167,11 @@ impl Runtime {
                     event_bus: event_bus.sender(),
                     shutdown: shutdown.clone(),
                 },
-            )
+            );
+            // Liveness beat for the app's online indicator (every 10 s;
+            // the app flags the assistant offline after 16 s of silence).
+            bridge.spawn_heartbeat();
+            bridge
         });
 
         let deps = SatelliteDeps {

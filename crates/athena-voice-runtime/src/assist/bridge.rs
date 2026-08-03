@@ -31,6 +31,10 @@ use crate::wasm::host_fns::MqttPublisher;
 /// force-publishing a `done` status, so the app's loader can't get stuck.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Interval between liveness beats on `{prefix}/heartbeat/`. Must stay well
+/// under the app's 16 s offline threshold (AssistViewModel.heartbeatCheckJob).
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+
 pub struct AssistInit {
     pub topic_prefix: String,
     pub locale: Locale,
@@ -67,6 +71,49 @@ impl AssistBridge {
     #[must_use]
     pub fn transcription_wildcard(&self) -> String {
         topics::transcription_wildcard(&self.init.topic_prefix)
+    }
+
+    /// Starts the liveness beat: publishes
+    /// `{"timestamp": <epoch-secs>, "millis": <uptime-ms>, "uptime_minutes": <uptime-min>}`
+    /// to `{prefix}/heartbeat/` every [`HEARTBEAT_INTERVAL`] until shutdown.
+    /// The app marks the assistant offline after 16 s without a beat and
+    /// reads only `timestamp` (epoch seconds); the uptime fields mirror the
+    /// previous backend's payload shape. Called explicitly by the runtime
+    /// wiring (not from `new`) so tests control whether beats interleave
+    /// with their publish assertions.
+    pub fn spawn_heartbeat(self: &Arc<Self>) {
+        let bridge = self.clone();
+        drop(tokio::spawn(async move {
+            let topic = topics::heartbeat_topic(&bridge.init.topic_prefix);
+            let started = tokio::time::Instant::now();
+            let mut tick = tokio::time::interval(HEARTBEAT_INTERVAL);
+            loop {
+                tokio::select! {
+                    () = bridge.deps.shutdown.cancelled() => break,
+                    _ = tick.tick() => {
+                        let epoch_secs = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let uptime = started.elapsed();
+                        let payload = serde_json::json!({
+                            "timestamp": epoch_secs,
+                            "millis": u64::try_from(uptime.as_millis()).unwrap_or(u64::MAX),
+                            "uptime_minutes": uptime.as_secs() / 60,
+                        })
+                        .to_string();
+                        if let Err(e) = bridge
+                            .deps
+                            .publisher
+                            .publish(topic.clone(), payload.into_bytes())
+                            .await
+                        {
+                            warn!(error = %e, "assist: heartbeat publish failed");
+                        }
+                    }
+                }
+            }
+        }));
     }
 
     /// Routes an MQTT publish. Returns true when the topic belongs to this
@@ -762,5 +809,51 @@ mod tests {
             "no further publishes should occur after shutdown settles — spawn churn detected"
         );
         assert_eq!(bridge.devices.len(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn heartbeat_publishes_liveness_beats() {
+        let publisher = RecordingPublisher::new();
+        let shutdown = CancellationToken::new();
+        let bridge = build_bridge(
+            publisher.clone(),
+            Duration::from_secs(120),
+            None,
+            shutdown.clone(),
+        )
+        .await;
+
+        bridge.spawn_heartbeat();
+        publisher
+            .wait_for(|p| p.iter().any(|(t, _)| t == "assist/heartbeat/"))
+            .await;
+
+        let published = publisher.published.lock().unwrap().clone();
+        let (_, beat) = published
+            .iter()
+            .find(|(t, _)| t == "assist/heartbeat/")
+            .unwrap()
+            .clone();
+        let v: serde_json::Value = serde_json::from_str(&beat).unwrap();
+        // The app's liveness check (AssistViewModel.heartbeatCheckJob) reads
+        // `timestamp` as epoch SECONDS and flags the assistant offline once
+        // it is older than 16 s — that field is the contract; the uptime
+        // fields mirror the previous backend's payload shape.
+        assert!(
+            v["timestamp"].as_u64().is_some_and(|t| t > 1_700_000_000),
+            "timestamp must be epoch seconds: {beat}"
+        );
+        assert!(v["millis"].as_u64().is_some(), "uptime millis: {beat}");
+        assert!(
+            v["uptime_minutes"].as_u64().is_some(),
+            "uptime minutes: {beat}"
+        );
+
+        // Shutdown stops the beat.
+        shutdown.cancel();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let settled = publisher.published.lock().unwrap().len();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(settled, publisher.published.lock().unwrap().len());
     }
 }

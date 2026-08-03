@@ -59,6 +59,9 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Done
 
+- [x] Assist heartbeat for the app's online indicator (2026-08-03)
+      The bridge publishes `{"timestamp": epoch-secs, "millis": uptime-ms, "uptime_minutes": …}` to `assist/heartbeat/` (trailing slash = the app's literal subscription) every 10 s; the DomoticApp flags the assistant offline after 16 s without a beat and reads only `timestamp`. Unit-tested; spawned from Runtime wiring so bridge tests stay deterministic.
+
 - [x] Admin UI: token authentication removed (2026-08-03)
       Owner decision for the home-LAN deployment: the web UI is now open — no token, no first-run print. Secrets stay write-only (GET masks values, blank writes never clobber stored secrets — tests unchanged). README documents the trade-off and the 127.0.0.1 bind for restricting access.
 
