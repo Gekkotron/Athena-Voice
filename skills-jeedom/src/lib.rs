@@ -57,6 +57,44 @@ struct Sensor {
 
 static SENSORS: OnceCell<Vec<Sensor>> = OnceCell::new();
 
+/// Strips symbol characters (emoji, icons) from a spoken/matchable field.
+/// Jeedom discovery can compose names and rooms carrying icons
+/// ("salon 🖴"); STT never hears them and TTS should never read them.
+/// Letters/digits of any script, apostrophes, and hyphens survive; dropped
+/// characters collapse into single spaces.
+fn clean_spoken(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut pending_space = false;
+    for c in s.chars() {
+        if c.is_alphanumeric() || c == '\'' || c == '-' {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            out.push(c);
+            pending_space = false;
+        } else {
+            pending_space = true;
+        }
+    }
+    out
+}
+
+/// Parses the configured sensor list, sanitizing every field that ends up
+/// in generated patterns or spoken answers. `unit` is deliberately NOT
+/// cleaned: "°C" must survive for TTS to read it as degrees.
+fn parse_sensors(raw: &str) -> Vec<Sensor> {
+    let Ok(mut v) = serde_json::from_str::<Vec<Sensor>>(raw) else {
+        return Vec::new();
+    };
+    for s in &mut v {
+        s.name = clean_spoken(&s.name);
+        s.room = clean_spoken(&s.room);
+        s.on_label = clean_spoken(&s.on_label);
+        s.off_label = clean_spoken(&s.off_label);
+    }
+    v
+}
+
 fn sensors(ctx: &HostCtx) -> &'static [Sensor] {
     SENSORS
         .get_or_init(|| {
@@ -64,13 +102,11 @@ fn sensors(ctx: &HostCtx) -> &'static [Sensor] {
             if raw.is_empty() {
                 return Vec::new();
             }
-            match serde_json::from_str::<Vec<Sensor>>(&raw) {
-                Ok(v) => v,
-                Err(e) => {
-                    ctx.log("warn", &format!("jeedom: failed to parse sensors: {e}"));
-                    Vec::new()
-                }
+            let v = parse_sensors(&raw);
+            if v.is_empty() {
+                ctx.log("warn", "jeedom: sensor list empty or failed to parse");
             }
+            v
         })
         .as_slice()
 }
@@ -497,6 +533,24 @@ mod tests {
         assert_eq!(v[0].room, "");
         assert_eq!(v[0].kind, "");
         assert!(v[0].on_label.is_empty() && v[0].off_label.is_empty());
+    }
+
+    #[test]
+    fn parsing_strips_symbols_from_spoken_fields() {
+        // Jeedom discovery composes names/rooms that can carry icon
+        // characters ("salon 🖴"); they must never reach generated patterns
+        // or spoken answers. Units keep their symbols ("°C" must stay
+        // speakable as degrés Celsius).
+        let raw = r#"[{"name":"température 🌡 du salon","id":142,"unit":"°C","room":"salon 🖴"}]"#;
+        let v = parse_sensors(raw);
+        assert_eq!(v[0].name, "température du salon");
+        assert_eq!(v[0].room, "salon");
+        assert_eq!(v[0].unit, "°C");
+        assert_eq!(
+            enum_clause(&v[0], "21.5", false),
+            "salon 21.5 °C",
+            "spoken clause must be symbol-free apart from the unit"
+        );
     }
 
     #[test]
