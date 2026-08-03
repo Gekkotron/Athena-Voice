@@ -75,7 +75,7 @@ pub struct PerSkillConfig {
     pub config_file: Option<String>,
 }
 
-/// `[assist]` section: text bridge for the owner's home-automation app.
+/// `[assist]` section: text bridge for home-automation clients.
 /// Absent block = bridge off; `enabled = false` also turns it off without
 /// deleting the section.
 #[derive(Debug, Clone, Deserialize, Serialize)]

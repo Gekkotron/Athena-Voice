@@ -1,5 +1,5 @@
 //! Topic layout and payload shapes for the assist bridge. The wire is FIXED
-//! by the DomoticApp side: `{prefix}/transcription/{device}` in,
+//! by the assist protocol (see README "Talking to it"): `{prefix}/transcription/{device}` in,
 //! `{prefix}/tts/{device}` + `{prefix}/llm/{device}/status` out, all JSON.
 
 #[must_use]
@@ -31,14 +31,14 @@ pub fn status_topic(prefix: &str, device: &str) -> String {
     format!("{prefix}/llm/{device}/status")
 }
 
-/// Liveness-beat topic. The trailing slash is deliberate: it is the app's
+/// Liveness-beat topic. The trailing slash is deliberate: it is the protocol's
 /// literal subscription string (`assist/heartbeat/`).
 #[must_use]
 pub fn heartbeat_topic(prefix: &str) -> String {
     format!("{prefix}/heartbeat/")
 }
 
-/// Parses the app's `{"text": "..."}` payload; `None` unless `text` is a
+/// Parses the protocol's `{"text": "..."}` payload; `None` unless `text` is a
 /// non-empty string after trimming.
 #[must_use]
 pub fn parse_text_payload(payload: &[u8]) -> Option<String> {
@@ -101,7 +101,7 @@ mod tests {
     fn outbound_topics() {
         assert_eq!(tts_topic("assist", "pixel"), "assist/tts/pixel");
         assert_eq!(status_topic("assist", "pixel"), "assist/llm/pixel/status");
-        // Trailing slash is the app's literal subscription string.
+        // Trailing slash is the protocol's literal subscription string.
         assert_eq!(heartbeat_topic("assist"), "assist/heartbeat/");
     }
 

@@ -348,7 +348,7 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
                     format!("quelle {metric} dans la {room}"),
                     format!("{metric} dans le {room}"),
                     format!("{metric} dans la {room}"),
-                    // Natural full-sentence forms (owner request): "quelle
+                    // Natural full-sentence forms: "quelle
                     // est la température dans le salon" / "… du salon".
                     format!("quelle est la {metric} dans le {room}"),
                     format!("quelle est la {metric} dans la {room}"),
@@ -560,7 +560,7 @@ mod tests {
         let all: Vec<&str> = rules.iter().flat_map(|r| r.phrases.iter().map(String::as_str)).collect();
         assert!(all.contains(&"quelle température dans le salon"), "got: {all:?}");
         assert!(all.contains(&"température dans le salon"));
-        // Natural full-sentence French (owner request): "quelle est la
+        // Natural full-sentence French: "quelle est la
         // température dans le salon" / "… du salon".
         assert!(all.contains(&"quelle est la température dans le salon"), "got: {all:?}");
         assert!(all.contains(&"quelle est la température du salon"), "got: {all:?}");

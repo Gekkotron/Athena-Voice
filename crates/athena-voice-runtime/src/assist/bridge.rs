@@ -28,11 +28,11 @@ use crate::wasm::dispatcher::SkillDispatcherHandle;
 use crate::wasm::host_fns::MqttPublisher;
 
 /// How long after a question we wait for the first answer text before
-/// force-publishing a `done` status, so the app's loader can't get stuck.
+/// force-publishing a `done` status, so client loaders can't get stuck.
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Interval between liveness beats on `{prefix}/heartbeat/`. Must stay well
-/// under the app's 16 s offline threshold (AssistViewModel.heartbeatCheckJob).
+/// under the 16 s offline threshold the assist protocol allows clients.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 pub struct AssistInit {
@@ -303,7 +303,7 @@ impl AssistBridge {
 
         // A question can be mid-flight (status "in progress" published, no
         // answer yet) on every exit path above — shutdown, idle reap, or a
-        // dead downstream channel. Release the app's loader unconditionally
+        // dead downstream channel. Release the client's loader unconditionally
         // rather than leaving it spinning forever.
         if answer_deadline.take().is_some() {
             self.publish_status(&status_topic, "done").await;
@@ -369,7 +369,7 @@ impl AssistBridge {
         {
             warn!(error = %e, "assist: answer publish failed");
         }
-        // First answer text FOR THIS QUESTION releases the app's loader.
+        // First answer text FOR THIS QUESTION releases the client's loader.
         // The epoch tag stops a flush left over from a superseded
         // utterance from consuming a newer question's pending `done`.
         if answer_deadline.as_ref().is_some_and(|(e, _)| *e == epoch) {
@@ -835,7 +835,7 @@ mod tests {
             .unwrap()
             .clone();
         let v: serde_json::Value = serde_json::from_str(&beat).unwrap();
-        // The app's liveness check (AssistViewModel.heartbeatCheckJob) reads
+        // The assist protocol: clients read
         // `timestamp` as epoch SECONDS and flags the assistant offline once
         // it is older than 16 s — that field is the contract; the uptime
         // fields mirror the previous backend's payload shape.

@@ -168,8 +168,8 @@ impl Runtime {
                     shutdown: shutdown.clone(),
                 },
             );
-            // Liveness beat for the app's online indicator (every 10 s;
-            // the app flags the assistant offline after 16 s of silence).
+            // Liveness beat for client online indicators (every 10 s;
+            // the protocol lets clients flag the assistant offline after 16 s).
             bridge.spawn_heartbeat();
             bridge
         });

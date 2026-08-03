@@ -171,15 +171,20 @@ Broker credentials never live in the TOML: set `username` there and pass
 overridden as `ATHENA__MQTT__<FIELD>`). Subscriptions survive broker
 restarts — the bridge resubscribes automatically on reconnect.
 
-### Talking to it (DomoticApp protocol)
+### Talking to it (the assist protocol)
+
+Any client — a home-automation app, a script, an ESP32 — talks to the
+assistant over four MQTT topics. `{device}` is any id the client picks
+(no `/`, `+`, or `#`); answers come back addressed to the same id.
 
 | Topic | Direction | Payload |
 | --- | --- | --- |
-| `assist/transcription/{device}` | app → Athena | `{"text": "quelle heure est-il"}` |
-| `assist/tts/{device}` | Athena → app | `{"text": "il est 15 h 14"}` (one message per sentence) |
-| `assist/llm/{device}/status` | Athena → app | `{"status": "in progress"}` then `{"status": "done"}` |
+| `assist/transcription/{device}` | client → Athena | `{"text": "quelle heure est-il"}` |
+| `assist/tts/{device}` | Athena → client | `{"text": "il est 15 h 14"}` (one message per sentence) |
+| `assist/llm/{device}/status` | Athena → client | `{"status": "in progress"}` then `{"status": "done"}` (always terminated, 30 s timeout backstop) |
+| `assist/heartbeat/` | Athena → all | `{"timestamp": <epoch-secs>, "millis": <uptime-ms>, "uptime_minutes": …}` every 10 s — clients may flag the assistant offline after >16 s of silence |
 
-Try it without the app:
+Try it without a client app:
 
     mosquitto_sub -h <broker> -t 'assist/tts/#' -v &
     mosquitto_pub -h <broker> -t assist/transcription/cli \
