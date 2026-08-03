@@ -312,6 +312,14 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
                     format!("quelle {metric} dans la {room}"),
                     format!("{metric} dans le {room}"),
                     format!("{metric} dans la {room}"),
+                    // Natural full-sentence forms (owner request): "quelle
+                    // est la température dans le salon" / "… du salon".
+                    format!("quelle est la {metric} dans le {room}"),
+                    format!("quelle est la {metric} dans la {room}"),
+                    format!("quelle est la {metric} du {room}"),
+                    format!("quelle est la {metric} de la {room}"),
+                    format!("{metric} du {room}"),
+                    format!("{metric} de la {room}"),
                 ]),
                 "en" => literal_phrases.extend([
                     format!("{metric} in the {room}"),
@@ -498,6 +506,11 @@ mod tests {
         let all: Vec<&str> = rules.iter().flat_map(|r| r.phrases.iter().map(String::as_str)).collect();
         assert!(all.contains(&"quelle température dans le salon"), "got: {all:?}");
         assert!(all.contains(&"température dans le salon"));
+        // Natural full-sentence French (owner request): "quelle est la
+        // température dans le salon" / "… du salon".
+        assert!(all.contains(&"quelle est la température dans le salon"), "got: {all:?}");
+        assert!(all.contains(&"quelle est la température du salon"), "got: {all:?}");
+        assert!(all.contains(&"température du salon"));
         // the room rule routes to the literal per-sensor intent
         assert!(rules.iter().any(|r| r.intent == "jeedom.read.142"
             && r.phrases.iter().any(|p| p.contains("dans le salon"))));

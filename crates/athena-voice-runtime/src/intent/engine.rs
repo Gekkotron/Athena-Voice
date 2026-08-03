@@ -94,6 +94,30 @@ impl Default for IntentMatcher {
     }
 }
 
+/// Lowercases and strips symbol characters (emoji, icons, punctuation) that
+/// speech recognition never produces but config-derived phrases may carry
+/// (Jeedom room names like "salon 🖴"). Letters and digits of any script,
+/// apostrophes, and hyphens survive; every dropped char or whitespace run
+/// collapses to a single space. Used only on the slot-less literal path —
+/// the slotted path slices the original input by byte offsets and must keep
+/// its plain-lowercase normalization.
+fn normalize_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut pending_space = false;
+    for c in s.to_lowercase().chars() {
+        if c.is_alphanumeric() || c == '\'' || c == '-' {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            out.push(c);
+            pending_space = false;
+        } else {
+            pending_space = true;
+        }
+    }
+    out
+}
+
 fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option<IntentMatch> {
     let segments = split_phrase(phrase);
     let normalised_input = input.to_lowercase();
@@ -106,9 +130,10 @@ fn try_match_phrase(phrase: &str, rule: &HostPatternRule, input: &str) -> Option
     // fragments), so the best contiguous word-window is scored too, at a
     // slight discount so exact whole-utterance matches win ties.
     if let [Segment::Literal(lit)] = segments.as_slice() {
-        let lit_lower = lit.to_lowercase();
-        let whole = normalized_damerau_levenshtein(&lit_lower, &normalised_input);
-        let sim = whole.max(best_window_similarity(&lit_lower, &normalised_input) * 0.95);
+        let lit_lower = normalize_literal(lit);
+        let input_norm = normalize_literal(input);
+        let whole = normalized_damerau_levenshtein(&lit_lower, &input_norm);
+        let sim = whole.max(best_window_similarity(&lit_lower, &input_norm) * 0.95);
         #[allow(clippy::cast_possible_truncation)]
         return Some(IntentMatch {
             intent: Intent {
@@ -285,6 +310,31 @@ mod tests {
             idx.insert(locale.into(), r, skill.into());
         }
         idx
+    }
+
+    #[test]
+    fn literal_with_symbols_matches_clean_speech() {
+        // Config-derived phrases can carry icon/emoji characters (Jeedom
+        // room names like "salon 🖴"); speech recognition never produces
+        // them, so they must not count against the match.
+        let idx = index_with(vec![(
+            rule(
+                "jeedom.read.142",
+                &["quelle température dans le salon 🖴"],
+                &[],
+            ),
+            "fr",
+            "jeedom",
+        )]);
+        let m = IntentMatcher::new()
+            .find_match("quelle température dans le salon", "fr", &idx)
+            .expect("emoji in the stored phrase must be ignored");
+        assert_eq!(m.intent.name, "jeedom.read.142");
+        assert!(
+            m.confidence > 0.95,
+            "clean speech vs emoji-carrying phrase should be a near-exact match, got {}",
+            m.confidence
+        );
     }
 
     #[test]
