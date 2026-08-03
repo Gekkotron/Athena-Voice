@@ -24,11 +24,11 @@ COPY --from=build /src/target/release/athena-voice /app/athena-voice
 # entrypoint can copy them out on first boot). The [skills] dir the runtime
 # actually loads from is /data/skills, on the writable /data volume — the
 # web UI's upload_skill needs a location that survives image updates and
-# isn't a root-owned image layer. New images do NOT overwrite skills already
-# seeded into /data/skills; the web UI's bundled-skill picker can reinstall
-# an updated bundled skill on demand.
+# isn't a root-owned image layer. The entrypoint seeds them on first boot
+# and auto-refreshes unmodified bundled skills on image updates (manifest-
+# tracked); user-uploaded or user-replaced skills are never touched.
 COPY --from=build --chown=athena:athena /src/skills /app/skills
-# Baked-in default config; docker-compose bind-mounts the user's copy over it.
+# Baked-in default config; docker-compose mounts the user's copy over it.
 COPY athena.docker.example.toml /app/athena.docker.toml
 COPY --chown=athena:athena docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

@@ -129,11 +129,10 @@ Updating:
 
 Data (web-edited skill settings) lives in the `athena-data`
 volume and survives updates and restarts. Bundled skills are seeded into
-that same volume on first boot; the admin UI can also upload or reinstall
-skills there, and they persist across image updates. After an image update,
-NEW bundled skills included in that image do not auto-appear — the volume
-is seeded only on first boot; install them via the admin UI's
-bundled-skill picker.
+that same volume on first boot and **kept up to date automatically**: an
+image update refreshes any bundled skill you haven't modified (a seed
+manifest tracks what shipped), while skills you uploaded or replaced via
+the admin UI are never touched by updates.
 
 ### Native install (no Docker)
 
