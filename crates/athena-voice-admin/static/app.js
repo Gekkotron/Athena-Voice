@@ -11,7 +11,7 @@ const T = {
     install: 'Install', no_settings: 'This skill has no settings.',
     needs_config: 'needs config', key: 'Key', value: 'Value',
     test_connection: 'Test connection', testing: 'Testing…',
-    jeedom_ok: 'Jeedom reachable, version ', jeedom_unauthorized: 'Invalid API key',
+    jeedom_ok: 'Jeedom reachable — API key valid', jeedom_unauthorized: 'Invalid API key',
     jeedom_unreachable: 'Jeedom unreachable — check the URL', jeedom_bad_response: 'Unexpected reply — is this a Jeedom URL?',
     jeedom_unconfigured: 'Save the URL and API key first',
     discover: 'Discover sensors', discovering: 'Scanning…',
@@ -27,7 +27,7 @@ const T = {
     install: 'Installer', no_settings: 'Cette compétence n’a aucun réglage.',
     needs_config: 'à configurer', key: 'Clé', value: 'Valeur',
     test_connection: 'Tester la connexion', testing: 'Test en cours…',
-    jeedom_ok: 'Jeedom joignable, version ', jeedom_unauthorized: 'Clé API invalide',
+    jeedom_ok: 'Jeedom joignable — clé API valide', jeedom_unauthorized: 'Clé API invalide',
     jeedom_unreachable: 'Jeedom injoignable — vérifiez l’URL', jeedom_bad_response: 'Réponse inattendue — est-ce bien une URL Jeedom ?',
     jeedom_unconfigured: 'Enregistrez d’abord l’URL et la clé API',
     discover: 'Découvrir les capteurs', discovering: 'Analyse en cours…',
@@ -186,7 +186,7 @@ async function renderDetail(skill) {
           jmsg.textContent = t('testing');
           const body = await (await api('/api/skills/jeedom/test', { method: 'POST' })).json();
           jmsg.textContent = body.status === 'ok'
-            ? t('jeedom_ok') + body.version
+            ? t('jeedom_ok')
             : t(`jeedom_${body.status}`);
         },
       }),

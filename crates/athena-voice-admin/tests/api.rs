@@ -749,13 +749,20 @@ async fn deps_with_jeedom_config(base_url: &str) -> AdminDeps {
 }
 
 #[tokio::test]
-async fn jeedom_test_reports_ok_with_version() {
+async fn jeedom_test_reports_ok_via_object_list() {
+    // The documented lightweight authenticated call is `type=object`
+    // (https://doc.jeedom.com/fr_FR/core/4.5/api_http) — `type=version`
+    // does NOT exist in the HTTP API (Jeedom 4.5 returns an empty body,
+    // which the old heuristic misread as a bad key).
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/core/api/jeeApi.php"))
-        .and(wiremock::matchers::query_param("type", "version"))
+        .and(wiremock::matchers::query_param("type", "object"))
         .and(wiremock::matchers::query_param("apikey", "sekret-key-123"))
-        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("4.4.19"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .set_body_string(r#"[{"id":"1","name":"Salon"},{"id":"2","name":"Garage"}]"#),
+        )
         .mount(&server)
         .await;
     let deps = deps_with_jeedom_config(&server.uri()).await;
@@ -767,7 +774,6 @@ async fn jeedom_test_reports_ok_with_version() {
         .unwrap();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["status"], "ok");
-    assert_eq!(body["version"], "4.4.19");
     assert!(
         !String::from_utf8_lossy(&bytes).contains("sekret-key-123"),
         "api key must never be echoed"
@@ -789,6 +795,24 @@ async fn jeedom_test_classifies_failures() {
         .oneshot(post("/api/skills/jeedom/test"))
         .await
         .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["status"], "unauthorized");
+
+    // An empty 200 body (e.g. an unknown `type=` call) is not proof of a
+    // valid key either — must not report ok.
+    let empty = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(""))
+        .mount(&empty)
+        .await;
+    let deps = deps_with_jeedom_config(&empty.uri()).await;
+    let app = router(deps);
+    let res = app.oneshot(post("/api/skills/jeedom/test")).await.unwrap();
     let body: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(res.into_body(), 1 << 20)
             .await

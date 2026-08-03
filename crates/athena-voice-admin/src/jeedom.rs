@@ -49,22 +49,17 @@ fn status_json(status: &str) -> Response {
     Json(serde_json::json!({ "status": status })).into_response()
 }
 
-/// Version strings look like "4.4.19"; anything else that came back 2xx is
-/// Jeedom's prose error for a bad key.
-fn looks_like_version(body: &str) -> bool {
-    let t = body.trim();
-    !t.is_empty()
-        && t.len() <= 32
-        && t.chars().all(|c| c.is_ascii_digit() || c == '.')
-        && t.contains('.')
-}
-
 pub(crate) async fn test_connection(State(state): State<AppState>) -> Response {
     let Some(cfg) = resolved_config(&state).await else {
         return status_json("unconfigured");
     };
+    // `type=object` is the lightest documented authenticated call in the
+    // Jeedom HTTP API (https://doc.jeedom.com/fr_FR/core/4.5/api_http):
+    // a valid key returns the object list as a JSON array; a bad key gets
+    // Jeedom's prose error (still HTTP 200). `type=version` does NOT exist
+    // in this API — Jeedom 4.5 answers it with an empty body.
     let url = format!(
-        "{}/core/api/jeeApi.php?apikey={}&type=version",
+        "{}/core/api/jeeApi.php?apikey={}&type=object",
         cfg.base_url, cfg.api_key
     );
     let Ok(resp) = state
@@ -82,10 +77,9 @@ pub(crate) async fn test_connection(State(state): State<AppState>) -> Response {
     let Ok(body) = resp.text().await else {
         return status_json("bad_response");
     };
-    if looks_like_version(&body) {
-        Json(serde_json::json!({ "status": "ok", "version": body.trim() })).into_response()
-    } else {
-        status_json("unauthorized")
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Ok(serde_json::Value::Array(_)) => status_json("ok"),
+        _ => status_json("unauthorized"),
     }
 }
 
