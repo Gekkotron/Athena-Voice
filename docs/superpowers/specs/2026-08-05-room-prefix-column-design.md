@@ -38,8 +38,12 @@ manual work, and the odd ones become a one-cell fix.
     « quelle est la {metric} dans {art}{room} ». Unmapped prefixes
     (« d' », « chez ») generate no dans-forms — « dans d'Alicia » must never
     exist.
-- Everything else in the skill (read path, read_all enumeration, answer
-  phrasing, intent names) is untouched.
+- `metric_of` strips the sensor's own prefix (when set) before falling back
+  to the hardcoded article list — otherwise a name like « température
+  d'alicia » would yield the metric « température d' » and break read_all
+  grouping. Non-prefixed sensors keep the existing behavior exactly.
+- Everything else in the skill (read path, answer phrasing, intent names)
+  is untouched.
 
 ## Discovery + re-sync (admin UI)
 
