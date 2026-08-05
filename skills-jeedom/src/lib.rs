@@ -267,11 +267,19 @@ fn metric_of(sensor: &Sensor) -> String {
         return name;
     }
     let head = name[..name.len() - room.len()].trim_end();
-    let head = ["du", "de la", "de l’", "de l'", "de", "dans le", "dans la"]
-        .iter()
-        .find_map(|art| head.strip_suffix(art))
-        .unwrap_or(head)
-        .trim_end();
+    // A configured prefix is stripped first — « température d'alicia » with
+    // prefix « d' » must yield « température », and « d' » is not in the
+    // hardcoded article fallback list.
+    let prefix = sensor.prefix.trim().to_lowercase();
+    let head = if !prefix.is_empty() && head.ends_with(&prefix) {
+        head[..head.len() - prefix.len()].trim_end()
+    } else {
+        ["du", "de la", "de l’", "de l'", "de", "dans le", "dans la"]
+            .iter()
+            .find_map(|art| head.strip_suffix(art))
+            .unwrap_or(head)
+            .trim_end()
+    };
     if head.is_empty() { name } else { head.to_string() }
 }
 
@@ -289,6 +297,28 @@ fn resolve_in<'a>(list: &'a [Sensor], asked: &str) -> Option<&'a Sensor> {
         .filter(|(sim, _)| *sim >= FUZZY_THRESHOLD)
         .max_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, s)| s)
+}
+
+/// Joins a French connector to a room: no space after an elided form
+/// (« d'alicia »), one space otherwise (« du salon »).
+fn join_prefix(prefix: &str, room: &str) -> String {
+    if prefix.ends_with('\'') || prefix.ends_with('’') {
+        format!("{prefix}{room}")
+    } else {
+        format!("{prefix} {room}")
+    }
+}
+
+/// Definite article implied by a de-form prefix, for locative « dans … »
+/// phrases. Unmapped prefixes (« d' », « chez ») get no dans-form —
+/// « dans d'Alicia » must never exist.
+fn dans_article(prefix: &str) -> Option<&'static str> {
+    match prefix.trim() {
+        "du" => Some("le"),
+        "de la" => Some("la"),
+        "de l'" | "de l’" => Some("l'"),
+        _ => None,
+    }
 }
 
 /// Builds the full set of match rules for a locale from a sensor list.
@@ -349,20 +379,41 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
             let metric = metric_of(sensor);
             let room = &sensor.room;
             match locale {
-                "fr" => literal_phrases.extend([
-                    format!("quelle {metric} dans le {room}"),
-                    format!("quelle {metric} dans la {room}"),
-                    format!("{metric} dans le {room}"),
-                    format!("{metric} dans la {room}"),
-                    // Natural full-sentence forms: "quelle
-                    // est la température dans le salon" / "… du salon".
-                    format!("quelle est la {metric} dans le {room}"),
-                    format!("quelle est la {metric} dans la {room}"),
-                    format!("quelle est la {metric} du {room}"),
-                    format!("quelle est la {metric} de la {room}"),
-                    format!("{metric} du {room}"),
-                    format!("{metric} de la {room}"),
-                ]),
+                "fr" => {
+                    if sensor.prefix.is_empty() {
+                        literal_phrases.extend([
+                            format!("quelle {metric} dans le {room}"),
+                            format!("quelle {metric} dans la {room}"),
+                            format!("{metric} dans le {room}"),
+                            format!("{metric} dans la {room}"),
+                            // Natural full-sentence forms: "quelle
+                            // est la température dans le salon" / "… du salon".
+                            format!("quelle est la {metric} dans le {room}"),
+                            format!("quelle est la {metric} dans la {room}"),
+                            format!("quelle est la {metric} du {room}"),
+                            format!("quelle est la {metric} de la {room}"),
+                            format!("{metric} du {room}"),
+                            format!("{metric} de la {room}"),
+                        ]);
+                    } else {
+                        // The configured connector replaces the article
+                        // guessing entirely; locative « dans » forms exist
+                        // only when the prefix maps to a definite article.
+                        let with_room = join_prefix(&sensor.prefix, room);
+                        literal_phrases.extend([
+                            format!("{metric} {with_room}"),
+                            format!("quelle est la {metric} {with_room}"),
+                        ]);
+                        if let Some(article) = dans_article(&sensor.prefix) {
+                            let loc = join_prefix(article, room);
+                            literal_phrases.extend([
+                                format!("{metric} dans {loc}"),
+                                format!("quelle {metric} dans {loc}"),
+                                format!("quelle est la {metric} dans {loc}"),
+                            ]);
+                        }
+                    }
+                }
                 "en" => literal_phrases.extend([
                     format!("{metric} in the {room}"),
                     format!("what is the {metric} in the {room}"),
@@ -600,6 +651,50 @@ mod tests {
         // the room rule routes to the literal per-sensor intent
         assert!(rules.iter().any(|r| r.intent == "jeedom.read.142"
             && r.phrases.iter().any(|p| p.contains("dans le salon"))));
+    }
+
+    #[test]
+    fn prefix_generates_elided_phrases_without_dans_forms() {
+        let list = vec![sp("température d'alicia", 7, "alicia", "d'")];
+        let rules = rules_for("fr", &list);
+        let all: Vec<&str> = rules
+            .iter()
+            .flat_map(|r| r.phrases.iter().map(String::as_str))
+            .collect();
+        assert!(all.contains(&"quelle est la température d'alicia"), "got: {all:?}");
+        assert!(all.contains(&"température d'alicia"), "got: {all:?}");
+        assert!(
+            !all.iter().any(|p| p.contains("dans")),
+            "no dans-form for an unmapped prefix: {all:?}"
+        );
+        assert!(
+            !all.iter().any(|p| p.contains("du alicia") || p.contains("de la alicia")),
+            "legacy article enumeration must be gone when a prefix is set: {all:?}"
+        );
+    }
+
+    #[test]
+    fn prefix_du_keeps_locative_dans_forms() {
+        let list = vec![sp("température du salon", 142, "salon", "du")];
+        let rules = rules_for("fr", &list);
+        let all: Vec<&str> = rules
+            .iter()
+            .flat_map(|r| r.phrases.iter().map(String::as_str))
+            .collect();
+        assert!(all.contains(&"température du salon"), "got: {all:?}");
+        assert!(all.contains(&"quelle est la température du salon"), "got: {all:?}");
+        assert!(all.contains(&"température dans le salon"), "got: {all:?}");
+        assert!(all.contains(&"quelle température dans le salon"), "got: {all:?}");
+        assert!(all.contains(&"quelle est la température dans le salon"), "got: {all:?}");
+        assert!(
+            !all.contains(&"température de la salon"),
+            "wrong-gender enumeration gone when prefix set: {all:?}"
+        );
+    }
+
+    #[test]
+    fn metric_word_strips_configured_prefix() {
+        assert_eq!(metric_of(&sp("température d'alicia", 7, "alicia", "d'")), "température");
     }
 
     #[test]
