@@ -238,7 +238,12 @@ function listEditor(f, current, opts = {}) {
           } else {
             cell = el('input', { type: c.type === 'number' ? 'number' : 'text' });
             cell.value = row[c.key] ?? '';
+            // `change` fires after `oninput` already mutated the row, so the
+            // pre-edit value is snapshotted at focus for onCellChange.
+            let before;
+            cell.onfocus = () => { before = row[c.key]; };
             cell.oninput = () => { row[c.key] = c.type === 'number' ? Number(cell.value) : cell.value; edited(); };
+            cell.onchange = () => { if (opts.onCellChange) opts.onCellChange(c.key, row, before); };
           }
           const enabled = opts.enabledWhen && opts.enabledWhen[c.key];
           if (enabled) cell.disabled = !enabled(row);
@@ -327,6 +332,14 @@ async function renderDetail(skill) {
     rowActions: readCell,
     rowDetail: (row) => sensorDetail(row),
     onEdit: () => { jd.stale = true; findSensorsTable()?.classList.add('stale'); },
+    onCellChange: (key, row, oldValue) => {
+      if (key !== 'prefix') return;
+      const swapped = swapNameSuffix(
+        String(row.name || ''), String(oldValue || ''),
+        String(row.prefix || ''), String(row.room || ''),
+      );
+      if (swapped !== row.name) { row.name = swapped; findSensorsTable()?.rerender(); }
+    },
   } : undefined;
   const pmsg = el('p', { class: 'help' });
   async function refreshPhrases() {
