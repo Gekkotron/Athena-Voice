@@ -240,6 +240,30 @@ pub(crate) async fn read_one(State(state): State<AppState>, Path(id): Path<u64>)
     Json(serde_json::json!({ "status": "ok", "value": spoken })).into_response()
 }
 
+/// Every configured locale's pattern rules from the LOADED jeedom skill, via
+/// the registry's rule cache — the UI shows the truth about what can be said
+/// instead of re-deriving phrase templates in JS. Reflects the SAVED config:
+/// a config save reloads the plugin, which repopulates the cache.
+pub(crate) async fn phrases(State(state): State<AppState>) -> Response {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    if let Some(handle) = &state.skills {
+        for locale in &handle.deps.locales {
+            for rule in handle
+                .registry
+                .skill_rules("jeedom", locale)
+                .unwrap_or_default()
+            {
+                out.push(serde_json::json!({
+                    "intent": rule.intent,
+                    "locale": locale,
+                    "phrases": rule.phrases,
+                }));
+            }
+        }
+    }
+    Json(serde_json::json!({ "phrases": out })).into_response()
+}
+
 pub(crate) async fn discover(State(state): State<AppState>) -> Response {
     let Some(cfg) = resolved_config(&state).await else {
         return status_json("unconfigured");

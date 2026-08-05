@@ -949,6 +949,125 @@ async fn jeedom_discover_aborts_on_oversized_response() {
     );
 }
 
+/// Like `test_skill_deps` but with per-skill config, so a loaded skill's
+/// `pattern_rules` export actually sees settings (e.g. jeedom sensors).
+fn test_skill_deps_with(
+    store: Arc<dyn Store>,
+    per_skill: HashMap<String, SkillConfig>,
+) -> SkillDeps {
+    SkillDeps {
+        per_skill,
+        ..test_skill_deps(store)
+    }
+}
+
+#[tokio::test]
+async fn jeedom_phrases_lists_per_sensor_rules_for_every_locale() {
+    // Real JEEDOM_TEST_WASM, loaded with one configured sensor: the endpoint
+    // must surface that sensor's literal rules under jeedom.read.{id} for
+    // both configured locales, straight from the registry's rule cache.
+    let store = test_store().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        athena_voice_runtime::test_support::JEEDOM_TEST_WASM,
+        skills_dir.path().join("jeedom.wasm"),
+    )
+    .expect("copy jeedom.wasm into the skills dir fixture");
+    let per_skill = HashMap::from([(
+        "jeedom".to_string(),
+        SkillConfig {
+            config: HashMap::from([(
+                "sensors".to_string(),
+                r#"[{"name":"température salon","id":142,"unit":"°C","room":"salon"}]"#
+                    .to_string(),
+            )]),
+            ..Default::default()
+        },
+    )]);
+    let load_deps = test_skill_deps_with(store.clone(), per_skill);
+    let registry = SkillRegistry::load_dir(skills_dir.path(), &load_deps)
+        .expect("load configured jeedom.wasm");
+    let deps = admin_deps(
+        store,
+        Arc::new(registry),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    );
+    let app = router(deps);
+
+    let res = app
+        .oneshot(get("/api/skills/jeedom/phrases"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let entries = body["phrases"].as_array().unwrap();
+    assert!(!entries.is_empty());
+
+    let fr_group = entries
+        .iter()
+        .find(|e| e["intent"] == "jeedom.read.142" && e["locale"] == "fr")
+        .expect("fr literal rule group for the configured sensor");
+    let fr_phrases: Vec<&str> = fr_group["phrases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap())
+        .collect();
+    assert!(
+        fr_phrases.contains(&"quelle est la température salon"),
+        "expected the name-derived literal phrase, got {fr_phrases:?}"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| e["intent"] == "jeedom.read.142" && e["locale"] == "en"),
+        "en locale group must be present too"
+    );
+}
+
+#[tokio::test]
+async fn jeedom_phrases_empty_when_skill_not_loaded() {
+    // No skill runtime at all (skills: None) → empty phrases, same shape.
+    let deps = test_deps().await;
+    let app = router(deps);
+    let res = app
+        .oneshot(get("/api/skills/jeedom/phrases"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, serde_json::json!({ "phrases": [] }));
+
+    // Runtime present but jeedom not loaded → also empty.
+    let store = test_store().await;
+    let dir = tempfile::tempdir().unwrap();
+    let deps = admin_deps(
+        store,
+        Arc::new(SkillRegistry::new()),
+        dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    );
+    let app = router(deps);
+    let res = app
+        .oneshot(get("/api/skills/jeedom/phrases"))
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, serde_json::json!({ "phrases": [] }));
+}
+
 // Jeedom single-sensor read endpoint tests
 
 async fn read_body(res: axum::response::Response<Body>) -> serde_json::Value {
