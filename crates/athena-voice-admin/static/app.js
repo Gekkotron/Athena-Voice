@@ -334,11 +334,18 @@ async function renderDetail(skill) {
     onEdit: () => { jd.stale = true; findSensorsTable()?.classList.add('stale'); },
     onCellChange: (key, row, oldValue) => {
       if (key !== 'prefix') return;
+      // Normalize what was typed before it drives anything: straight
+      // apostrophe (the skill does the same at parse time) and no stray
+      // spaces — a trailing space would compose a double-space name.
+      const typed = String(row.prefix || '');
+      row.prefix = typed.replace(/’/g, "'").trim();
       const swapped = swapNameSuffix(
         String(row.name || ''), String(oldValue || ''),
-        String(row.prefix || ''), String(row.room || ''),
+        row.prefix, String(row.room || ''),
       );
-      if (swapped !== row.name) { row.name = swapped; findSensorsTable()?.rerender(); }
+      const nameChanged = swapped !== row.name;
+      if (nameChanged) row.name = swapped;
+      if (nameChanged || row.prefix !== typed) findSensorsTable()?.rerender();
     },
   } : undefined;
   const pmsg = el('p', { class: 'help' });

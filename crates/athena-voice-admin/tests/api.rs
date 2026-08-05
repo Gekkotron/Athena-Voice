@@ -280,6 +280,19 @@ async fn static_assets_served_with_mime() {
             mime,
             "{path}"
         );
+        // The assets are baked into the binary: without no-cache, a browser
+        // can heuristically keep serving the previous release's app.js after
+        // an image update (observed live: new skill schema + stale JS saved
+        // a prefix without recomposing the sensor name).
+        assert_eq!(
+            res.headers()
+                .get(header::CACHE_CONTROL)
+                .expect("static assets must send Cache-Control")
+                .to_str()
+                .unwrap(),
+            "no-cache",
+            "{path}"
+        );
     }
     let missing = app.oneshot(get("/nope.png")).await.unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);

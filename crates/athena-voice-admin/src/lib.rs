@@ -118,5 +118,16 @@ async fn static_asset(uri: Uri) -> Response {
         Some("css") => "text/css; charset=utf-8",
         _ => "application/octet-stream",
     };
-    ([(header::CONTENT_TYPE, mime)], file.contents()).into_response()
+    // no-cache = revalidate on every use. The assets are embedded in the
+    // binary, so freshness otherwise changes only on process upgrade — and
+    // heuristic browser caching was observed serving a previous release's
+    // app.js against a newer skill schema.
+    (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        file.contents(),
+    )
+        .into_response()
 }
