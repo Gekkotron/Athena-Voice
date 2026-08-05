@@ -978,8 +978,7 @@ async fn jeedom_phrases_lists_per_sensor_rules_for_every_locale() {
         SkillConfig {
             config: HashMap::from([(
                 "sensors".to_string(),
-                r#"[{"name":"température salon","id":142,"unit":"°C","room":"salon"}]"#
-                    .to_string(),
+                r#"[{"name":"température salon","id":142,"unit":"°C","room":"salon"}]"#.to_string(),
             )]),
             ..Default::default()
         },
@@ -1071,7 +1070,9 @@ async fn jeedom_phrases_empty_when_skill_not_loaded() {
 // Jeedom single-sensor read endpoint tests
 
 async fn read_body(res: axum::response::Response<Body>) -> serde_json::Value {
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     assert!(
         !String::from_utf8_lossy(&bytes).contains("sekret-key-123"),
         "api key must never be echoed"
