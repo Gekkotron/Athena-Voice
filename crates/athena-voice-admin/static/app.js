@@ -456,7 +456,7 @@ async function renderDetail(skill) {
             for (const eq of room.equipments) {
               for (const cmd of eq.cmds) {
                 fresh.set(cmd.id, {
-                  name: composeSensorName(cmd.name, eq.name, room.name),
+                  cmdName: cmd.name, eqName: eq.name, roomName: room.name,
                   room: (room.name || '').toLowerCase(),
                   unit: cmd.unit || '',
                   kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
@@ -472,7 +472,16 @@ async function renderDetail(skill) {
             const id = Number(row.id);
             const disc = fresh.get(id);
             if (!disc) { jd.missing.add(id); continue; }
-            jd.diffs[id] = Object.entries(disc)
+            // The compared name honors the ROW's stored prefix — the user's
+            // correction, not a Jeedom fact — and prefix itself is never
+            // diffed, so re-sync can't offer to revert « d' » to « de l' ».
+            const wanted = {
+              name: composeSensorName(disc.cmdName, disc.eqName, disc.roomName,
+                row.prefix ? String(row.prefix) : undefined),
+              room: disc.room, unit: disc.unit, kind: disc.kind,
+              on_label: disc.on_label, off_label: disc.off_label,
+            };
+            jd.diffs[id] = Object.entries(wanted)
               .filter(([field, value]) => {
                 // Stored kind may be '' — the skill treats that as numeric.
                 const stored = field === 'kind' ? (row.kind || 'numeric') : String(row[field] ?? '');
