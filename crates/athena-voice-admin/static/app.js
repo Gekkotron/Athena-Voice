@@ -68,6 +68,45 @@ function composeSensorName(cmdName, eqName, room) {
   return article.endsWith('’') ? `${cmd} ${article}${r}` : `${cmd} ${article} ${r}`;
 }
 
+// Mirror of the matcher's `normalize_literal` (runtime intent/engine.rs):
+// lowercase; keep letters/digits of any script, apostrophes, and hyphens;
+// collapse every dropped char or whitespace run into a single space. This is
+// the form the matcher actually compares against speech, so it drives both
+// the symbols chip ("entendu comme …") and duplicate detection.
+function normalizeLiteral(s) {
+  let out = '';
+  let pending = false;
+  for (const c of String(s).toLowerCase()) {
+    if (/[\p{L}\p{N}'-]/u.test(c)) {
+      if (pending && out) out += ' ';
+      out += c;
+      pending = false;
+    } else {
+      pending = true;
+    }
+  }
+  return out;
+}
+
+// Normalized phrases that appear under MORE THAN ONE per-sensor intent
+// (jeedom.read.{id}) — name collisions like six sensors all called
+// "température". groups: intent -> {locale -> [phrases]}.
+function duplicatePhrases(groups) {
+  const firstIntent = new Map();
+  const dupes = new Set();
+  for (const [intent, locales] of Object.entries(groups)) {
+    if (!/^jeedom\.read\.\d+$/.test(intent)) continue;
+    for (const phrases of Object.values(locales)) {
+      for (const p of phrases) {
+        const n = normalizeLiteral(p);
+        if (!firstIntent.has(n)) firstIntent.set(n, intent);
+        else if (firstIntent.get(n) !== intent) dupes.add(n);
+      }
+    }
+  }
+  return dupes;
+}
+
 const app = document.getElementById('app');
 
 async function api(path, opts = {}) {
@@ -263,7 +302,76 @@ async function renderDetail(skill) {
     rowDetail: (row) => sensorDetail(row),
     onEdit: () => { jd.stale = true; findSensorsTable()?.classList.add('stale'); },
   } : undefined;
-  function sensorDetail() { return null; } // replaced by the phrase-hints task
+  const pmsg = el('p', { class: 'help' });
+  async function refreshPhrases() {
+    if (!jd) return;
+    let body;
+    try { body = await (await api('/api/skills/jeedom/phrases')).json(); } catch { return; }
+    jd.phraseGroups = {};
+    for (const p of body.phrases) {
+      (jd.phraseGroups[p.intent] ??= {})[p.locale] = p.phrases;
+    }
+    jd.duplicates = duplicatePhrases(jd.phraseGroups);
+    jd.stale = false;
+    const table = findSensorsTable();
+    if (table) { table.classList.remove('stale'); table.rerender(); }
+    const anySensorGroup = Object.keys(jd.phraseGroups).some((k) => /^jeedom\.read\.\d+$/.test(k));
+    pmsg.textContent = anySensorGroup ? '' : t('no_phrases');
+  }
+  function sensorDetail(row) {
+    const id = Number(row.id);
+    const bits = [];
+    // Re-sync outcome (filled by the Re-sync button): per-field apply chips
+    // and the gone-from-Jeedom badge. The row itself is kept — removal
+    // stays the user's explicit choice.
+    if (jd.missing.has(id)) bits.push(el('span', { class: 'chip warn', text: t('gone_from_jeedom') }));
+    for (const d of jd.diffs[id] || []) {
+      bits.push(el('span', { class: 'chip sync' },
+        el('span', { text: `Jeedom: ${d.field} = ${d.value === '' ? '—' : d.value} ` }),
+        el('button', {
+          class: 'quiet', text: t('apply'),
+          onclick: () => {
+            row[d.field] = d.value;
+            jd.diffs[id] = (jd.diffs[id] || []).filter((x) => x !== d);
+            jd.stale = true;
+            const table = findSensorsTable();
+            if (table) { table.classList.add('stale'); table.rerender(); }
+          },
+        }),
+      ));
+    }
+    // Symbols chip: the stored name/room carries characters the matcher
+    // strips — show the form actually compared against speech.
+    for (const key of ['name', 'room']) {
+      const v = String(row[key] || '');
+      if (v && normalizeLiteral(v) !== v.toLowerCase()) {
+        bits.push(el('span', { class: 'chip warn', text: `${t('matched_as')} « ${normalizeLiteral(v)} »` }));
+        break;
+      }
+    }
+    // "Vous pouvez dire…" — what the SAVED config generates for this sensor,
+    // in the UI's language (fall back to any locale that has phrases).
+    const locales = jd.phraseGroups[`jeedom.read.${id}`];
+    const phrases = locales ? (locales[lang] || Object.values(locales)[0] || []) : [];
+    if (phrases.length) {
+      if (phrases.some((p) => jd.duplicates.has(normalizeLiteral(p)))) {
+        bits.push(el('span', { class: 'chip warn', text: t('duplicate_phrase') }));
+      }
+      const shown = jd.expanded.has(id) ? phrases : phrases.slice(0, 2);
+      const line = el('span', { class: 'hint' },
+        el('span', { text: `${t('you_can_say')} ${shown.map((p) => `« ${p} »`).join(', ')}` }),
+      );
+      if (phrases.length > shown.length) {
+        line.append(el('button', {
+          class: 'quiet', text: ` +${phrases.length - shown.length}`,
+          onclick: () => { jd.expanded.add(id); findSensorsTable()?.rerender(); },
+        }));
+      }
+      bits.push(line);
+    }
+    if (!bits.length) return null;
+    return el('span', {}, ...bits);
+  }
   const widgets = fields.map((f) => {
     const w = fieldInput(f, skill.config[f.key], f.key === 'sensors' ? sensorOpts : undefined);
     card.append(w);
@@ -293,8 +401,9 @@ async function renderDetail(skill) {
           renderDiscoveryTree(tree, body.rooms, findSensorsTable());
         },
       }),
-      jmsg, tree,
+      jmsg, pmsg, tree,
     );
+    refreshPhrases();
   }
   card.append(el('button', {
     text: t('save'),
@@ -318,6 +427,9 @@ async function renderDetail(skill) {
       if (!res.ok) { msg.textContent = body.error; msg.className = 'error'; return; }
       msg.textContent = body.reload_error ? t('reload_failed') + body.reload_error : t('saved');
       msg.className = body.reload_error ? 'error' : 'notice';
+      // The save reloaded the skill server-side — hints reflect the new
+      // SAVED config now, so drop the stale marker and refetch.
+      if (jd) refreshPhrases();
     },
   }), msg);
   app.replaceChildren(card);
