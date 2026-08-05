@@ -70,6 +70,10 @@ pub fn router(deps: AdminDeps) -> Router {
             "/skills/jeedom/discover",
             axum::routing::post(jeedom::discover),
         )
+        .route(
+            "/skills/jeedom/read/{id}",
+            axum::routing::post(jeedom::read_one),
+        )
         .route("/skills/upload", axum::routing::post(api::upload_skill))
         .route("/bundled", get(api::list_bundled))
         .route(

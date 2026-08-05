@@ -949,6 +949,98 @@ async fn jeedom_discover_aborts_on_oversized_response() {
     );
 }
 
+// Jeedom single-sensor read endpoint tests
+
+async fn read_body(res: axum::response::Response<Body>) -> serde_json::Value {
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    assert!(
+        !String::from_utf8_lossy(&bytes).contains("sekret-key-123"),
+        "api key must never be echoed"
+    );
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn jeedom_read_normalizes_value_shapes() {
+    // The same tolerance as the skill's read path: bare JSON scalar,
+    // string-wrapped number, and `{"value": …}` envelope all normalize to
+    // the same spoken string.
+    for (raw_body, expected) in [
+        ("21.5", "21.5"),
+        (r#""21.5""#, "21.5"),
+        (r#"{"value":21.5}"#, "21.5"),
+    ] {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/core/api/jeeApi.php"))
+            .and(wiremock::matchers::query_param("type", "cmd"))
+            .and(wiremock::matchers::query_param("id", "142"))
+            .and(wiremock::matchers::query_param("apikey", "sekret-key-123"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(raw_body))
+            .mount(&server)
+            .await;
+        let deps = deps_with_jeedom_config(&server.uri()).await;
+        let app = router(deps);
+        let res = app
+            .oneshot(post("/api/skills/jeedom/read/142"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = read_body(res).await;
+        assert_eq!(body["status"], "ok", "raw body {raw_body}");
+        assert_eq!(body["value"], expected, "raw body {raw_body}");
+    }
+}
+
+#[tokio::test]
+async fn jeedom_read_prose_error_is_bad_response() {
+    // A bad key gets Jeedom's prose sentence (HTTP 200, not JSON). Decision
+    // pinned by the spec: prose body = bad_response here — a bad key would
+    // have already failed the test/discover flow.
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("Clé API non valide"))
+        .mount(&server)
+        .await;
+    let deps = deps_with_jeedom_config(&server.uri()).await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/read/142"))
+        .await
+        .unwrap();
+    assert_eq!(read_body(res).await["status"], "bad_response");
+}
+
+#[tokio::test]
+async fn jeedom_read_unreachable_and_unconfigured() {
+    let deps = deps_with_jeedom_config("http://127.0.0.1:1").await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/read/142"))
+        .await
+        .unwrap();
+    assert_eq!(read_body(res).await["status"], "unreachable");
+
+    let deps = test_deps().await; // no jeedom config at all
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/read/142"))
+        .await
+        .unwrap();
+    assert_eq!(read_body(res).await["status"], "unconfigured");
+}
+
+#[tokio::test]
+async fn jeedom_read_non_numeric_id_is_400() {
+    let deps = test_deps().await;
+    let app = router(deps);
+    let res = app
+        .oneshot(post("/api/skills/jeedom/read/abc"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn jeedom_discover_prunes_empty_equipment_and_rooms() {
     // Fixture: Salon has one eqLogic with only action cmds (pruned).

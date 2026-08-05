@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 
@@ -196,6 +196,48 @@ fn parse_fulldata(raw: &serde_json::Value) -> Option<Vec<DiscoveredRoom>> {
         }
     }
     Some(rooms)
+}
+
+/// Host-side single-sensor read with the SAVED merged config — same pattern
+/// as test/discover: the API key never travels to the browser, and the URL
+/// (which embeds the key as a query param) is never logged.
+pub(crate) async fn read_one(State(state): State<AppState>, Path(id): Path<u64>) -> Response {
+    let Some(cfg) = resolved_config(&state).await else {
+        return status_json("unconfigured");
+    };
+    let url = format!(
+        "{}/core/api/jeeApi.php?apikey={}&type=cmd&id={id}",
+        cfg.base_url, cfg.api_key
+    );
+    let Ok(resp) = state
+        .http
+        .get(&url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    else {
+        return status_json("unreachable");
+    };
+    if !resp.status().is_success() {
+        return status_json("bad_response");
+    }
+    let Ok(body) = resp.text().await else {
+        return status_json("bad_response");
+    };
+    // A bad key gets Jeedom's prose sentence (HTTP 200) — not valid JSON, so
+    // it lands on bad_response; test/discover already classify authorization.
+    let Ok(raw) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return status_json("bad_response");
+    };
+    // Same tolerance as the skill's read path: bare scalar, string-wrapped
+    // number, or a `{"value": …}` envelope.
+    let value = raw.get("value").cloned().unwrap_or(raw);
+    let spoken = match value {
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s,
+        other => other.to_string(),
+    };
+    Json(serde_json::json!({ "status": "ok", "value": spoken })).into_response()
 }
 
 pub(crate) async fn discover(State(state): State<AppState>) -> Response {
