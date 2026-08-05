@@ -16,6 +16,10 @@ const T = {
     jeedom_unconfigured: 'Save the URL and API key first',
     discover: 'Discover sensors', discovering: 'Scanning…',
     add_selection: 'Add selection', nothing_discovered: 'No readable commands found',
+    read: 'Read', resync: 'Re-sync', you_can_say: 'You can say…',
+    duplicate_phrase: 'duplicate — another sensor answers the same phrase',
+    matched_as: 'matched as', apply: 'Apply', gone_from_jeedom: 'gone from Jeedom',
+    no_phrases: 'no phrases — save sensors first',
   },
   fr: {
     save: 'Enregistrer', skills: 'Compétences',
@@ -32,6 +36,10 @@ const T = {
     jeedom_unconfigured: 'Enregistrez d’abord l’URL et la clé API',
     discover: 'Découvrir les capteurs', discovering: 'Analyse en cours…',
     add_selection: 'Ajouter la sélection', nothing_discovered: 'Aucune commande lisible trouvée',
+    read: 'Lire', resync: 'Re-synchroniser', you_can_say: 'Vous pouvez dire…',
+    duplicate_phrase: 'doublon — un autre capteur répond à la même phrase',
+    matched_as: 'entendu comme', apply: 'Appliquer', gone_from_jeedom: 'disparu de Jeedom',
+    no_phrases: 'aucune phrase — enregistrez des capteurs',
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
@@ -121,8 +129,8 @@ async function renderList() {
   app.replaceChildren(list, await uploadCard());
 }
 
-function fieldInput(f, current) {
-  if (f.type === 'list') return listEditor(f, current);
+function fieldInput(f, current, opts) {
+  if (f.type === 'list') return listEditor(f, current, opts);
   const type = f.type === 'secret' ? 'password' : f.type === 'number' ? 'number' : 'text';
   const input = el('input', { type, id: `f-${f.key}`, autocomplete: 'off' });
   if (current && current.kind === 'plain') input.value = current.value;
@@ -134,30 +142,66 @@ function fieldInput(f, current) {
   return wrap;
 }
 
-function listEditor(f, current) {
+// Optional column hooks so a skill view can shape the table without the
+// editor knowing that skill:
+//   opts.selects:     { colKey: [choices] } — a <select> instead of an input
+//   opts.enabledWhen: { colKey: (row) => bool } — disable the cell when false
+//   opts.rowActions:  (row, i) => [Node…] — extra cells per row
+//   opts.rowDetail:   (row, i) => Node|null — full-width line under the row
+//   opts.onEdit:      () => void — any user edit to any cell
+function listEditor(f, current, opts = {}) {
   let rows = [];
   try { rows = current && current.kind === 'plain' ? JSON.parse(current.value) : []; } catch {}
   const table = el('table', { 'data-list': f.key });
+  const edited = () => { if (opts.onEdit) opts.onEdit(); };
   const render = () => {
+    const actionCols = opts.rowActions ? 1 : 0;
     table.replaceChildren(
-      el('tr', {}, ...f.item_fields.map((c) => el('th', { text: c.key })), el('th')),
-      ...rows.map((row, i) => el('tr', {},
-        ...f.item_fields.map((c) => {
-          const cell = el('input', { type: c.type === 'number' ? 'number' : 'text' });
-          cell.value = row[c.key] ?? '';
-          cell.oninput = () => { row[c.key] = c.type === 'number' ? Number(cell.value) : cell.value; };
+      el('tr', {},
+        ...f.item_fields.map((c) => el('th', { text: c.key })),
+        ...(opts.rowActions ? [el('th')] : []),
+        el('th')),
+      ...rows.flatMap((row, i) => {
+        const tds = f.item_fields.map((c) => {
+          const choices = opts.selects && opts.selects[c.key];
+          let cell;
+          if (choices) {
+            cell = el('select', {}, ...choices.map((v) => el('option', { value: v, text: v })));
+            cell.value = choices.includes(row[c.key]) ? row[c.key] : choices[0];
+            // A select change can re-enable/disable sibling cells — re-render.
+            cell.onchange = () => { row[c.key] = cell.value; edited(); render(); };
+          } else {
+            cell = el('input', { type: c.type === 'number' ? 'number' : 'text' });
+            cell.value = row[c.key] ?? '';
+            cell.oninput = () => { row[c.key] = c.type === 'number' ? Number(cell.value) : cell.value; edited(); };
+          }
+          const enabled = opts.enabledWhen && opts.enabledWhen[c.key];
+          if (enabled) cell.disabled = !enabled(row);
           return el('td', {}, cell);
-        }),
-        el('td', {}, el('button', { class: 'quiet', text: t('remove'), onclick: () => { rows.splice(i, 1); render(); } })),
-      )),
+        });
+        if (opts.rowActions) tds.push(el('td', {}, ...opts.rowActions(row, i)));
+        tds.push(el('td', {}, el('button', {
+          class: 'quiet', text: t('remove'),
+          onclick: () => { rows.splice(i, 1); edited(); render(); },
+        })));
+        const trs = [el('tr', {}, ...tds)];
+        const detail = opts.rowDetail && opts.rowDetail(row, i);
+        if (detail) {
+          const td = el('td', {}, detail);
+          td.setAttribute('colspan', String(f.item_fields.length + 1 + actionCols));
+          trs.push(el('tr', { class: 'row-detail' }, td));
+        }
+        return trs;
+      }),
     );
   };
   render();
   table.getRows = () => rows;
-  table.addRows = (newRows) => { rows.push(...newRows); render(); };
+  table.addRows = (newRows) => { rows.push(...newRows); edited(); render(); };
+  table.rerender = render;
   return el('div', {},
     el('label', { text: f.label || f.key }), table,
-    el('button', { class: 'quiet', text: t('add_row'), onclick: () => { rows.push({}); render(); } }),
+    el('button', { class: 'quiet', text: t('add_row'), onclick: () => { rows.push({}); edited(); render(); } }),
     f.help ? el('p', { class: 'help', text: f.help }) : '',
   );
 }
@@ -173,12 +217,61 @@ async function renderDetail(skill) {
   if (skill.schema && fields.length === 0) {
     card.append(el('p', { class: 'help', text: t('no_settings') }));
   }
-  const widgets = fields.map((f) => { const w = fieldInput(f, skill.config[f.key]); card.append(w); return [f, w]; });
+  // --- jeedom sensor-table state: live reads, phrase hints, re-sync diffs.
+  // One object so rowDetail/rowActions closures and the buttons below share
+  // it. `findSensorsTable` closes over `widgets` (declared later) but is
+  // only ever called on user clicks, long after initialization. ---
+  const jd = skill.name === 'jeedom' ? {
+    reads: {},            // sensor id -> {status, value}
+    reading: false,       // one in-flight read at a time
+    phraseGroups: {},     // intent -> {locale -> [phrases]}
+    duplicates: new Set(),
+    expanded: new Set(),  // sensor ids with the full phrase list shown
+    stale: false,         // edits since the last phrases fetch
+    diffs: {},            // sensor id -> [{field, value}]
+    missing: new Set(),   // sensor ids absent from the last re-sync
+  } : null;
+  const findSensorsTable = () =>
+    widgets.find(([f]) => f.key === 'sensors')?.[1].querySelector('table');
+  const readCell = (row) => {
+    const id = Number(row.id);
+    const r = jd.reads[id];
+    const out = el('span', { class: r && r.status === 'ok' ? 'read-ok' : 'read-err' });
+    if (r) out.textContent = r.status === 'ok'
+      ? `${r.value}${row.unit ? ` ${row.unit}` : ''}`
+      : t(`jeedom_${r.status}`);
+    return [el('button', {
+      class: 'quiet', text: t('read'),
+      onclick: async () => {
+        if (jd.reading || !Number.isFinite(id)) return;
+        jd.reading = true;
+        try {
+          const res = await api(`/api/skills/jeedom/read/${id}`, { method: 'POST' });
+          jd.reads[id] = res.ok ? await res.json() : { status: 'bad_response' };
+        } finally { jd.reading = false; }
+        findSensorsTable()?.rerender();
+      },
+    }), out];
+  };
+  const sensorOpts = jd ? {
+    selects: { kind: ['numeric', 'binary'] },
+    enabledWhen: {
+      on_label: (row) => row.kind === 'binary',
+      off_label: (row) => row.kind === 'binary',
+    },
+    rowActions: readCell,
+    rowDetail: (row) => sensorDetail(row),
+    onEdit: () => { jd.stale = true; findSensorsTable()?.classList.add('stale'); },
+  } : undefined;
+  function sensorDetail() { return null; } // replaced by the phrase-hints task
+  const widgets = fields.map((f) => {
+    const w = fieldInput(f, skill.config[f.key], f.key === 'sensors' ? sensorOpts : undefined);
+    card.append(w);
+    return [f, w];
+  });
   if (skill.name === 'jeedom') {
     const jmsg = el('p', { class: 'help' });
     const tree = el('div');
-    const findSensorsTable = () =>
-      widgets.find(([f]) => f.key === 'sensors')?.[1].querySelector('table');
     card.append(
       el('button', {
         class: 'quiet', text: t('test_connection'),

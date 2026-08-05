@@ -36,3 +36,14 @@ td, th { padding: .25rem .4rem; border: 1px solid var(--line); font-size: .85rem
 .error { color: var(--danger); min-height: 1.2em; }
 .notice { color: var(--ok); }
 .secret-set { color: var(--muted); font-size: .8rem; }
+select { padding: .35rem .4rem; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
+input:disabled, select:disabled { opacity: .45; }
+.read-ok { color: var(--ok); font-size: .85rem; white-space: nowrap; }
+.read-err { color: var(--danger); font-size: .85rem; }
+.row-detail td { border-top: 0; padding: 0 .4rem .3rem; color: var(--muted); font-size: .78rem; }
+.hint { color: var(--muted); }
+.chip { display: inline-block; font-size: .72rem; padding: .05rem .45rem; margin-right: .35rem; border-radius: 999px; border: 1px solid var(--line); }
+.chip.warn { color: var(--danger); border-color: var(--danger); }
+.chip.sync { color: var(--accent); border-color: var(--accent); }
+.chip button, .hint button { padding: 0 .3rem; font-size: .72rem; }
+table.stale .hint::before { content: '· '; color: var(--accent); font-weight: 700; }
