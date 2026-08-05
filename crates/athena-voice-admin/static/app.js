@@ -58,14 +58,40 @@ const FR_ROOM_ARTICLES = {
 // "porte du garage". When the command name is one of these, compose from
 // the equipment name instead.
 const GENERIC_CMD_NAMES = ['état', 'etat', 'statut', 'status', 'state', 'valeur', 'value', 'ouverture'];
-function composeSensorName(cmdName, eqName, room) {
+// Article guess for a room, as the de-form connector stored in the prefix
+// column. Straight apostrophes only — the skill's parse-time cleaning
+// normalizes « ’ » to « ' », and generated names should start clean.
+function guessRoomPrefix(room) {
+  const r = (room || '').toLowerCase();
+  if (!r) return '';
+  if (/^[aeéèiouy]/.test(r)) return "de l'";
+  return FR_ROOM_ARTICLES[r] || '';
+}
+
+// "d'alicia" / "du salon" / bare room when no prefix — the one spacing rule
+// shared by name composition and the prefix-edit suffix swap.
+function composedRoomSuffix(prefix, room) {
+  if (!room) return '';
+  if (!prefix) return room;
+  return /['’]$/.test(prefix) ? `${prefix}${room}` : `${prefix} ${room}`;
+}
+
+function composeSensorName(cmdName, eqName, room, prefix) {
   const isGeneric = GENERIC_CMD_NAMES.includes(cmdName.toLowerCase());
   const cmd = (isGeneric ? eqName : cmdName).toLowerCase();
   if (!room) return cmd;
   const r = room.toLowerCase();
-  const article = /^[aeéèiouy]/.test(r) ? 'de l’' : FR_ROOM_ARTICLES[r];
-  if (!article) return `${cmd} ${r}`;
-  return article.endsWith('’') ? `${cmd} ${article}${r}` : `${cmd} ${article} ${r}`;
+  const p = prefix !== undefined ? prefix : guessRoomPrefix(r);
+  return `${cmd} ${composedRoomSuffix(p, r)}`;
+}
+
+// Prefix edit: recompose the name ONLY when it still ends with the old
+// prefix+room suffix (never customized); a hand-edited name always wins.
+function swapNameSuffix(name, oldPrefix, newPrefix, room) {
+  const r = (room || '').toLowerCase();
+  const oldSuffix = composedRoomSuffix(oldPrefix, r);
+  if (!r || !oldSuffix || !name.endsWith(oldSuffix)) return name;
+  return name.slice(0, name.length - oldSuffix.length) + composedRoomSuffix(newPrefix, r);
 }
 
 // Mirror of the matcher's `normalize_literal` (runtime intent/engine.rs):
@@ -553,6 +579,7 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
         id: cmd.id,
         unit: cmd.unit || '',
         room: (room || '').toLowerCase(),
+        prefix: guessRoomPrefix(room),
         kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
         on_label: cmd.on_label || '',
         off_label: cmd.off_label || '',
