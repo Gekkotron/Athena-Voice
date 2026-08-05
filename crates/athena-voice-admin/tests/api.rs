@@ -978,7 +978,9 @@ async fn jeedom_phrases_lists_per_sensor_rules_for_every_locale() {
         SkillConfig {
             config: HashMap::from([(
                 "sensors".to_string(),
-                r#"[{"name":"température salon","id":142,"unit":"°C","room":"salon"}]"#.to_string(),
+                r#"[{"name":"température salon","id":142,"unit":"°C","room":"salon"},
+                    {"name":"température d'alicia","id":7,"room":"alicia","prefix":"d'"}]"#
+                    .to_string(),
             )]),
             ..Default::default()
         },
@@ -1026,6 +1028,19 @@ async fn jeedom_phrases_lists_per_sensor_rules_for_every_locale() {
             .iter()
             .any(|e| e["intent"] == "jeedom.read.142" && e["locale"] == "en"),
         "en locale group must be present too"
+    );
+
+    let alicia = entries
+        .iter()
+        .find(|e| e["intent"] == "jeedom.read.7" && e["locale"] == "fr")
+        .expect("fr group for the prefixed sensor");
+    assert!(
+        alicia["phrases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "quelle est la température d'alicia"),
+        "elided prefix phrase must survive the wasm + registry round trip: {alicia}"
     );
 }
 
