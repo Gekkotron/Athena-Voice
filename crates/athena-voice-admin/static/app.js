@@ -401,6 +401,51 @@ async function renderDetail(skill) {
           renderDiscoveryTree(tree, body.rooms, findSensorsTable());
         },
       }),
+      el('button', {
+        class: 'quiet', text: t('resync'),
+        onclick: async () => {
+          jmsg.textContent = t('discovering');
+          const body = await (await api('/api/skills/jeedom/discover', { method: 'POST' })).json();
+          if (body.status !== 'ok') { jmsg.textContent = t(`jeedom_${body.status}`); return; }
+          jmsg.textContent = '';
+          const table = findSensorsTable();
+          // What discovery would store today, per command id — the same
+          // composition the "add selection" flow uses, so diffs compare
+          // stored values against exactly what a fresh add would write.
+          const fresh = new Map();
+          for (const room of body.rooms) {
+            for (const eq of room.equipments) {
+              for (const cmd of eq.cmds) {
+                fresh.set(cmd.id, {
+                  name: composeSensorName(cmd.name, eq.name, room.name),
+                  room: (room.name || '').toLowerCase(),
+                  unit: cmd.unit || '',
+                  kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
+                  on_label: cmd.on_label || '',
+                  off_label: cmd.off_label || '',
+                });
+              }
+            }
+          }
+          jd.diffs = {};
+          jd.missing = new Set();
+          for (const row of table?.getRows() || []) {
+            const id = Number(row.id);
+            const disc = fresh.get(id);
+            if (!disc) { jd.missing.add(id); continue; }
+            jd.diffs[id] = Object.entries(disc)
+              .filter(([field, value]) => {
+                // Stored kind may be '' — the skill treats that as numeric.
+                const stored = field === 'kind' ? (row.kind || 'numeric') : String(row[field] ?? '');
+                return stored !== String(value);
+              })
+              .map(([field, value]) => ({ field, value }));
+          }
+          // Sensors NOT in the table go through the existing tree flow.
+          renderDiscoveryTree(tree, body.rooms, table);
+          table?.rerender();
+        },
+      }),
       jmsg, pmsg, tree,
     );
     refreshPhrases();
