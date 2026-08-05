@@ -70,7 +70,7 @@ And extend the `s()` helper so the struct literal still compiles once the field 
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p skills-jeedom prefix_parses_cleans_and_defaults_empty`
+Run: `cargo test --manifest-path skills-jeedom/Cargo.toml prefix_parses_cleans_and_defaults_empty`
 Expected: FAIL to compile — `Sensor` has no field `prefix`.
 
 - [ ] **Step 3: Implement field + parse + schema**
@@ -105,7 +105,7 @@ And update the sensors field help string to: `"Spoken name → Jeedom command id
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p skills-jeedom`
+Run: `cargo test --manifest-path skills-jeedom/Cargo.toml`
 Expected: all PASS (new test plus the untouched legacy suite).
 
 - [ ] **Step 5: Commit**
@@ -177,7 +177,7 @@ git -c user.name=Gekkotron -c user.email=60887050+Gekkotron@users.noreply.github
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p skills-jeedom prefix_`
+Run: `cargo test --manifest-path skills-jeedom/Cargo.toml prefix_`
 Expected: the two phrase tests FAIL (phrases like « du alicia » present, « d'alicia » absent); `metric_word_strips_configured_prefix` FAILS with « température d' ».
 
 - [ ] **Step 3: Implement helpers + branches**
@@ -265,7 +265,7 @@ In `metric_of`, replace the article-strip block with a prefix-aware version:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p skills-jeedom`
+Run: `cargo test --manifest-path skills-jeedom/Cargo.toml`
 Expected: all PASS — including the UNTOUCHED `room_query_phrases_are_generated` (empty-prefix regression pin) and `metric_word_strips_room_suffix`.
 
 - [ ] **Step 5: Commit**

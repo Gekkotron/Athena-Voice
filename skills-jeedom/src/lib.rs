@@ -53,6 +53,11 @@ struct Sensor {
     /// Spoken word for the "off"/false state of a binary sensor.
     #[serde(default)]
     off_label: String,
+    /// French connector spoken before the room (« du », « de la », « d' »).
+    /// Filled by discovery's article guess; empty keeps the legacy
+    /// both-genders phrase enumeration.
+    #[serde(default)]
+    prefix: String,
 }
 
 static SENSORS: OnceCell<Vec<Sensor>> = OnceCell::new();
@@ -91,6 +96,7 @@ fn parse_sensors(raw: &str) -> Vec<Sensor> {
         s.room = clean_spoken(&s.room);
         s.on_label = clean_spoken(&s.on_label);
         s.off_label = clean_spoken(&s.off_label);
+        s.prefix = clean_spoken(&s.prefix.replace('’', "'"));
     }
     v
 }
@@ -470,7 +476,8 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                 label: "Sensors".into(),
                 kind: FieldKind::List,
                 required: false,
-                help: "Spoken name → Jeedom command id; room/kind filled by discovery".into(),
+                help: "Spoken name → Jeedom command id; room/kind/prefix filled by discovery"
+                    .into(),
                 default: String::new(),
                 item_fields: vec![
                     ItemField {
@@ -490,6 +497,11 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                     },
                     ItemField {
                         key: "room".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "prefix".into(),
                         kind: FieldKind::String,
                         required: false,
                     },
@@ -523,7 +535,27 @@ mod tests {
         Sensor {
             name: name.into(), id, unit: unit.into(), room: room.into(),
             kind: kind.into(), on_label: on.into(), off_label: off.into(),
+            prefix: String::new(),
         }
+    }
+
+    fn sp(name: &str, id: u64, room: &str, prefix: &str) -> Sensor {
+        Sensor {
+            prefix: prefix.into(),
+            ..s(name, id, "", room, "numeric", "", "")
+        }
+    }
+
+    #[test]
+    fn prefix_parses_cleans_and_defaults_empty() {
+        let raw = r#"[{"name":"température d'alicia","id":7,"room":"alicia","prefix":"d’"},
+                      {"name":"température du salon","id":8,"room":"salon"}]"#;
+        let v = parse_sensors(raw);
+        assert_eq!(
+            v[0].prefix, "d'",
+            "typographic apostrophe normalized to straight"
+        );
+        assert_eq!(v[1].prefix, "", "missing prefix defaults empty");
     }
 
     #[test]
