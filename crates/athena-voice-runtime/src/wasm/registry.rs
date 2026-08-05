@@ -377,6 +377,20 @@ impl SkillRegistry {
             .cloned()
     }
 
+    /// Raw pattern rules the named skill contributed for `locale`, from the
+    /// per-plugin cache captured at install/reload time — the registry's own
+    /// record of that skill's `pattern_rules(locale)` export, so no guest
+    /// call happens here. `None` when the skill isn't loaded; `Some(vec![])`
+    /// when it is loaded but contributed nothing for this locale.
+    #[must_use]
+    pub fn skill_rules(&self, name: &str, locale: &str) -> Option<Vec<HostPatternRule>> {
+        self.plugin_rules
+            .lock()
+            .expect("plugin_rules lock poisoned")
+            .get(name)
+            .map(|per_locale| per_locale.get(locale).cloned().unwrap_or_default())
+    }
+
     /// Rebuild one plugin from a single file path and re-run [`install`].
     ///
     /// The `name` is derived from the file stem. On failure the previous
@@ -859,6 +873,29 @@ mod tests {
             .expect("valid skills must still load despite one broken file");
         assert!(reg.skill_names().contains(&"smoke-test".to_string()));
         assert!(!reg.skill_names().contains(&"broken".to_string()));
+    }
+
+    #[test]
+    fn skill_rules_exposes_cached_rules_per_locale() {
+        let reg = SkillRegistry::new();
+        let mock = simple_mock(&[("fr", vec![rule("hello", "bonjour")])]);
+        reg.install("greeter", mock, &["fr".to_string()]).unwrap();
+
+        let rules = reg.skill_rules("greeter", "fr").expect("loaded skill");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].intent, "hello");
+        assert_eq!(rules[0].phrases, vec!["bonjour".to_string()]);
+        // Loaded skill, locale it never contributed to → empty vec, not None.
+        assert!(
+            reg.skill_rules("greeter", "de")
+                .expect("still loaded")
+                .is_empty()
+        );
+        // Unknown skill → None.
+        assert!(reg.skill_rules("nope", "fr").is_none());
+        // Removal clears the cache entry.
+        reg.remove("greeter");
+        assert!(reg.skill_rules("greeter", "fr").is_none());
     }
 
     #[test]
