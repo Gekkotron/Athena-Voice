@@ -22,19 +22,31 @@ Jeedom's HTTP API runs an action command with the same GET the skill
 already uses for reads: `core/api/jeeApi.php?apikey=…&type=cmd&id=<id>`.
 For an action-type command this call executes it. No new host functions.
 
+One host-function behavior fix is required: Jeedom answers an action
+execution with plain text or an empty body, and the existing
+`http_get_json` host function currently treats a non-JSON body as an
+error. `fetch_json` (runtime `wasm/host_fns.rs`) is changed to fall back
+to wrapping a non-JSON 2xx body as a JSON string instead of erroring;
+transport and HTTP-status failures still error. This also improves
+reads of plain-string sensors.
+
 ## Skill config (`skills-jeedom`)
 
 New `actions` config field, a JSON list parallel to `sensors`:
 
 ```json
-[{ "name": "lumière", "room": "salon", "prefix": "du",
+[{ "name": "lumière du salon", "room": "salon", "prefix": "du",
    "on_id": 124, "off_id": 125, "confirm": false }]
 ```
 
+- Like sensors, `name` stores the FULL composed spoken name ("lumière du
+  salon") — the discovery UI composes it client-side exactly as it does
+  for sensors; `room`/`prefix` are auxiliary metadata.
 - All spoken fields pass through the existing `clean_spoken`.
-- Composed spoken form follows the sensor rule: `name` + prefix/room
-  ("lumière du salon"). Empty room → bare name.
-- `confirm: true` marks the device as requiring spoken confirmation.
+- `confirm: true` marks the device as requiring spoken confirmation. It
+  is a real JSON boolean, backed by a new `FieldKind::Bool` item-field
+  kind (SDK schema + admin validation + a checkbox cell in the admin
+  list editor).
 
 ## Intents and phrases
 
@@ -88,8 +100,8 @@ Answers:
      Allumer/Éteindre, Marche/Arrêt, Activer/Désactiver.
   3. Unpaired action commands are ignored (out of scope).
 - The discovery API response gains an `actions` array per equipment:
-  `{ on_id, off_id, suggested_name }` where `suggested_name` composes the
-  equipment name + room exactly like sensors do.
+  `{ on_id, off_id }`. The spoken name is composed CLIENT-side from the
+  equipment name + room, exactly like sensors (`composeSensorName`).
 - UI: the discovery tree shows an action row per paired device beside the
   sensor rows, with (a) an include checkbox, (b) an editable spoken-name
   field pre-filled with `suggested_name`, (c) a "confirmation" checkbox
@@ -98,8 +110,9 @@ Answers:
 - The "You can say…" phrase preview lists the turn_on/turn_off phrases
   for saved devices (via the existing phrases endpoint, which reads the
   wasm's registered rules — no special-casing).
-- Locale strings (en/fr) for the new column labels: "Actions",
-  "confirmation".
+- Column headers follow the existing list-editor convention (raw item
+  keys, like the sensors table); the discovery row badge is localized
+  (en "on/off device" / fr "appareil on/off").
 
 ## Error handling
 
