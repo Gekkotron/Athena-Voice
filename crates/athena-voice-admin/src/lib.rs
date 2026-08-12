@@ -3,6 +3,7 @@
 
 pub(crate) mod api;
 pub(crate) mod jeedom;
+pub(crate) mod test_command;
 pub(crate) mod validate;
 
 use std::collections::HashMap;
@@ -20,6 +21,8 @@ use include_dir::{Dir, include_dir};
 use athena_voice_runtime::SkillsHandle;
 use athena_voice_runtime::wasm::registry::SkillConfig;
 use athena_voice_storage::Store;
+
+pub use test_command::AdminMqttConfig;
 
 static ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/static");
 
