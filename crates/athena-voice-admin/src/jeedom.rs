@@ -105,10 +105,74 @@ pub(crate) struct DiscoveredCmd {
     off_label: Option<String>,
 }
 
+/// One paired on/off device discovered on an equipment.
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub(crate) struct DiscoveredAction {
+    pub(crate) on_id: u64,
+    pub(crate) off_id: u64,
+}
+
+/// A raw action-type command as seen in fullData, before pairing.
+pub(crate) struct ActionCmd {
+    pub(crate) id: u64,
+    pub(crate) name: String,
+    pub(crate) generic: Option<String>,
+}
+
+/// On/off name vocabulary, index-aligned: `NAME_ON[i]` pairs `NAME_OFF[i]`.
+const NAME_ON: [&str; 4] = ["on", "allumer", "marche", "activer"];
+const NAME_OFF: [&str; 4] = ["off", "éteindre", "arrêt", "désactiver"];
+
+/// Pairs raw action commands into on/off devices: `generic_type`
+/// (`FOO_ON`/`FOO_OFF` with the same prefix) first, then case-insensitive
+/// name vocabulary. Unpaired commands are ignored (dimmers, scenarios and
+/// friends are out of scope).
+pub(crate) fn pair_actions(cmds: &[ActionCmd]) -> Vec<DiscoveredAction> {
+    let mut out = Vec::new();
+    let mut used: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    // Pass 1: generic_type prefixes.
+    for c in cmds {
+        let Some(prefix) = c.generic.as_deref().and_then(|g| g.strip_suffix("_ON")) else {
+            continue;
+        };
+        let off_generic = format!("{prefix}_OFF");
+        if let Some(off) = cmds
+            .iter()
+            .find(|o| o.generic.as_deref() == Some(off_generic.as_str()) && !used.contains(&o.id))
+        {
+            if used.insert(c.id) && used.insert(off.id) {
+                out.push(DiscoveredAction {
+                    on_id: c.id,
+                    off_id: off.id,
+                });
+            }
+        }
+    }
+    // Pass 2: name vocabulary, index-aligned (On↔Off, Allumer↔Éteindre, …).
+    for (i, on_name) in NAME_ON.iter().enumerate() {
+        let on = cmds
+            .iter()
+            .find(|c| !used.contains(&c.id) && c.name.to_lowercase() == *on_name);
+        let off = cmds
+            .iter()
+            .find(|c| !used.contains(&c.id) && c.name.to_lowercase() == NAME_OFF[i]);
+        if let (Some(on), Some(off)) = (on, off) {
+            used.insert(on.id);
+            used.insert(off.id);
+            out.push(DiscoveredAction {
+                on_id: on.id,
+                off_id: off.id,
+            });
+        }
+    }
+    out
+}
+
 #[derive(serde::Serialize)]
 pub(crate) struct DiscoveredEquipment {
     name: String,
     cmds: Vec<DiscoveredCmd>,
+    actions: Vec<DiscoveredAction>,
 }
 
 #[derive(serde::Serialize)]
@@ -145,15 +209,29 @@ fn parse_fulldata(raw: &serde_json::Value) -> Option<Vec<DiscoveredRoom>> {
                 .get("cmds")
                 .and_then(|v| v.as_array())
                 .map_or(&[][..], |a| a.as_slice());
+            let mut action_cmds: Vec<ActionCmd> = Vec::new();
             for cmd in cmd_iter {
-                if cmd.get("type").and_then(|v| v.as_str()) != Some("info") {
-                    continue;
-                }
+                let cmd_type = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("");
                 let name = cmd.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let Some(id) = cmd.get("id").and_then(cmd_id) else {
                     continue;
                 };
                 if name.is_empty() {
+                    continue;
+                }
+                if cmd_type == "action" {
+                    action_cmds.push(ActionCmd {
+                        id,
+                        name: name.to_string(),
+                        generic: cmd
+                            .get("generic_type")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(String::from),
+                    });
+                    continue;
+                }
+                if cmd_type != "info" {
                     continue;
                 }
                 let display = cmd.get("display");
@@ -181,10 +259,12 @@ fn parse_fulldata(raw: &serde_json::Value) -> Option<Vec<DiscoveredRoom>> {
                     off_label: label("off_label"),
                 });
             }
-            if !cmds.is_empty() {
+            let actions = pair_actions(&action_cmds);
+            if !cmds.is_empty() || !actions.is_empty() {
                 equipments.push(DiscoveredEquipment {
                     name: eq_name,
                     cmds,
+                    actions,
                 });
             }
         }
@@ -304,5 +384,99 @@ pub(crate) async fn discover(State(state): State<AppState>) -> Response {
     match parse_fulldata(&raw) {
         Some(rooms) => Json(serde_json::json!({ "status": "ok", "rooms": rooms })).into_response(),
         None => status_json("bad_response"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ac(id: u64, name: &str, generic: Option<&str>) -> ActionCmd {
+        ActionCmd {
+            id,
+            name: name.into(),
+            generic: generic.map(String::from),
+        }
+    }
+
+    #[test]
+    fn pairs_by_generic_type_first() {
+        let cmds = vec![
+            ac(124, "Bouton On", Some("LIGHT_ON")),
+            ac(125, "Bouton Off", Some("LIGHT_OFF")),
+            ac(200, "Refresh", Some("DONT_CARE")),
+        ];
+        assert_eq!(
+            pair_actions(&cmds),
+            vec![DiscoveredAction {
+                on_id: 124,
+                off_id: 125
+            }]
+        );
+    }
+
+    #[test]
+    fn pairs_by_french_and_english_names() {
+        let cmds = vec![
+            ac(7, "Allumer", None),
+            ac(8, "Éteindre", None),
+            ac(30, "On", None),
+            ac(31, "Off", None),
+            ac(90, "Rafraîchir", None),
+        ];
+        let pairs = pair_actions(&cmds);
+        assert!(pairs.contains(&DiscoveredAction {
+            on_id: 7,
+            off_id: 8
+        }));
+        assert!(pairs.contains(&DiscoveredAction {
+            on_id: 30,
+            off_id: 31
+        }));
+        assert_eq!(pairs.len(), 2, "unpaired leftovers are ignored");
+    }
+
+    #[test]
+    fn fulldata_carries_paired_actions_per_equipment() {
+        let raw = serde_json::json!([{
+            "name": "Salon",
+            "eqLogics": [{
+                "name": "Lampe",
+                "cmds": [
+                    {"id": 1, "type": "info", "subType": "numeric", "name": "Puissance"},
+                    {"id": 124, "type": "action", "subType": "other", "name": "On"},
+                    {"id": 125, "type": "action", "subType": "other", "name": "Off"}
+                ]
+            }]
+        }]);
+        let rooms = parse_fulldata(&raw).unwrap();
+        let eq = &rooms[0].equipments[0];
+        assert_eq!(eq.cmds.len(), 1, "info commands unchanged");
+        assert_eq!(
+            eq.actions,
+            vec![DiscoveredAction {
+                on_id: 124,
+                off_id: 125
+            }]
+        );
+    }
+
+    #[test]
+    fn equipment_with_only_actions_still_surfaces() {
+        // An on/off-only device has no info commands; it must not be
+        // dropped by the "no cmds → skip equipment" guard.
+        let raw = serde_json::json!([{
+            "name": "Garage",
+            "eqLogics": [{
+                "name": "Portail",
+                "cmds": [
+                    {"id": 30, "type": "action", "subType": "other", "name": "Marche"},
+                    {"id": 31, "type": "action", "subType": "other", "name": "Arrêt"}
+                ]
+            }]
+        }]);
+        let rooms = parse_fulldata(&raw).unwrap();
+        assert_eq!(rooms.len(), 1);
+        assert_eq!(rooms[0].equipments[0].actions.len(), 1);
     }
 }

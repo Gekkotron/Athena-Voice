@@ -1251,9 +1251,11 @@ async fn jeedom_read_non_numeric_id_is_400() {
 
 #[tokio::test]
 async fn jeedom_discover_prunes_empty_equipment_and_rooms() {
-    // Fixture: Salon has one eqLogic with only action cmds (pruned).
-    // Kitchen has one eqLogic with an info cmd and an action cmd.
-    // Bathroom room has eqLogics but all cmds are actions or unnamed (room pruned).
+    // Fixture: Salon has one eqLogic with a paired on/off action device
+    // (survives as an action-only equipment). Kitchen has one eqLogic with
+    // an info cmd and an UNPAIRED action cmd (only the info cmd surfaces).
+    // Bathroom has only an unpairable action and an unnamed info cmd
+    // (room pruned).
     let pruning_fixture = r#"[
   { "name": "Salon", "eqLogics": [
     { "name": "Commutateur", "cmds": [
@@ -1297,17 +1299,32 @@ async fn jeedom_discover_prunes_empty_equipment_and_rooms() {
     let rooms = body["rooms"].as_array().unwrap();
     assert_eq!(
         rooms.len(),
-        1,
-        "only Cuisine survives (Salon + Salle de bain have no info cmds)"
+        2,
+        "Salon (paired on/off) + Cuisine survive; Salle de bain is pruned"
     );
-    assert_eq!(rooms[0]["name"], "Cuisine");
 
-    let equipments = rooms[0]["equipments"].as_array().unwrap();
+    let salon = rooms.iter().find(|r| r["name"] == "Salon").unwrap();
+    let commutateur = &salon["equipments"].as_array().unwrap()[0];
+    assert_eq!(commutateur["name"], "Commutateur");
+    assert_eq!(commutateur["cmds"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        commutateur["actions"],
+        serde_json::json!([{ "on_id": 1, "off_id": 2 }]),
+        "Allumer/Éteindre pair into one on/off device"
+    );
+
+    let cuisine = rooms.iter().find(|r| r["name"] == "Cuisine").unwrap();
+    let equipments = cuisine["equipments"].as_array().unwrap();
     assert_eq!(equipments.len(), 1);
     assert_eq!(equipments[0]["name"], "Capteur");
 
     let cmds = equipments[0]["cmds"].as_array().unwrap();
-    assert_eq!(cmds.len(), 1, "action cmd filtered out");
+    assert_eq!(cmds.len(), 1, "action cmd filtered out of info cmds");
     assert_eq!(cmds[0]["id"], 10);
     assert_eq!(cmds[0]["name"], "Température");
+    assert_eq!(
+        equipments[0]["actions"].as_array().unwrap().len(),
+        0,
+        "a lone Allumer with no Éteindre pairs with nothing"
+    );
 }
