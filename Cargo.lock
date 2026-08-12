@@ -257,6 +257,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "athena-voice-core",
  "athena-voice-runtime",
  "athena-voice-skill-sdk",
  "athena-voice-storage",
