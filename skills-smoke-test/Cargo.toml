@@ -22,3 +22,7 @@ lto = true
 codegen-units = 1
 opt-level = "z"
 strip = "symbols"
+
+# Standalone: never claimed by an ancestor workspace, even when the repo is
+# checked out as a git worktree nested inside another checkout.
+[workspace]
