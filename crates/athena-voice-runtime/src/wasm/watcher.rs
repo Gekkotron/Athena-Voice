@@ -73,7 +73,15 @@ pub fn spawn_watcher(
     // from an uninstall. Polling every 100 ms is deterministic across
     // platforms, cheap for the tiny "one wasm per skill" directory, and
     // covers editor-atomic saves (write to temp + rename) equally well.
-    let poll_config = Config::default().with_poll_interval(Duration::from_millis(100));
+    //
+    // compare_contents: PollWatcher stores mtimes in WHOLE SECONDS and only
+    // reports a modify when the stored second increases — a rewrite landing
+    // in the same second as the previous snapshot is otherwise invisible
+    // (no event, ever). Content hashing closes that hole; the directory is
+    // small enough that hashing per 100 ms poll is negligible.
+    let poll_config = Config::default()
+        .with_poll_interval(Duration::from_millis(100))
+        .with_compare_contents(true);
     let mut debouncer = new_debouncer_opt::<_, PollWatcher, RecommendedCache>(
         DEBOUNCE,
         None,
