@@ -39,7 +39,9 @@ fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
 }
 
 async fn body_json(res: axum::response::Response) -> serde_json::Value {
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
 

@@ -48,7 +48,11 @@ pub(crate) async fn run_text_session(
     // Unique client id: concurrent test requests and the runtime's own
     // MQTT client must never collide on the broker.
     let mut opts = MqttOptions::new(
-        format!("athena-admin-test-{}-{}", std::process::id(), &sid.to_string()[..8]),
+        format!(
+            "athena-admin-test-{}-{}",
+            std::process::id(),
+            &sid.to_string()[..8]
+        ),
         &cfg.host,
         cfg.port,
     );
@@ -101,7 +105,12 @@ pub(crate) async fn run_text_session(
                     )
                     .await;
                 let text_pub = client
-                    .publish(format!("{base}/text"), QoS::AtLeastOnce, false, text.to_string())
+                    .publish(
+                        format!("{base}/text"),
+                        QoS::AtLeastOnce,
+                        false,
+                        text.to_string(),
+                    )
                     .await;
                 if let Err(e) = start.and(text_pub) {
                     break Err(TestCommandError::Connect(e.to_string()));
