@@ -93,6 +93,12 @@ fn spawn_admin_ui(
         skills: runtime.skills.clone(),
         base_per_skill,
         bundled_dir: cfg.skills.bundled_dir.clone(),
+        mqtt: Some(athena_voice_admin::AdminMqttConfig {
+            host: cfg.mqtt.host.clone(),
+            port: cfg.mqtt.port,
+            username: cfg.mqtt.username.clone(),
+            password: cfg.mqtt.password.clone(),
+        }),
     };
     drop(tokio::spawn(async move {
         if let Err(e) = athena_voice_admin::serve(admin_addr, admin_deps).await {
