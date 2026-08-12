@@ -324,6 +324,10 @@ function listEditor(f, current, opts = {}) {
             cell.value = choices.includes(row[c.key]) ? row[c.key] : choices[0];
             // A select change can re-enable/disable sibling cells — re-render.
             cell.onchange = () => { row[c.key] = cell.value; edited(); render(); };
+          } else if (c.type === 'bool') {
+            cell = el('input', { type: 'checkbox' });
+            cell.checked = row[c.key] === true;
+            cell.onchange = () => { row[c.key] = cell.checked; edited(); };
           } else {
             cell = el('input', { type: c.type === 'number' ? 'number' : 'text' });
             cell.value = row[c.key] ?? '';

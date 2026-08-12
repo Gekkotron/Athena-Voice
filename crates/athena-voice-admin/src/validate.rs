@@ -32,6 +32,10 @@ pub(crate) fn validate(
 fn check(kind: FieldKind, raw: &str, key: &str, items: &[ItemField]) -> Result<(), String> {
     match kind {
         FieldKind::String | FieldKind::Secret => Ok(()),
+        FieldKind::Bool => match raw.trim() {
+            "" | "true" | "false" => Ok(()),
+            _ => Err(format!("`{key}` must be true or false")),
+        },
         FieldKind::Number => raw
             .trim()
             .parse::<f64>()
@@ -75,13 +79,14 @@ fn check(kind: FieldKind, raw: &str, key: &str, items: &[ItemField]) -> Result<(
                     };
                     let ok = match f.kind {
                         FieldKind::Number => v.is_number(),
+                        FieldKind::Bool => v.is_boolean(),
                         _ => v.is_string(),
                     };
                     if !ok {
-                        let want = if matches!(f.kind, FieldKind::Number) {
-                            "number"
-                        } else {
-                            "string"
+                        let want = match f.kind {
+                            FieldKind::Number => "number",
+                            FieldKind::Bool => "boolean",
+                            _ => "string",
                         };
                         return Err(format!("`{key}[{i}].{}` must be a {want}", f.key));
                     }
@@ -171,6 +176,31 @@ mod tests {
                 sensors,
             ],
         }
+    }
+
+    #[test]
+    fn list_bool_item_accepts_booleans_only() {
+        let mut actions = field("actions", FieldKind::List, false);
+        actions.item_fields = vec![
+            item_field("on_id", FieldKind::Number, true),
+            item_field("confirm", FieldKind::Bool, false),
+        ];
+        let schema = ConfigSchema {
+            fields: vec![actions],
+        };
+
+        let ok = HashMap::from([(
+            "actions".to_string(),
+            r#"[{"on_id":124,"confirm":true}]"#.to_string(),
+        )]);
+        assert!(validate(Some(&schema), &ok).is_ok());
+
+        let bad = HashMap::from([(
+            "actions".to_string(),
+            r#"[{"on_id":124,"confirm":"yes"}]"#.to_string(),
+        )]);
+        let err = validate(Some(&schema), &bad).unwrap_err();
+        assert!(err.contains("confirm"), "got: {err}");
     }
 
     #[test]
