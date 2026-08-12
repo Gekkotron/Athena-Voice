@@ -225,6 +225,76 @@ impl Skill for JeedomSkill {
             return Ok(SkillResponse::speak(clauses.join(", ")));
         }
 
+        // On/off device intents: the key riding in the intent name is the
+        // device's on_id, for both directions.
+        let turn = intent
+            .name
+            .strip_prefix("jeedom.turn_on.")
+            .map(|k| (k, true))
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.turn_off.")
+                    .map(|k| (k, false))
+            });
+        if let Some((key, on)) = turn {
+            let Some(device) = key
+                .parse::<u64>()
+                .ok()
+                .and_then(|k| actions(ctx).iter().find(|d| d.on_id == k))
+            else {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            };
+            let cmd_id = if on { device.on_id } else { device.off_id };
+            if device.confirm {
+                let label = action_label(device, on, en);
+                let pending = Pending {
+                    cmd_id,
+                    label: label.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec(&pending) {
+                    let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
+                }
+                return Ok(SkillResponse::speak(if en {
+                    format!("Confirm: {label}?")
+                } else {
+                    format!("Tu confirmes : {label} ?")
+                }));
+            }
+            return Ok(done_or_error(exec_cmd(ctx, cmd_id), en));
+        }
+
+        if intent.name == "jeedom.confirm" {
+            return Ok(match load_pending(ctx) {
+                Some(p) => {
+                    clear_pending(ctx);
+                    done_or_error(exec_cmd(ctx, p.cmd_id), en)
+                }
+                None => SkillResponse::speak(if en {
+                    "Nothing to confirm."
+                } else {
+                    "Rien à confirmer."
+                }),
+            });
+        }
+        if intent.name == "jeedom.cancel" {
+            return Ok(match load_pending(ctx) {
+                Some(_) => {
+                    clear_pending(ctx);
+                    SkillResponse::speak(if en { "Cancelled." } else { "Annulé." })
+                }
+                None => SkillResponse::speak(if en {
+                    "Nothing to confirm."
+                } else {
+                    "Rien à confirmer."
+                }),
+            });
+        }
+
         let asked = intent
             .slots
             .get("sensor")
@@ -606,8 +676,8 @@ fn action_rules(locale: &str, devices: &[ActionDevice]) -> Vec<PatternRule> {
     rules
 }
 
-/// Reads one command value through Jeedom's simple HTTP GET API.
-fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
+/// Builds the authenticated simple-API URL for one command id.
+fn jeedom_url(ctx: &HostCtx, id: u64) -> Result<String, ()> {
     let base = ctx
         .config_get_toml("base_url")
         .filter(|s| !s.is_empty())
@@ -616,11 +686,73 @@ fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
         .config_get_toml("api_key")
         .filter(|s| !s.is_empty())
         .ok_or(())?;
-    let url = format!(
-        "{}/core/api/jeeApi.php?apikey={api_key}&type=cmd&id={}",
+    Ok(format!(
+        "{}/core/api/jeeApi.php?apikey={api_key}&type=cmd&id={id}",
         base.trim_end_matches('/'),
-        sensor.id
-    );
+    ))
+}
+
+/// Executes one Jeedom ACTION command — same GET as a read; for an
+/// action-type command the call runs it. The body (plain "ok", empty, or
+/// JSON) is irrelevant: any 2xx counts as executed.
+fn exec_cmd(ctx: &HostCtx, id: u64) -> Result<(), ()> {
+    let url = jeedom_url(ctx, id)?;
+    match ctx.http_get_json(&url) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            ctx.log("warn", &format!("jeedom: action exec failed: {e}"));
+            Err(())
+        }
+    }
+}
+
+/// Pending confirmation, stored in the skill's tmp KV. The tmp store has
+/// no delete: "clear" = overwrite with an EMPTY payload (1 s TTL), and
+/// every reader treats an empty payload as absent.
+#[derive(Debug, serde::Serialize, Deserialize)]
+struct Pending {
+    cmd_id: u64,
+    label: String,
+}
+
+const PENDING_KEY: &str = "pending_action";
+const PENDING_TTL_SEC: u64 = 30;
+
+fn action_label(d: &ActionDevice, on: bool, en: bool) -> String {
+    match (on, en) {
+        (true, false) => format!("allumer {}", d.name),
+        (false, false) => format!("éteindre {}", d.name),
+        (true, true) => format!("turn on {}", d.name),
+        (false, true) => format!("turn off {}", d.name),
+    }
+}
+
+fn load_pending(ctx: &HostCtx) -> Option<Pending> {
+    let bytes = ctx.tmp_get(PENDING_KEY).ok().flatten()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn clear_pending(ctx: &HostCtx) {
+    let _ = ctx.tmp_set(PENDING_KEY, b"", 1);
+}
+
+fn done_or_error(executed: Result<(), ()>, en: bool) -> SkillResponse {
+    match executed {
+        Ok(()) => SkillResponse::speak(if en { "Done." } else { "C'est fait." }),
+        Err(()) => SkillResponse::speak(if en {
+            "sorry, I can't reach Jeedom right now"
+        } else {
+            "désolé, je n'arrive pas à joindre Jeedom"
+        }),
+    }
+}
+
+/// Reads one command value through Jeedom's simple HTTP GET API.
+fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
+    let url = jeedom_url(ctx, sensor.id)?;
     match ctx.http_get_json(&url) {
         // Numeric sensors come back as a bare JSON scalar; be tolerant of
         // string-wrapped numbers and `{"value": …}` envelopes too.
@@ -879,6 +1011,72 @@ mod tests {
     #[test]
     fn no_action_rules_without_devices() {
         assert!(action_rules("fr", &[]).is_empty());
+    }
+
+    #[test]
+    fn action_labels_phrase_both_locales() {
+        let d = a("lumière du salon", 124, 125, true);
+        assert_eq!(action_label(&d, true, false), "allumer lumière du salon");
+        assert_eq!(action_label(&d, false, false), "éteindre lumière du salon");
+        assert_eq!(action_label(&d, true, true), "turn on lumière du salon");
+        assert_eq!(action_label(&d, false, true), "turn off lumière du salon");
+    }
+
+    #[test]
+    fn pending_roundtrips_through_json() {
+        let p = Pending {
+            cmd_id: 124,
+            label: "allumer lumière du salon".into(),
+        };
+        let bytes = serde_json::to_vec(&p).unwrap();
+        let back: Pending = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.cmd_id, 124);
+        assert_eq!(back.label, p.label);
+    }
+
+    fn speak_text(r: SkillResponse) -> String {
+        match r {
+            SkillResponse::Speak { text } => text,
+            other => panic!("expected Speak, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirm_with_nothing_pending_says_so() {
+        // Host-side tmp_get is always None — exactly the nothing-pending path.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.confirm".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "Rien à confirmer.");
+    }
+
+    #[test]
+    fn cancel_with_nothing_pending_says_so() {
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.cancel".into(),
+            slots: Default::default(),
+            locale: "en".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "Nothing to confirm.");
+    }
+
+    #[test]
+    fn turn_intent_for_unknown_device_apologises() {
+        // Host-side config is empty, so no device matches key 999.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.turn_on.999".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "désolé, je ne connais pas cet appareil");
     }
 
     #[test]
