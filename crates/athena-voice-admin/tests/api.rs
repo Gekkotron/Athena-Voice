@@ -1118,6 +1118,65 @@ async fn jeedom_phrases_lists_per_sensor_rules_for_every_locale() {
 }
 
 #[tokio::test]
+async fn jeedom_phrases_include_action_devices() {
+    let store = test_store().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        athena_voice_runtime::test_support::JEEDOM_TEST_WASM,
+        skills_dir.path().join("jeedom.wasm"),
+    )
+    .expect("copy jeedom.wasm into the skills dir fixture");
+    let per_skill = HashMap::from([(
+        "jeedom".to_string(),
+        SkillConfig {
+            config: HashMap::from([(
+                "actions".to_string(),
+                r#"[{"name":"lumière du salon","room":"salon","prefix":"du",
+                     "on_id":124,"off_id":125,"confirm":true}]"#
+                    .to_string(),
+            )]),
+            ..Default::default()
+        },
+    )]);
+    let load_deps = test_skill_deps_with(store.clone(), per_skill);
+    let registry = SkillRegistry::load_dir(skills_dir.path(), &load_deps)
+        .expect("load configured jeedom.wasm");
+    let deps = admin_deps(
+        store,
+        Arc::new(registry),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    );
+    let app = router(deps);
+
+    let res = app
+        .oneshot(get("/api/skills/jeedom/phrases"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    let entries = body["phrases"].as_array().unwrap();
+
+    let on = entries
+        .iter()
+        .find(|e| e["intent"] == "jeedom.turn_on.124" && e["locale"] == "fr")
+        .expect("turn_on rule listed for fr");
+    assert!(
+        on["phrases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "allume la lumière du salon"),
+        "action phrase must survive the wasm + registry round trip: {on}"
+    );
+    assert!(
+        entries.iter().any(|e| e["intent"] == "jeedom.confirm"),
+        "confirm rule must exist when a device requires confirmation"
+    );
+}
+
+#[tokio::test]
 async fn jeedom_phrases_empty_when_skill_not_loaded() {
     // No skill runtime at all (skills: None) → empty phrases, same shape.
     let deps = test_deps().await;
