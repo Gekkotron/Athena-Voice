@@ -47,3 +47,11 @@ input:disabled, select:disabled { opacity: .45; }
 .chip.sync { color: var(--accent); border-color: var(--accent); }
 .chip button, .hint button { padding: 0 .3rem; font-size: .72rem; }
 table.stale .hint::before { content: '· '; color: var(--accent); font-weight: 700; }
+
+/* Test console */
+.test-row { display: flex; gap: .5rem; }
+.test-row .test-input { flex: 1; }
+.test-help, .test-answer { color: var(--muted); }
+.test-answer { min-height: 1.2em; }
+.test-history { margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .35rem; }
+.test-history-item { cursor: pointer; }
