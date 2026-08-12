@@ -20,6 +20,8 @@ const T = {
     duplicate_phrase: 'duplicate — another sensor answers the same phrase',
     matched_as: 'matched as', apply: 'Apply', gone_from_jeedom: 'gone from Jeedom',
     no_phrases: 'no phrases — save sensors first',
+    test_console: 'Test console', test_console_help: 'Send a text command to the assistant — test tool, nothing is stored server-side.',
+    send: 'Send', sending: 'Sending…', network_error: 'network error',
   },
   fr: {
     save: 'Enregistrer', skills: 'Compétences',
@@ -40,6 +42,8 @@ const T = {
     duplicate_phrase: 'doublon — un autre capteur répond à la même phrase',
     matched_as: 'entendu comme', apply: 'Appliquer', gone_from_jeedom: 'disparu de Jeedom',
     no_phrases: 'aucune phrase — enregistrez des capteurs',
+    test_console: 'Console de test', test_console_help: 'Envoyer une commande texte à l’assistant — outil de test, rien n’est stocké côté serveur.',
+    send: 'Envoyer', sending: 'Envoi…', network_error: 'erreur réseau',
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
@@ -160,6 +164,91 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
+// --- Test console (test tool): one-shot text command over the satellite
+// path, with a client-side history of the last commands. ---
+
+const TEST_HISTORY_KEY = 'athena-test-history';
+const TEST_HISTORY_MAX = 20;
+
+function loadTestHistory() {
+  try {
+    const h = JSON.parse(localStorage.getItem(TEST_HISTORY_KEY));
+    return Array.isArray(h) ? h.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+// Most recent first, deduped, capped.
+function pushTestHistory(cmd) {
+  const h = [cmd, ...loadTestHistory().filter((c) => c !== cmd)].slice(0, TEST_HISTORY_MAX);
+  localStorage.setItem(TEST_HISTORY_KEY, JSON.stringify(h));
+}
+
+function testConsoleCard() {
+  const input = el('input', { type: 'text', autocomplete: 'off', class: 'test-input' });
+  const btn = el('button', { text: t('send') });
+  const out = el('p', { class: 'test-answer' });
+  const historyList = el('div', { class: 'test-history' });
+  let histIdx = -1; // -1 = editing a fresh draft
+  let draft = '';
+
+  const renderHistory = () => {
+    historyList.replaceChildren(...loadTestHistory().map((cmd) =>
+      el('span', {
+        class: 'badge test-history-item', text: cmd,
+        onclick: () => { input.value = cmd; histIdx = -1; input.focus(); },
+      })));
+  };
+
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text || input.disabled) return;
+    input.disabled = true; btn.disabled = true;
+    out.textContent = t('sending');
+    try {
+      const res = await api('/api/test-command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, locale: lang }),
+      });
+      const body = await res.json().catch(() => ({}));
+      out.textContent = res.ok ? (body.answer || '—') : (body.error || `HTTP ${res.status}`);
+    } catch { out.textContent = t('network_error'); }
+    input.disabled = false; btn.disabled = false;
+    pushTestHistory(text); histIdx = -1; draft = '';
+    renderHistory();
+    input.value = ''; input.focus();
+  };
+
+  // Shell-style recall: ArrowUp walks back through history, ArrowDown
+  // forward and finally back to the unsent draft.
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); return; }
+    const h = loadTestHistory();
+    if (e.key === 'ArrowUp') {
+      if (!h.length) return;
+      e.preventDefault();
+      if (histIdx === -1) draft = input.value;
+      histIdx = Math.min(histIdx + 1, h.length - 1);
+      input.value = h[histIdx];
+    } else if (e.key === 'ArrowDown') {
+      if (histIdx === -1) return;
+      e.preventDefault();
+      histIdx -= 1;
+      input.value = histIdx === -1 ? draft : h[histIdx];
+    }
+  });
+  btn.addEventListener('click', submit);
+  renderHistory();
+
+  return el('section', { class: 'card' },
+    el('h2', { text: t('test_console') }),
+    el('p', { class: 'test-help', text: t('test_console_help') }),
+    el('div', { class: 'test-row' }, input, btn),
+    out,
+    historyList,
+  );
+}
+
 async function renderList() {
   let skills;
   try {
@@ -191,7 +280,7 @@ async function renderList() {
       }),
     ));
   }
-  app.replaceChildren(list, await uploadCard());
+  app.replaceChildren(list, await uploadCard(), testConsoleCard());
 }
 
 function fieldInput(f, current, opts) {

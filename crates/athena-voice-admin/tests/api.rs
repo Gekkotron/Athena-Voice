@@ -21,11 +21,68 @@ async fn test_deps() -> AdminDeps {
         skills: None,
         base_per_skill: HashMap::new(),
         bundled_dir: None,
+        mqtt: None,
     }
 }
 
 fn get(uri: &str) -> Request<Body> {
     Request::builder().uri(uri).body(Body::empty()).unwrap()
+}
+
+fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn body_json(res: axum::response::Response) -> serde_json::Value {
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn test_command_rejects_empty_text() {
+    let app = router(test_deps().await);
+    let res = app
+        .oneshot(post_json(
+            "/api/test-command",
+            serde_json::json!({ "text": "   " }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body_json(res).await["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_command_rejects_invalid_locale() {
+    let app = router(test_deps().await);
+    let res = app
+        .oneshot(post_json(
+            "/api/test-command",
+            serde_json::json!({ "text": "hello", "locale": "français" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_command_without_mqtt_returns_503() {
+    // test_deps() leaves `mqtt: None` — the endpoint must refuse cleanly.
+    let app = router(test_deps().await);
+    let res = app
+        .oneshot(post_json(
+            "/api/test-command",
+            serde_json::json!({ "text": "hello" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(body_json(res).await["error"].is_string());
 }
 
 #[tokio::test]
@@ -355,6 +412,7 @@ fn admin_deps(
         }),
         base_per_skill,
         bundled_dir,
+        mqtt: None,
     }
 }
 

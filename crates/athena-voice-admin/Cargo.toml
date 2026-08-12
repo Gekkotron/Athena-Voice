@@ -14,12 +14,14 @@ axum = { workspace = true }
 futures = { workspace = true }
 include_dir = { workspace = true }
 reqwest = { workspace = true }
+rumqttc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+athena-voice-core = { workspace = true }
 athena-voice-runtime = { workspace = true }
 athena-voice-skill-sdk = { workspace = true }
 athena-voice-storage = { workspace = true }
@@ -27,7 +29,6 @@ athena-voice-storage = { workspace = true }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-rumqttc = { workspace = true }
 reqwest = { workspace = true }
 wiremock = { workspace = true }
 # `test-support` exposes real skill-wasm fixture paths built by the
