@@ -21,6 +21,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+athena-voice-core = { workspace = true }
 athena-voice-runtime = { workspace = true }
 athena-voice-skill-sdk = { workspace = true }
 athena-voice-storage = { workspace = true }

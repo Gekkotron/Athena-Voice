@@ -4,6 +4,13 @@
 
 use std::time::Duration;
 
+use athena_voice_core::ids::Locale;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+
+use crate::AppState;
+
 /// Broker coordinates for the test console, mirroring the CLI's `[mqtt]`
 /// config. `None` in `AdminDeps.mqtt` disables the endpoint (503).
 #[derive(Clone, Debug)]
@@ -14,8 +21,6 @@ pub struct AdminMqttConfig {
     pub password: Option<String>,
 }
 
-// TODO(next commit): allow removed when the handler reads the message.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum TestCommandError {
     /// Broker unreachable / protocol error → 502.
@@ -30,10 +35,6 @@ pub(crate) enum TestCommandError {
 const ANSWER_QUIET: Duration = Duration::from_millis(1200);
 const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
-// TODO(next commit): the allow goes away when the /api/test-command
-// handler starts calling this — until then the non-test lib build (built
-// for the integration-test target) has no caller.
-#[allow(dead_code)]
 pub(crate) async fn run_text_session(
     cfg: &AdminMqttConfig,
     text: &str,
@@ -137,6 +138,52 @@ pub(crate) async fn run_text_session(
     }
     let _ = client.disconnect().await;
     result
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct TestCommandReq {
+    text: String,
+    #[serde(default)]
+    locale: Option<String>,
+}
+
+/// POST /api/test-command — test console: run one text command through the
+/// satellite path and return the spoken answer as text.
+pub(crate) async fn test_command(
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<TestCommandReq>,
+) -> Response {
+    let text = req.text.trim().to_string();
+    if text.is_empty() {
+        return err(StatusCode::BAD_REQUEST, "text must not be empty");
+    }
+    let locale = req.locale.unwrap_or_else(|| "en".to_string());
+    if Locale::new(locale.as_str()).is_err() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid locale (expected e.g. \"fr\" or \"fr-FR\")",
+        );
+    }
+    let Some(cfg) = state.mqtt.as_ref() else {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "MQTT is not configured on this admin server",
+        );
+    };
+    match run_text_session(cfg, &text, &locale).await {
+        Ok(answer) => axum::Json(serde_json::json!({ "answer": answer })).into_response(),
+        Err(TestCommandError::Connect(e)) => {
+            err(StatusCode::BAD_GATEWAY, &format!("MQTT broker error: {e}"))
+        }
+        Err(TestCommandError::Timeout) => err(
+            StatusCode::GATEWAY_TIMEOUT,
+            "no answer within 10s — is `serve` running with skills loaded?",
+        ),
+    }
+}
+
+fn err(status: StatusCode, msg: &str) -> Response {
+    (status, axum::Json(serde_json::json!({ "error": msg }))).into_response()
 }
 
 #[cfg(test)]

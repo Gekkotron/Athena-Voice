@@ -32,6 +32,8 @@ pub struct AdminDeps {
     /// TOML-derived per-skill config — the merge base; DB rows override it.
     pub base_per_skill: HashMap<String, SkillConfig>,
     pub bundled_dir: Option<PathBuf>,
+    /// Broker for the test console; `None` disables `POST /api/test-command`.
+    pub mqtt: Option<AdminMqttConfig>,
 }
 
 #[derive(Clone)]
@@ -41,6 +43,7 @@ pub(crate) struct AppState {
     pub base_per_skill: Arc<HashMap<String, SkillConfig>>,
     pub bundled_dir: Option<PathBuf>,
     pub http: reqwest::Client,
+    pub mqtt: Option<AdminMqttConfig>,
 }
 
 pub fn router(deps: AdminDeps) -> Router {
@@ -50,6 +53,7 @@ pub fn router(deps: AdminDeps) -> Router {
         base_per_skill: Arc::new(deps.base_per_skill),
         bundled_dir: deps.bundled_dir,
         http: reqwest::Client::new(),
+        mqtt: deps.mqtt,
     };
     // The api sub-router is fully stated (Router<()>) before nesting; the
     // outer router stays stateless — the asset handler needs no state.
@@ -78,6 +82,10 @@ pub fn router(deps: AdminDeps) -> Router {
             axum::routing::post(jeedom::read_one),
         )
         .route("/skills/jeedom/phrases", get(jeedom::phrases))
+        .route(
+            "/test-command",
+            axum::routing::post(test_command::test_command),
+        )
         .route("/skills/upload", axum::routing::post(api::upload_skill))
         .route("/bundled", get(api::list_bundled))
         .route(
