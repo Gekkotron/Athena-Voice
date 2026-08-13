@@ -935,6 +935,14 @@ const FULLDATA_FIXTURE: &str = r#"[
       { "id": 201, "name": "État", "type": "info", "subType": "binary",
         "display": { "on_label": "ouverte", "off_label": "fermée" } }
     ] }
+  ] },
+  { "name": "Chambre", "eqLogics": [
+    { "name": "Volet", "cmds": [
+      { "id": 210, "name": "Monter", "type": "action", "subType": "other", "generic_type": "FLAP_UP" },
+      { "id": 211, "name": "Descendre", "type": "action", "subType": "other", "generic_type": "FLAP_DOWN" },
+      { "id": 212, "name": "Stop", "type": "action", "subType": "other", "generic_type": "FLAP_STOP" },
+      { "id": 213, "name": "Position", "type": "action", "subType": "slider", "generic_type": "FLAP_SLIDER" }
+    ] }
   ] }
 ]"#;
 
@@ -960,7 +968,7 @@ async fn jeedom_discover_returns_info_command_tree() {
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["status"], "ok");
     let rooms = body["rooms"].as_array().unwrap();
-    assert_eq!(rooms.len(), 2);
+    assert_eq!(rooms.len(), 3);
     let salon_cmds = rooms[0]["equipments"][0]["cmds"].as_array().unwrap();
     assert_eq!(salon_cmds.len(), 1, "action + unnamed cmds filtered out");
     assert_eq!(salon_cmds[0]["id"], 142); // string "142" normalized to number
@@ -970,6 +978,18 @@ async fn jeedom_discover_returns_info_command_tree() {
     assert_eq!(garage_cmd["subtype"], "binary");
     assert_eq!(garage_cmd["on_label"], "ouverte");
     assert_eq!(garage_cmd["off_label"], "fermée");
+    let volet = &rooms[2]["equipments"][0];
+    assert_eq!(
+        volet["cmds"].as_array().unwrap().len(),
+        0,
+        "action cmds are not info cmds"
+    );
+    let shutters = volet["shutters"].as_array().unwrap();
+    assert_eq!(shutters.len(), 1);
+    assert_eq!(shutters[0]["up_id"], 210);
+    assert_eq!(shutters[0]["down_id"], 211);
+    assert_eq!(shutters[0]["stop_id"], 212);
+    assert_eq!(shutters[0]["slider_id"], 213);
 }
 
 #[tokio::test]
@@ -1173,6 +1193,69 @@ async fn jeedom_phrases_include_action_devices() {
     assert!(
         entries.iter().any(|e| e["intent"] == "jeedom.confirm"),
         "confirm rule must exist when a device requires confirmation"
+    );
+}
+
+#[tokio::test]
+async fn jeedom_phrases_include_shutters() {
+    let store = test_store().await;
+    let skills_dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        athena_voice_runtime::test_support::JEEDOM_TEST_WASM,
+        skills_dir.path().join("jeedom.wasm"),
+    )
+    .expect("copy jeedom.wasm into the skills dir fixture");
+    let per_skill = HashMap::from([(
+        "jeedom".to_string(),
+        SkillConfig {
+            config: HashMap::from([(
+                "shutters".to_string(),
+                r#"[{"name":"volet de la chambre","room":"chambre","prefix":"de la",
+                     "up_id":210,"down_id":211,"stop_id":212,"slider_id":213,"confirm":true}]"#
+                    .to_string(),
+            )]),
+            ..Default::default()
+        },
+    )]);
+    let load_deps = test_skill_deps_with(store.clone(), per_skill);
+    let registry = SkillRegistry::load_dir(skills_dir.path(), &load_deps)
+        .expect("load configured jeedom.wasm");
+    let deps = admin_deps(
+        store,
+        Arc::new(registry),
+        skills_dir.path().to_path_buf(),
+        HashMap::new(),
+        None,
+    );
+    let app = router(deps);
+
+    let res = app
+        .oneshot(get("/api/skills/jeedom/phrases"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_json(res).await;
+    let entries = body["phrases"].as_array().unwrap();
+
+    let open = entries
+        .iter()
+        .find(|e| e["intent"] == "jeedom.shutter_open.210" && e["locale"] == "fr")
+        .expect("shutter_open rule listed for fr");
+    assert!(
+        open["phrases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "ouvre le volet de la chambre"),
+        "shutter phrase must survive the wasm + registry round trip: {open}"
+    );
+    assert!(
+        entries.iter().any(|e| e["intent"] == "jeedom.shutter_pos.210"),
+        "position rule must exist when slider_id is set"
+    );
+    assert!(
+        entries.iter().any(|e| e["intent"] == "jeedom.confirm"),
+        "confirm rule must exist when a shutter requires confirmation"
     );
 }
 

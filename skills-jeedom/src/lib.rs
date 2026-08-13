@@ -16,6 +16,16 @@
 //!   (optional) set to `"binary"` switches reading phrasing to the spoken
 //!   `on_label`/`off_label` (e.g. "ouverte"/"fermée") instead of a numeric
 //!   value; anything else, including the default empty string, is numeric.
+//! - `actions` (optional) is a JSON-encoded array of on/off devices:
+//!   `[{"name":"lumière du salon","on_id":124,"off_id":125,"confirm":false}, …]`
+//!   — executing an action command uses the same GET as a read.
+//! - `shutters` (optional) is a JSON-encoded array of roller shutters:
+//!   `[{"name":"volet du salon","up_id":210,"down_id":211,"stop_id":212,
+//!   "slider_id":213,"confirm":false}, …]` — `up_id`/`down_id` required;
+//!   `stop_id`/`slider_id` optional (0 or absent = not configured).
+//!   `confirm` gates open/close/position behind a spoken confirmation but
+//!   never stop. Position runs the slider command with `&slider=N`
+//!   (0 = closed, 100 = open, Jeedom's FLAP convention).
 //!
 //! The API key only travels on your LAN, but treat it like a password:
 //! prefer a Jeedom API key restricted to the sensors you expose.
@@ -133,6 +143,56 @@ fn parse_actions(raw: &str) -> Vec<ActionDevice> {
     v
 }
 
+/// One roller shutter: up/down Jeedom action command ids behind a single
+/// spoken name, with optional stop and position-slider commands (0 = not
+/// configured — Jeedom ids start at 1, and the admin UI leaves untouched
+/// number cells absent). Like sensors, `name` stores the FULL composed
+/// spoken form ("volet du salon").
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Shutter {
+    name: String,
+    #[serde(default)]
+    room: String,
+    #[serde(default)]
+    prefix: String,
+    up_id: u64,
+    down_id: u64,
+    #[serde(default)]
+    stop_id: u64,
+    #[serde(default)]
+    slider_id: u64,
+    /// True → open/close/position ask "Tu confirmes : … ?" first.
+    /// Stop is never gated: stopping a moving shutter must be immediate.
+    #[serde(default)]
+    confirm: bool,
+}
+
+static SHUTTERS: OnceCell<Vec<Shutter>> = OnceCell::new();
+
+fn parse_shutters(raw: &str) -> Vec<Shutter> {
+    let Ok(mut v) = serde_json::from_str::<Vec<Shutter>>(raw) else {
+        return Vec::new();
+    };
+    for s in &mut v {
+        s.name = clean_spoken(&s.name);
+        s.room = clean_spoken(&s.room);
+        s.prefix = clean_spoken(&s.prefix.replace('’', "'"));
+    }
+    v
+}
+
+fn shutters(ctx: &HostCtx) -> &'static [Shutter] {
+    SHUTTERS
+        .get_or_init(|| {
+            let raw = ctx.config_get_toml("shutters").unwrap_or_default();
+            if raw.is_empty() {
+                return Vec::new();
+            }
+            parse_shutters(&raw)
+        })
+        .as_slice()
+}
+
 fn actions(ctx: &HostCtx) -> &'static [ActionDevice] {
     ACTIONS
         .get_or_init(|| {
@@ -172,6 +232,10 @@ impl Skill for JeedomSkill {
         let ctx = HostCtx::for_testing();
         let mut rules = rules_for(locale, sensors(&ctx));
         rules.extend(action_rules(locale, actions(&ctx)));
+        rules.extend(shutter_rules(locale, shutters(&ctx)));
+        if actions(&ctx).iter().any(|d| d.confirm) || shutters(&ctx).iter().any(|s| s.confirm) {
+            rules.extend(confirm_rules(locale));
+        }
         rules
     }
 
@@ -255,6 +319,7 @@ impl Skill for JeedomSkill {
                 let pending = Pending {
                     cmd_id,
                     label: label.clone(),
+                    slider: None,
                 };
                 if let Ok(bytes) = serde_json::to_vec(&pending) {
                     let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
@@ -268,11 +333,118 @@ impl Skill for JeedomSkill {
             return Ok(done_or_error(exec_cmd(ctx, cmd_id), en));
         }
 
+        // Group shutter intents run every configured shutter, unconditionally
+        // (no confirmation: the command names its full scope already).
+        if intent.name == "jeedom.shutter_open_all" || intent.name == "jeedom.shutter_close_all" {
+            let open = intent.name.ends_with("open_all");
+            let list = shutters(ctx);
+            if list.is_empty() {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            }
+            let failed = list
+                .iter()
+                .filter(|s| exec_cmd(ctx, if open { s.up_id } else { s.down_id }).is_err())
+                .count();
+            return Ok(SkillResponse::speak(group_answer(list.len(), failed, en)));
+        }
+
+        // Per-shutter intents: the key riding in the intent name is up_id.
+        let shutter_cmd = intent
+            .name
+            .strip_prefix("jeedom.shutter_open.")
+            .map(|k| (k, ShutterCmd::Open))
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_close.")
+                    .map(|k| (k, ShutterCmd::Close))
+            })
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_stop.")
+                    .map(|k| (k, ShutterCmd::Stop))
+            })
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_pos.")
+                    .map(|k| (k, ShutterCmd::Pos(0)))
+            });
+        if let Some((key, mut cmd)) = shutter_cmd {
+            let Some(shutter) = key
+                .parse::<u64>()
+                .ok()
+                .and_then(|k| shutters(ctx).iter().find(|s| s.up_id == k))
+            else {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            };
+            if let ShutterCmd::Pos(_) = cmd {
+                let Some(p) = intent.slots.get("position").and_then(slot_number) else {
+                    return Ok(SkillResponse::speak(ask_position(en)));
+                };
+                cmd = ShutterCmd::Pos(p.clamp(0.0, 100.0) as u64);
+            }
+            let cmd_id = match cmd {
+                ShutterCmd::Open => shutter.up_id,
+                ShutterCmd::Close => shutter.down_id,
+                ShutterCmd::Stop => shutter.stop_id,
+                ShutterCmd::Pos(_) => shutter.slider_id,
+            };
+            if cmd_id == 0 {
+                // Rules for stop/pos are only registered when the id is set,
+                // so this is unreachable in practice — apologise defensively.
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            }
+            // Stop is never gated behind confirmation.
+            if shutter.confirm && !matches!(cmd, ShutterCmd::Stop) {
+                let label = shutter_label(&shutter.name, &cmd, en);
+                let slider = match cmd {
+                    ShutterCmd::Pos(v) => Some(v),
+                    _ => None,
+                };
+                let pending = Pending {
+                    cmd_id,
+                    label: label.clone(),
+                    slider,
+                };
+                if let Ok(bytes) = serde_json::to_vec(&pending) {
+                    let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
+                }
+                return Ok(SkillResponse::speak(if en {
+                    format!("Confirm: {label}?")
+                } else {
+                    format!("Tu confirmes : {label} ?")
+                }));
+            }
+            let executed = match cmd {
+                ShutterCmd::Pos(v) => exec_slider(ctx, cmd_id, v),
+                _ => exec_cmd(ctx, cmd_id),
+            };
+            return Ok(done_or_error(executed, en));
+        }
+
         if intent.name == "jeedom.confirm" {
             return Ok(match load_pending(ctx) {
                 Some(p) => {
                     clear_pending(ctx);
-                    done_or_error(exec_cmd(ctx, p.cmd_id), en)
+                    let executed = match p.slider {
+                        Some(v) => exec_slider(ctx, p.cmd_id, v),
+                        None => exec_cmd(ctx, p.cmd_id),
+                    };
+                    done_or_error(executed, en)
                 }
                 None => SkillResponse::speak(if en {
                     "Nothing to confirm."
@@ -650,29 +822,145 @@ fn action_rules(locale: &str, devices: &[ActionDevice]) -> Vec<PatternRule> {
             slots: Vec::new(),
         });
     }
-    if devices.iter().any(|d| d.confirm) {
-        let (yes, no): (Vec<String>, Vec<String>) = match locale {
-            "fr" => (
-                vec!["oui".into(), "confirme".into(), "c'est confirmé".into()],
-                vec!["non".into(), "annule".into()],
-            ),
-            "en" => (
-                vec!["yes".into(), "confirm".into()],
-                vec!["no".into(), "cancel".into()],
-            ),
-            _ => (Vec::new(), Vec::new()),
-        };
-        rules.push(PatternRule {
+    rules
+}
+
+/// The shared spoken confirm/cancel rules — registered once by
+/// `pattern_rules` when any on/off device or shutter has `confirm: true`.
+fn confirm_rules(locale: &str) -> Vec<PatternRule> {
+    let (yes, no): (Vec<String>, Vec<String>) = match locale {
+        "fr" => (
+            vec!["oui".into(), "confirme".into(), "c'est confirmé".into()],
+            vec!["non".into(), "annule".into()],
+        ),
+        "en" => (
+            vec!["yes".into(), "confirm".into()],
+            vec!["no".into(), "cancel".into()],
+        ),
+        _ => return Vec::new(),
+    };
+    vec![
+        PatternRule {
             intent: "jeedom.confirm".into(),
             phrases: yes,
             slots: Vec::new(),
-        });
-        rules.push(PatternRule {
+        },
+        PatternRule {
             intent: "jeedom.cancel".into(),
             phrases: no,
             slots: Vec::new(),
-        });
+        },
+    ]
+}
+
+/// Match rules for configured shutters. Stop and position rules exist only
+/// for shutters that configured those command ids; the two group rules are
+/// registered once whenever any shutter exists. Key = `up_id`.
+fn shutter_rules(locale: &str, list: &[Shutter]) -> Vec<PatternRule> {
+    if list.is_empty() {
+        return Vec::new();
     }
+    let mut rules = Vec::new();
+    for s in list {
+        let name = &s.name;
+        let (open, close, stop, pos): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+            match locale {
+                "fr" => (
+                    vec![
+                        format!("ouvre le {name}"),
+                        format!("ouvre la {name}"),
+                        format!("ouvre {name}"),
+                        format!("monte le {name}"),
+                        format!("lève le {name}"),
+                    ],
+                    vec![
+                        format!("ferme le {name}"),
+                        format!("ferme la {name}"),
+                        format!("ferme {name}"),
+                        format!("descends le {name}"),
+                        format!("baisse le {name}"),
+                    ],
+                    vec![
+                        format!("stop le {name}"),
+                        format!("stop {name}"),
+                        format!("arrête le {name}"),
+                    ],
+                    vec![
+                        format!("ouvre le {name} à {{position}}"),
+                        format!("ouvre le {name} à {{position}} pour cent"),
+                        format!("mets le {name} à {{position}}"),
+                        format!("mets le {name} à {{position}} pour cent"),
+                    ],
+                ),
+                "en" => (
+                    vec![
+                        format!("open the {name}"),
+                        format!("open {name}"),
+                        format!("raise the {name}"),
+                    ],
+                    vec![
+                        format!("close the {name}"),
+                        format!("close {name}"),
+                        format!("lower the {name}"),
+                    ],
+                    vec![format!("stop the {name}"), format!("stop {name}")],
+                    vec![
+                        format!("set the {name} to {{position}}"),
+                        format!("set the {name} to {{position}} percent"),
+                        format!("open the {name} to {{position}} percent"),
+                    ],
+                ),
+                _ => return Vec::new(),
+            };
+        rules.push(PatternRule {
+            intent: format!("jeedom.shutter_open.{}", s.up_id),
+            phrases: open,
+            slots: Vec::new(),
+        });
+        rules.push(PatternRule {
+            intent: format!("jeedom.shutter_close.{}", s.up_id),
+            phrases: close,
+            slots: Vec::new(),
+        });
+        if s.stop_id != 0 {
+            rules.push(PatternRule {
+                intent: format!("jeedom.shutter_stop.{}", s.up_id),
+                phrases: stop,
+                slots: Vec::new(),
+            });
+        }
+        if s.slider_id != 0 {
+            rules.push(PatternRule {
+                intent: format!("jeedom.shutter_pos.{}", s.up_id),
+                phrases: pos,
+                slots: vec![SlotSpec {
+                    name: "position".into(),
+                    kind: SlotKind::Number,
+                }],
+            });
+        }
+    }
+    let (open_all, close_all): (Vec<String>, Vec<String>) = match locale {
+        "fr" => (
+            vec!["ouvre tous les volets".into(), "ouvre les volets".into()],
+            vec!["ferme tous les volets".into(), "ferme les volets".into()],
+        ),
+        "en" => (
+            vec!["open all the shutters".into(), "open the shutters".into()],
+            vec!["close all the shutters".into(), "close the shutters".into()],
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+    rules.push(PatternRule {
+        intent: "jeedom.shutter_open_all".into(),
+        phrases: open_all,
+        slots: Vec::new(),
+    });
+    rules.push(PatternRule {
+        intent: "jeedom.shutter_close_all".into(),
+        phrases: close_all,
+        slots: Vec::new(),
+    });
     rules
 }
 
@@ -713,6 +1001,82 @@ fn exec_cmd(ctx: &HostCtx, id: u64) -> Result<(), ()> {
 struct Pending {
     cmd_id: u64,
     label: String,
+    /// Set for position commands: confirm executes cmd_id as a slider.
+    #[serde(default)]
+    slider: Option<u64>,
+}
+
+/// What a shutter intent asks for; `Pos` carries the clamped 0–100 target.
+/// `Copy` (payload is a bare u64) — the handler matches it by value twice.
+#[derive(Debug, Clone, Copy)]
+enum ShutterCmd {
+    Open,
+    Close,
+    Stop,
+    Pos(u64),
+}
+
+fn shutter_label(name: &str, cmd: &ShutterCmd, en: bool) -> String {
+    match (cmd, en) {
+        (ShutterCmd::Open, false) => format!("ouvrir {name}"),
+        (ShutterCmd::Close, false) => format!("fermer {name}"),
+        (ShutterCmd::Stop, false) => format!("arrêter {name}"),
+        (ShutterCmd::Pos(v), false) => format!("mettre {name} à {v} pour cent"),
+        (ShutterCmd::Open, true) => format!("open {name}"),
+        (ShutterCmd::Close, true) => format!("close {name}"),
+        (ShutterCmd::Stop, true) => format!("stop {name}"),
+        (ShutterCmd::Pos(v), true) => format!("set {name} to {v} percent"),
+    }
+}
+
+fn ask_position(en: bool) -> &'static str {
+    if en {
+        "To what position, in percent?"
+    } else {
+        "À quelle position, en pourcentage ?"
+    }
+}
+
+/// The matcher inserts slot values as JSON strings; be tolerant of numbers.
+fn slot_number(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn group_answer(total: usize, failed: usize, en: bool) -> String {
+    if failed == 0 {
+        return if en { "Done." } else { "C'est fait." }.into();
+    }
+    if failed >= total {
+        return if en {
+            "sorry, I can't reach Jeedom right now"
+        } else {
+            "désolé, je n'arrive pas à joindre Jeedom"
+        }
+        .into();
+    }
+    match (en, failed) {
+        (false, 1) => "C'est fait, mais un volet n'a pas répondu.".into(),
+        (false, n) => format!("C'est fait, mais {n} volets n'ont pas répondu."),
+        (true, 1) => "Done, but 1 shutter did not respond.".into(),
+        (true, n) => format!("Done, but {n} shutters did not respond."),
+    }
+}
+
+/// Executes a Jeedom slider action command: same authenticated GET with the
+/// target value as `&slider=`.
+fn exec_slider(ctx: &HostCtx, id: u64, value: u64) -> Result<(), ()> {
+    let url = jeedom_url(ctx, id)?;
+    match ctx.http_get_json(&format!("{url}&slider={value}")) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            ctx.log("warn", &format!("jeedom: slider exec failed: {e}"));
+            Err(())
+        }
+    }
 }
 
 const PENDING_KEY: &str = "pending_action";
@@ -900,6 +1264,56 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                     },
                 ],
             },
+            ConfigField {
+                key: "shutters".into(),
+                label: "Shutters".into(),
+                kind: FieldKind::List,
+                required: false,
+                help: "Roller shutters: spoken name → Jeedom up/down action ids; stop/slider optional".into(),
+                default: String::new(),
+                item_fields: vec![
+                    ItemField {
+                        key: "name".into(),
+                        kind: FieldKind::String,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "up_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "down_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "stop_id".into(),
+                        kind: FieldKind::Number,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "slider_id".into(),
+                        kind: FieldKind::Number,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "room".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "prefix".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "confirm".into(),
+                        kind: FieldKind::Bool,
+                        required: false,
+                    },
+                ],
+            },
         ],
     };
     Ok(serde_json::to_string(&schema)?)
@@ -938,6 +1352,35 @@ mod tests {
             off_id,
             confirm,
         }
+    }
+
+    fn sh(name: &str, up_id: u64, down_id: u64) -> Shutter {
+        Shutter {
+            name: name.into(),
+            room: String::new(),
+            prefix: String::new(),
+            up_id,
+            down_id,
+            stop_id: 0,
+            slider_id: 0,
+            confirm: false,
+        }
+    }
+
+    #[test]
+    fn shutters_parse_cleans_and_defaults() {
+        let raw = r#"[{"name":"volet 🪟 du salon","up_id":210,"down_id":211},
+                      {"name":"volet de la chambre","room":"chambre","prefix":"de la",
+                       "up_id":220,"down_id":221,"stop_id":222,"slider_id":223,"confirm":true}]"#;
+        let v = parse_shutters(raw);
+        assert_eq!(v[0].name, "volet du salon", "symbols stripped");
+        assert_eq!(v[0].stop_id, 0, "stop_id defaults to 0 = unset");
+        assert_eq!(v[0].slider_id, 0, "slider_id defaults to 0 = unset");
+        assert!(!v[0].confirm);
+        assert_eq!(v[1].stop_id, 222);
+        assert_eq!(v[1].slider_id, 223);
+        assert!(v[1].confirm);
+        assert_eq!(parse_shutters("not json"), Vec::<Shutter>::new().as_slice());
     }
 
     #[test]
@@ -989,23 +1432,112 @@ mod tests {
     }
 
     #[test]
-    fn confirm_rules_only_when_a_device_requires_confirmation() {
-        let plain = vec![a("lumière du salon", 124, 125, false)];
+    fn shutter_rules_generate_open_close_phrases() {
+        let list = vec![sh("volet du salon", 210, 211)];
+        let rules = shutter_rules("fr", &list);
+        let open = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_open.210")
+            .unwrap();
         assert!(
-            !action_rules("fr", &plain)
-                .iter()
-                .any(|r| r.intent == "jeedom.confirm")
+            open.phrases.contains(&"ouvre le volet du salon".to_string()),
+            "got: {:?}",
+            open.phrases
         );
+        assert!(open.phrases.contains(&"monte le volet du salon".to_string()));
+        let close = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_close.210")
+            .unwrap();
+        assert!(
+            close.phrases.contains(&"ferme le volet du salon".to_string()),
+            "got: {:?}",
+            close.phrases
+        );
+        assert!(close.phrases.contains(&"baisse le volet du salon".to_string()));
 
+        let en = shutter_rules("en", &list);
+        assert!(en.iter().any(|r| r.intent == "jeedom.shutter_open.210"
+            && r.phrases.contains(&"open the volet du salon".to_string())));
+    }
+
+    #[test]
+    fn shutter_stop_and_pos_rules_require_their_ids() {
+        let plain = vec![sh("volet du salon", 210, 211)];
+        let rules = shutter_rules("fr", &plain);
+        assert!(!rules.iter().any(|r| r.intent.starts_with("jeedom.shutter_stop.")));
+        assert!(!rules.iter().any(|r| r.intent.starts_with("jeedom.shutter_pos.")));
+
+        let mut full = sh("volet du salon", 210, 211);
+        full.stop_id = 212;
+        full.slider_id = 213;
+        let rules = shutter_rules("fr", &[full]);
+        let stop = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_stop.210")
+            .unwrap();
+        assert!(
+            stop.phrases.contains(&"stop le volet du salon".to_string()),
+            "got: {:?}",
+            stop.phrases
+        );
+        let pos = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_pos.210")
+            .unwrap();
+        assert!(
+            pos.phrases
+                .contains(&"ouvre le volet du salon à {position}".to_string()),
+            "got: {:?}",
+            pos.phrases
+        );
+        assert_eq!(pos.slots.len(), 1);
+        assert_eq!(pos.slots[0].name, "position");
+        assert!(matches!(pos.slots[0].kind, SlotKind::Number));
+    }
+
+    #[test]
+    fn shutter_group_rules_exist_once() {
+        let list = vec![sh("volet du salon", 210, 211), sh("volet de la chambre", 220, 221)];
+        let rules = shutter_rules("fr", &list);
+        let all_open: Vec<_> = rules
+            .iter()
+            .filter(|r| r.intent == "jeedom.shutter_open_all")
+            .collect();
+        assert_eq!(all_open.len(), 1, "one group rule regardless of shutter count");
+        assert!(all_open[0].phrases.contains(&"ouvre tous les volets".to_string()));
+        assert!(rules.iter().any(|r| r.intent == "jeedom.shutter_close_all"
+            && r.phrases.contains(&"ferme tous les volets".to_string())));
+        assert!(shutter_rules("fr", &[]).is_empty(), "no shutters, no rules");
+    }
+
+    #[test]
+    fn action_rules_carry_no_confirm_rules() {
+        // Confirm/cancel are shared between on/off devices and shutters and are
+        // registered once by pattern_rules — never by action_rules itself.
         let confirmed = vec![a("portail", 30, 31, true)];
-        let rules = action_rules("fr", &confirmed);
-        let confirm = rules.iter().find(|r| r.intent == "jeedom.confirm").unwrap();
+        assert!(
+            !action_rules("fr", &confirmed)
+                .iter()
+                .any(|r| r.intent == "jeedom.confirm" || r.intent == "jeedom.cancel")
+        );
+    }
+
+    #[test]
+    fn confirm_rules_cover_both_locales() {
+        let fr = confirm_rules("fr");
+        let confirm = fr.iter().find(|r| r.intent == "jeedom.confirm").unwrap();
         assert!(confirm.phrases.contains(&"oui".to_string()));
         assert!(
-            rules
-                .iter()
+            fr.iter()
                 .any(|r| r.intent == "jeedom.cancel" && r.phrases.contains(&"annule".to_string()))
         );
+        let en = confirm_rules("en");
+        assert!(
+            en.iter()
+                .any(|r| r.intent == "jeedom.confirm" && r.phrases.contains(&"yes".to_string()))
+        );
+        assert!(confirm_rules("de").is_empty(), "unknown locale yields nothing");
     }
 
     #[test]
@@ -1027,11 +1559,93 @@ mod tests {
         let p = Pending {
             cmd_id: 124,
             label: "allumer lumière du salon".into(),
+            slider: None,
         };
         let bytes = serde_json::to_vec(&p).unwrap();
         let back: Pending = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.cmd_id, 124);
         assert_eq!(back.label, p.label);
+    }
+
+    #[test]
+    fn shutter_labels_phrase_both_locales() {
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Open, false),
+            "ouvrir volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Close, false),
+            "fermer volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Pos(50), false),
+            "mettre volet du salon à 50 pour cent"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Open, true),
+            "open volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Pos(50), true),
+            "set volet du salon to 50 percent"
+        );
+    }
+
+    #[test]
+    fn pending_slider_roundtrips_and_defaults() {
+        // Old payloads (no slider field) must still load — the on/off flow
+        // stores them and both flows share the same tmp key.
+        let old = br#"{"cmd_id":124,"label":"allumer lampe"}"#;
+        let p: Pending = serde_json::from_slice(old).unwrap();
+        assert_eq!(p.slider, None);
+        let new = Pending {
+            cmd_id: 213,
+            label: "mettre volet à 50 pour cent".into(),
+            slider: Some(50),
+        };
+        let bytes = serde_json::to_vec(&new).unwrap();
+        let back: Pending = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.slider, Some(50));
+    }
+
+    #[test]
+    fn slot_number_reads_strings_and_numbers() {
+        assert_eq!(slot_number(&serde_json::json!("50")), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!(" 50 ")), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!(50)), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!("cinquante")), None);
+        assert_eq!(slot_number(&serde_json::Value::Null), None);
+    }
+
+    #[test]
+    fn group_answer_phrasing() {
+        assert_eq!(group_answer(3, 0, false), "C'est fait.");
+        assert_eq!(group_answer(3, 3, false), "désolé, je n'arrive pas à joindre Jeedom");
+        assert_eq!(group_answer(3, 1, false), "C'est fait, mais un volet n'a pas répondu.");
+        assert_eq!(group_answer(3, 2, false), "C'est fait, mais 2 volets n'ont pas répondu.");
+        assert_eq!(group_answer(3, 1, true), "Done, but 1 shutter did not respond.");
+        assert_eq!(group_answer(3, 2, true), "Done, but 2 shutters did not respond.");
+    }
+
+    #[test]
+    fn shutter_intent_for_unknown_device_apologises() {
+        // Host-side config is empty, so no shutter matches key 999.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.shutter_open.999".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "désolé, je ne connais pas cet appareil");
+    }
+
+    #[test]
+    fn shutter_pos_without_number_reasks() {
+        // The re-ask path needs configured shutters, which for_testing cannot
+        // supply — the copy is pinned via ask_position() directly instead.
+        assert_eq!(ask_position(false), "À quelle position, en pourcentage ?");
+        assert_eq!(ask_position(true), "To what position, in percent?");
     }
 
     fn speak_text(r: SkillResponse) -> String {

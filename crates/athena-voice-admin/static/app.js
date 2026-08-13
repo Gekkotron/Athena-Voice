@@ -23,6 +23,10 @@ const T = {
     test_console: 'Test console', test_console_help: 'Send a text command to the assistant — test tool, nothing is stored server-side.',
     send: 'Send', sending: 'Sending…', network_error: 'network error',
     action_onoff: 'on/off device',
+    action_shutter: 'shutter', with_stop: '+ stop', with_position: '+ position',
+    section_connection: 'Connection', section_sensors: 'Sensors',
+    section_actions: 'On/off devices', section_shutters: 'Shutters',
+    section_discovery: 'Discovery',
   },
   fr: {
     save: 'Enregistrer', skills: 'Compétences',
@@ -46,10 +50,32 @@ const T = {
     test_console: 'Console de test', test_console_help: 'Envoyer une commande texte à l’assistant — outil de test, rien n’est stocké côté serveur.',
     send: 'Envoyer', sending: 'Envoi…', network_error: 'erreur réseau',
     action_onoff: 'appareil on/off',
+    action_shutter: 'volet', with_stop: '+ stop', with_position: '+ position',
+    section_connection: 'Connexion', section_sensors: 'Capteurs',
+    section_actions: 'Appareils on/off', section_shutters: 'Volets',
+    section_discovery: 'Découverte',
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
 const t = (k) => T[lang][k] || k;
+
+// Human column headers for list editors; unknown keys fall back to the raw
+// config key so non-jeedom skills stay readable.
+const COL_LABELS = {
+  en: {
+    name: 'Spoken name', id: 'Cmd', unit: 'Unit', room: 'Room', prefix: 'Connector',
+    kind: 'Type', on_label: 'ON label', off_label: 'OFF label',
+    on_id: 'ON cmd', off_id: 'OFF cmd', confirm: 'Confirm',
+    up_id: 'Up cmd', down_id: 'Down cmd', stop_id: 'Stop cmd', slider_id: 'Position cmd',
+  },
+  fr: {
+    name: 'Nom parlé', id: 'Cmd', unit: 'Unité', room: 'Pièce', prefix: 'Liaison',
+    kind: 'Type', on_label: 'Libellé ON', off_label: 'Libellé OFF',
+    on_id: 'Cmd ON', off_id: 'Cmd OFF', confirm: 'Confirmation',
+    up_id: 'Cmd monter', down_id: 'Cmd descendre', stop_id: 'Cmd stop', slider_id: 'Cmd position',
+  },
+};
+const colLabel = (k) => COL_LABELS[lang][k] || k;
 
 // French article lookup for composed sensor names; unknown rooms get no
 // article ("température salon") — still fuzzy-matchable and editable.
@@ -120,14 +146,15 @@ function normalizeLiteral(s) {
   return out;
 }
 
-// Normalized phrases that appear under MORE THAN ONE per-sensor intent
-// (jeedom.read.{id}) — name collisions like six sensors all called
-// "température". groups: intent -> {locale -> [phrases]}.
+// Normalized phrases that appear under MORE THAN ONE per-device intent
+// (jeedom.read.{id}, jeedom.turn_on.{id}, jeedom.shutter_open.{id}) — name
+// collisions like six sensors all called "température".
+// groups: intent -> {locale -> [phrases]}.
 function duplicatePhrases(groups) {
   const firstIntent = new Map();
   const dupes = new Set();
   for (const [intent, locales] of Object.entries(groups)) {
-    if (!/^jeedom\.read\.\d+$/.test(intent)) continue;
+    if (!/^jeedom\.(read|turn_on|shutter_open)\.\d+$/.test(intent)) continue;
     for (const phrases of Object.values(locales)) {
       for (const p of phrases) {
         const n = normalizeLiteral(p);
@@ -314,7 +341,7 @@ function listEditor(f, current, opts = {}) {
     const actionCols = opts.rowActions ? 1 : 0;
     table.replaceChildren(
       el('tr', {},
-        ...f.item_fields.map((c) => el('th', { text: c.key })),
+        ...f.item_fields.map((c) => el('th', { text: colLabel(c.key) })),
         ...(opts.rowActions ? [el('th')] : []),
         el('th')),
       ...rows.flatMap((row, i) => {
@@ -400,6 +427,8 @@ async function renderDetail(skill) {
     widgets.find(([f]) => f.key === 'sensors')?.[1].querySelector('table');
   const findActionsTable = () =>
     widgets.find(([f]) => f.key === 'actions')?.[1].querySelector('table');
+  const findShuttersTable = () =>
+    widgets.find(([f]) => f.key === 'shutters')?.[1].querySelector('table');
   const readCell = (row) => {
     const id = Number(row.id);
     const r = jd.reads[id];
@@ -455,6 +484,28 @@ async function renderDetail(skill) {
         el('span', { text: `${t('you_can_say')} ${phrases.slice(0, 2).map((p) => `« ${p} »`).join(', ')}` }));
     },
   } : undefined;
+  const shutterOpts = jd ? {
+    onEdit: () => { jd.stale = true; findShuttersTable()?.classList.add('stale'); },
+    rowDetail: (row) => {
+      const locales = jd.phraseGroups[`jeedom.shutter_open.${Number(row.up_id)}`];
+      const phrases = locales ? (locales[lang] || Object.values(locales)[0] || []) : [];
+      if (!phrases.length) return null;
+      return el('span', { class: 'hint' },
+        el('span', { text: `${t('you_can_say')} ${phrases.slice(0, 2).map((p) => `« ${p} »`).join(', ')}` }));
+    },
+    onCellChange: (key, row, oldValue) => {
+      if (key !== 'prefix') return;
+      const typed = String(row.prefix || '');
+      row.prefix = typed.replace(/’/g, "'").trim();
+      const swapped = swapNameSuffix(
+        String(row.name || ''), String(oldValue || ''),
+        row.prefix, String(row.room || ''),
+      );
+      const nameChanged = swapped !== row.name;
+      if (nameChanged) row.name = swapped;
+      if (nameChanged || row.prefix !== typed) findShuttersTable()?.rerender();
+    },
+  } : undefined;
   const pmsg = el('p', { class: 'help' });
   async function refreshPhrases() {
     if (!jd) return;
@@ -470,6 +521,8 @@ async function renderDetail(skill) {
     if (table) { table.classList.remove('stale'); table.rerender(); }
     const atable = findActionsTable();
     if (atable) { atable.classList.remove('stale'); atable.rerender(); }
+    const stable = findShuttersTable();
+    if (stable) { stable.classList.remove('stale'); stable.rerender(); }
     const anySensorGroup = Object.keys(jd.phraseGroups).some((k) => /^jeedom\.read\.\d+$/.test(k));
     pmsg.textContent = anySensorGroup ? '' : t('no_phrases');
   }
@@ -527,26 +580,48 @@ async function renderDetail(skill) {
     if (!bits.length) return null;
     return el('span', {}, ...bits);
   }
+  // Jeedom's page is grouped into titled sections; other skills keep the
+  // flat field list.
+  const sections = {};
+  const sectionFor = (key) =>
+    key === 'sensors' ? 'sensors' : key === 'actions' ? 'actions'
+      : key === 'shutters' ? 'shutters' : 'connection';
+  const section = (key) => {
+    if (!sections[key]) {
+      sections[key] = el('div', { class: 'section' }, el('h3', { text: t(`section_${key}`) }));
+    }
+    return sections[key];
+  };
   const widgets = fields.map((f) => {
     const w = fieldInput(f, skill.config[f.key],
-      f.key === 'sensors' ? sensorOpts : f.key === 'actions' ? actionOpts : undefined);
-    card.append(w);
+      f.key === 'sensors' ? sensorOpts : f.key === 'actions' ? actionOpts
+        : f.key === 'shutters' ? shutterOpts : undefined);
+    if (jd) section(sectionFor(f.key)).append(w); else card.append(w);
     return [f, w];
   });
+  if (jd) {
+    for (const key of ['connection', 'sensors', 'actions', 'shutters']) {
+      if (sections[key]) card.append(sections[key]);
+    }
+  }
   if (skill.name === 'jeedom') {
+    const cmsg = el('p', { class: 'help' });
     const jmsg = el('p', { class: 'help' });
     const tree = el('div');
-    card.append(
+    section('connection').append(
       el('button', {
         class: 'quiet', text: t('test_connection'),
         onclick: async () => {
-          jmsg.textContent = t('testing');
+          cmsg.textContent = t('testing');
           const body = await (await api('/api/skills/jeedom/test', { method: 'POST' })).json();
-          jmsg.textContent = body.status === 'ok'
+          cmsg.textContent = body.status === 'ok'
             ? t('jeedom_ok')
             : t(`jeedom_${body.status}`);
         },
       }),
+      cmsg,
+    );
+    section('discovery').append(
       el('button', {
         class: 'quiet', text: t('discover'),
         onclick: async () => {
@@ -554,7 +629,7 @@ async function renderDetail(skill) {
           const body = await (await api('/api/skills/jeedom/discover', { method: 'POST' })).json();
           if (body.status !== 'ok') { jmsg.textContent = t(`jeedom_${body.status}`); return; }
           jmsg.textContent = '';
-          renderDiscoveryTree(tree, body.rooms, findSensorsTable(), findActionsTable());
+          renderDiscoveryTree(tree, body.rooms, findSensorsTable(), findActionsTable(), findShuttersTable());
         },
       }),
       el('button', {
@@ -607,12 +682,13 @@ async function renderDetail(skill) {
               .map(([field, value]) => ({ field, value }));
           }
           // Sensors NOT in the table go through the existing tree flow.
-          renderDiscoveryTree(tree, body.rooms, table, findActionsTable());
+          renderDiscoveryTree(tree, body.rooms, table, findActionsTable(), findShuttersTable());
           table?.rerender();
         },
       }),
       jmsg, pmsg, tree,
     );
+    card.append(section('discovery'));
     refreshPhrases();
   }
   card.append(el('button', {
@@ -683,11 +759,13 @@ async function uploadCard() {
   return card;
 }
 
-function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable) {
+function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable, shuttersTable) {
   const existing = new Set((sensorsTable?.getRows() || []).map((r) => Number(r.id)));
   const existingActions = new Set((actionsTable?.getRows() || []).map((r) => Number(r.on_id)));
+  const existingShutters = new Set((shuttersTable?.getRows() || []).map((r) => Number(r.up_id)));
   const boxes = [];
   const actionBoxes = [];
+  const shutterBoxes = [];
   container.replaceChildren();
   if (!rooms.length) {
     container.append(el('p', { class: 'help', text: t('nothing_discovered') }));
@@ -716,7 +794,22 @@ function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable) {
         section.append(el('div', { class: 'skill-row' },
           box,
           el('span', { class: 'name', text: `${eq.name} — on/off` }),
-          el('span', { class: 'badge', text: t('action_onoff') }),
+          el('span', { class: 'badge type-onoff', text: t('action_onoff') }),
+        ));
+      }
+      for (const sh of (eq.shutters || [])) {
+        const box = el('input', { type: 'checkbox' });
+        box.checked = existingShutters.has(sh.up_id);
+        box.disabled = existingShutters.has(sh.up_id);
+        shutterBoxes.push({ box, sh, eqName: eq.name, room: room.name });
+        const extras = [
+          sh.stop_id !== undefined ? t('with_stop') : '',
+          sh.slider_id !== undefined ? t('with_position') : '',
+        ].filter(Boolean).join(' ');
+        section.append(el('div', { class: 'skill-row' },
+          box,
+          el('span', { class: 'name', text: `${eq.name}${extras ? ` (${extras})` : ''}` }),
+          el('span', { class: 'badge type-shutter', text: t('action_shutter') }),
         ));
       }
     }
@@ -743,6 +836,20 @@ function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable) {
         name: composeSensorName('état', eqName, room),
         on_id: act.on_id,
         off_id: act.off_id,
+        room: (room || '').toLowerCase(),
+        prefix: guessRoomPrefix(room),
+        confirm: false,
+      })));
+      const pickedShutters = shutterBoxes.filter(({ box }) => box.checked && !box.disabled);
+      // Compose from the EQUIPMENT name (like generic sensors): equipment
+      // "Volet" in room "Chambre" → "volet de la chambre". Absent stop/slider
+      // ids stay undefined and are dropped by JSON.stringify on save.
+      shuttersTable?.addRows(pickedShutters.map(({ sh, eqName, room }) => ({
+        name: composeSensorName('état', eqName, room),
+        up_id: sh.up_id,
+        down_id: sh.down_id,
+        stop_id: sh.stop_id,
+        slider_id: sh.slider_id,
         room: (room || '').toLowerCase(),
         prefix: guessRoomPrefix(room),
         confirm: false,
