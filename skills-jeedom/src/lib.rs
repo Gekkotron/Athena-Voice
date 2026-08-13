@@ -16,6 +16,16 @@
 //!   (optional) set to `"binary"` switches reading phrasing to the spoken
 //!   `on_label`/`off_label` (e.g. "ouverte"/"fermée") instead of a numeric
 //!   value; anything else, including the default empty string, is numeric.
+//! - `actions` (optional) is a JSON-encoded array of on/off devices:
+//!   `[{"name":"lumière du salon","on_id":124,"off_id":125,"confirm":false}, …]`
+//!   — executing an action command uses the same GET as a read.
+//! - `shutters` (optional) is a JSON-encoded array of roller shutters:
+//!   `[{"name":"volet du salon","up_id":210,"down_id":211,"stop_id":212,
+//!   "slider_id":213,"confirm":false}, …]` — `up_id`/`down_id` required;
+//!   `stop_id`/`slider_id` optional (0 or absent = not configured).
+//!   `confirm` gates open/close/position behind a spoken confirmation but
+//!   never stop. Position runs the slider command with `&slider=N`
+//!   (0 = closed, 100 = open, Jeedom's FLAP convention).
 //!
 //! The API key only travels on your LAN, but treat it like a password:
 //! prefer a Jeedom API key restricted to the sensors you expose.
@@ -309,6 +319,7 @@ impl Skill for JeedomSkill {
                 let pending = Pending {
                     cmd_id,
                     label: label.clone(),
+                    slider: None,
                 };
                 if let Ok(bytes) = serde_json::to_vec(&pending) {
                     let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
@@ -322,11 +333,118 @@ impl Skill for JeedomSkill {
             return Ok(done_or_error(exec_cmd(ctx, cmd_id), en));
         }
 
+        // Group shutter intents run every configured shutter, unconditionally
+        // (no confirmation: the command names its full scope already).
+        if intent.name == "jeedom.shutter_open_all" || intent.name == "jeedom.shutter_close_all" {
+            let open = intent.name.ends_with("open_all");
+            let list = shutters(ctx);
+            if list.is_empty() {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            }
+            let failed = list
+                .iter()
+                .filter(|s| exec_cmd(ctx, if open { s.up_id } else { s.down_id }).is_err())
+                .count();
+            return Ok(SkillResponse::speak(group_answer(list.len(), failed, en)));
+        }
+
+        // Per-shutter intents: the key riding in the intent name is up_id.
+        let shutter_cmd = intent
+            .name
+            .strip_prefix("jeedom.shutter_open.")
+            .map(|k| (k, ShutterCmd::Open))
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_close.")
+                    .map(|k| (k, ShutterCmd::Close))
+            })
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_stop.")
+                    .map(|k| (k, ShutterCmd::Stop))
+            })
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.shutter_pos.")
+                    .map(|k| (k, ShutterCmd::Pos(0)))
+            });
+        if let Some((key, mut cmd)) = shutter_cmd {
+            let Some(shutter) = key
+                .parse::<u64>()
+                .ok()
+                .and_then(|k| shutters(ctx).iter().find(|s| s.up_id == k))
+            else {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            };
+            if let ShutterCmd::Pos(_) = cmd {
+                let Some(p) = intent.slots.get("position").and_then(slot_number) else {
+                    return Ok(SkillResponse::speak(ask_position(en)));
+                };
+                cmd = ShutterCmd::Pos(p.clamp(0.0, 100.0) as u64);
+            }
+            let cmd_id = match cmd {
+                ShutterCmd::Open => shutter.up_id,
+                ShutterCmd::Close => shutter.down_id,
+                ShutterCmd::Stop => shutter.stop_id,
+                ShutterCmd::Pos(_) => shutter.slider_id,
+            };
+            if cmd_id == 0 {
+                // Rules for stop/pos are only registered when the id is set,
+                // so this is unreachable in practice — apologise defensively.
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            }
+            // Stop is never gated behind confirmation.
+            if shutter.confirm && !matches!(cmd, ShutterCmd::Stop) {
+                let label = shutter_label(&shutter.name, &cmd, en);
+                let slider = match cmd {
+                    ShutterCmd::Pos(v) => Some(v),
+                    _ => None,
+                };
+                let pending = Pending {
+                    cmd_id,
+                    label: label.clone(),
+                    slider,
+                };
+                if let Ok(bytes) = serde_json::to_vec(&pending) {
+                    let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
+                }
+                return Ok(SkillResponse::speak(if en {
+                    format!("Confirm: {label}?")
+                } else {
+                    format!("Tu confirmes : {label} ?")
+                }));
+            }
+            let executed = match cmd {
+                ShutterCmd::Pos(v) => exec_slider(ctx, cmd_id, v),
+                _ => exec_cmd(ctx, cmd_id),
+            };
+            return Ok(done_or_error(executed, en));
+        }
+
         if intent.name == "jeedom.confirm" {
             return Ok(match load_pending(ctx) {
                 Some(p) => {
                     clear_pending(ctx);
-                    done_or_error(exec_cmd(ctx, p.cmd_id), en)
+                    let executed = match p.slider {
+                        Some(v) => exec_slider(ctx, p.cmd_id, v),
+                        None => exec_cmd(ctx, p.cmd_id),
+                    };
+                    done_or_error(executed, en)
                 }
                 None => SkillResponse::speak(if en {
                     "Nothing to confirm."
@@ -883,6 +1001,82 @@ fn exec_cmd(ctx: &HostCtx, id: u64) -> Result<(), ()> {
 struct Pending {
     cmd_id: u64,
     label: String,
+    /// Set for position commands: confirm executes cmd_id as a slider.
+    #[serde(default)]
+    slider: Option<u64>,
+}
+
+/// What a shutter intent asks for; `Pos` carries the clamped 0–100 target.
+/// `Copy` (payload is a bare u64) — the handler matches it by value twice.
+#[derive(Debug, Clone, Copy)]
+enum ShutterCmd {
+    Open,
+    Close,
+    Stop,
+    Pos(u64),
+}
+
+fn shutter_label(name: &str, cmd: &ShutterCmd, en: bool) -> String {
+    match (cmd, en) {
+        (ShutterCmd::Open, false) => format!("ouvrir {name}"),
+        (ShutterCmd::Close, false) => format!("fermer {name}"),
+        (ShutterCmd::Stop, false) => format!("arrêter {name}"),
+        (ShutterCmd::Pos(v), false) => format!("mettre {name} à {v} pour cent"),
+        (ShutterCmd::Open, true) => format!("open {name}"),
+        (ShutterCmd::Close, true) => format!("close {name}"),
+        (ShutterCmd::Stop, true) => format!("stop {name}"),
+        (ShutterCmd::Pos(v), true) => format!("set {name} to {v} percent"),
+    }
+}
+
+fn ask_position(en: bool) -> &'static str {
+    if en {
+        "To what position, in percent?"
+    } else {
+        "À quelle position, en pourcentage ?"
+    }
+}
+
+/// The matcher inserts slot values as JSON strings; be tolerant of numbers.
+fn slot_number(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn group_answer(total: usize, failed: usize, en: bool) -> String {
+    if failed == 0 {
+        return if en { "Done." } else { "C'est fait." }.into();
+    }
+    if failed >= total {
+        return if en {
+            "sorry, I can't reach Jeedom right now"
+        } else {
+            "désolé, je n'arrive pas à joindre Jeedom"
+        }
+        .into();
+    }
+    match (en, failed) {
+        (false, 1) => "C'est fait, mais un volet n'a pas répondu.".into(),
+        (false, n) => format!("C'est fait, mais {n} volets n'ont pas répondu."),
+        (true, 1) => "Done, but 1 shutter did not respond.".into(),
+        (true, n) => format!("Done, but {n} shutters did not respond."),
+    }
+}
+
+/// Executes a Jeedom slider action command: same authenticated GET with the
+/// target value as `&slider=`.
+fn exec_slider(ctx: &HostCtx, id: u64, value: u64) -> Result<(), ()> {
+    let url = jeedom_url(ctx, id)?;
+    match ctx.http_get_json(&format!("{url}&slider={value}")) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            ctx.log("warn", &format!("jeedom: slider exec failed: {e}"));
+            Err(())
+        }
+    }
 }
 
 const PENDING_KEY: &str = "pending_action";
@@ -1365,11 +1559,93 @@ mod tests {
         let p = Pending {
             cmd_id: 124,
             label: "allumer lumière du salon".into(),
+            slider: None,
         };
         let bytes = serde_json::to_vec(&p).unwrap();
         let back: Pending = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.cmd_id, 124);
         assert_eq!(back.label, p.label);
+    }
+
+    #[test]
+    fn shutter_labels_phrase_both_locales() {
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Open, false),
+            "ouvrir volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Close, false),
+            "fermer volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Pos(50), false),
+            "mettre volet du salon à 50 pour cent"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Open, true),
+            "open volet du salon"
+        );
+        assert_eq!(
+            shutter_label("volet du salon", &ShutterCmd::Pos(50), true),
+            "set volet du salon to 50 percent"
+        );
+    }
+
+    #[test]
+    fn pending_slider_roundtrips_and_defaults() {
+        // Old payloads (no slider field) must still load — the on/off flow
+        // stores them and both flows share the same tmp key.
+        let old = br#"{"cmd_id":124,"label":"allumer lampe"}"#;
+        let p: Pending = serde_json::from_slice(old).unwrap();
+        assert_eq!(p.slider, None);
+        let new = Pending {
+            cmd_id: 213,
+            label: "mettre volet à 50 pour cent".into(),
+            slider: Some(50),
+        };
+        let bytes = serde_json::to_vec(&new).unwrap();
+        let back: Pending = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.slider, Some(50));
+    }
+
+    #[test]
+    fn slot_number_reads_strings_and_numbers() {
+        assert_eq!(slot_number(&serde_json::json!("50")), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!(" 50 ")), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!(50)), Some(50.0));
+        assert_eq!(slot_number(&serde_json::json!("cinquante")), None);
+        assert_eq!(slot_number(&serde_json::Value::Null), None);
+    }
+
+    #[test]
+    fn group_answer_phrasing() {
+        assert_eq!(group_answer(3, 0, false), "C'est fait.");
+        assert_eq!(group_answer(3, 3, false), "désolé, je n'arrive pas à joindre Jeedom");
+        assert_eq!(group_answer(3, 1, false), "C'est fait, mais un volet n'a pas répondu.");
+        assert_eq!(group_answer(3, 2, false), "C'est fait, mais 2 volets n'ont pas répondu.");
+        assert_eq!(group_answer(3, 1, true), "Done, but 1 shutter did not respond.");
+        assert_eq!(group_answer(3, 2, true), "Done, but 2 shutters did not respond.");
+    }
+
+    #[test]
+    fn shutter_intent_for_unknown_device_apologises() {
+        // Host-side config is empty, so no shutter matches key 999.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.shutter_open.999".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "désolé, je ne connais pas cet appareil");
+    }
+
+    #[test]
+    fn shutter_pos_without_number_reasks() {
+        // The re-ask path needs configured shutters, which for_testing cannot
+        // supply — the copy is pinned via ask_position() directly instead.
+        assert_eq!(ask_position(false), "À quelle position, en pourcentage ?");
+        assert_eq!(ask_position(true), "To what position, in percent?");
     }
 
     fn speak_text(r: SkillResponse) -> String {
