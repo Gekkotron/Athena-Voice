@@ -133,6 +133,56 @@ fn parse_actions(raw: &str) -> Vec<ActionDevice> {
     v
 }
 
+/// One roller shutter: up/down Jeedom action command ids behind a single
+/// spoken name, with optional stop and position-slider commands (0 = not
+/// configured — Jeedom ids start at 1, and the admin UI leaves untouched
+/// number cells absent). Like sensors, `name` stores the FULL composed
+/// spoken form ("volet du salon").
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct Shutter {
+    name: String,
+    #[serde(default)]
+    room: String,
+    #[serde(default)]
+    prefix: String,
+    up_id: u64,
+    down_id: u64,
+    #[serde(default)]
+    stop_id: u64,
+    #[serde(default)]
+    slider_id: u64,
+    /// True → open/close/position ask "Tu confirmes : … ?" first.
+    /// Stop is never gated: stopping a moving shutter must be immediate.
+    #[serde(default)]
+    confirm: bool,
+}
+
+static SHUTTERS: OnceCell<Vec<Shutter>> = OnceCell::new();
+
+fn parse_shutters(raw: &str) -> Vec<Shutter> {
+    let Ok(mut v) = serde_json::from_str::<Vec<Shutter>>(raw) else {
+        return Vec::new();
+    };
+    for s in &mut v {
+        s.name = clean_spoken(&s.name);
+        s.room = clean_spoken(&s.room);
+        s.prefix = clean_spoken(&s.prefix.replace('’', "'"));
+    }
+    v
+}
+
+fn shutters(ctx: &HostCtx) -> &'static [Shutter] {
+    SHUTTERS
+        .get_or_init(|| {
+            let raw = ctx.config_get_toml("shutters").unwrap_or_default();
+            if raw.is_empty() {
+                return Vec::new();
+            }
+            parse_shutters(&raw)
+        })
+        .as_slice()
+}
+
 fn actions(ctx: &HostCtx) -> &'static [ActionDevice] {
     ACTIONS
         .get_or_init(|| {
@@ -900,6 +950,56 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                     },
                 ],
             },
+            ConfigField {
+                key: "shutters".into(),
+                label: "Shutters".into(),
+                kind: FieldKind::List,
+                required: false,
+                help: "Roller shutters: spoken name → Jeedom up/down action ids; stop/slider optional".into(),
+                default: String::new(),
+                item_fields: vec![
+                    ItemField {
+                        key: "name".into(),
+                        kind: FieldKind::String,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "up_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "down_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "stop_id".into(),
+                        kind: FieldKind::Number,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "slider_id".into(),
+                        kind: FieldKind::Number,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "room".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "prefix".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "confirm".into(),
+                        kind: FieldKind::Bool,
+                        required: false,
+                    },
+                ],
+            },
         ],
     };
     Ok(serde_json::to_string(&schema)?)
@@ -938,6 +1038,35 @@ mod tests {
             off_id,
             confirm,
         }
+    }
+
+    fn sh(name: &str, up_id: u64, down_id: u64) -> Shutter {
+        Shutter {
+            name: name.into(),
+            room: String::new(),
+            prefix: String::new(),
+            up_id,
+            down_id,
+            stop_id: 0,
+            slider_id: 0,
+            confirm: false,
+        }
+    }
+
+    #[test]
+    fn shutters_parse_cleans_and_defaults() {
+        let raw = r#"[{"name":"volet 🪟 du salon","up_id":210,"down_id":211},
+                      {"name":"volet de la chambre","room":"chambre","prefix":"de la",
+                       "up_id":220,"down_id":221,"stop_id":222,"slider_id":223,"confirm":true}]"#;
+        let v = parse_shutters(raw);
+        assert_eq!(v[0].name, "volet du salon", "symbols stripped");
+        assert_eq!(v[0].stop_id, 0, "stop_id defaults to 0 = unset");
+        assert_eq!(v[0].slider_id, 0, "slider_id defaults to 0 = unset");
+        assert!(!v[0].confirm);
+        assert_eq!(v[1].stop_id, 222);
+        assert_eq!(v[1].slider_id, 223);
+        assert!(v[1].confirm);
+        assert_eq!(parse_shutters("not json"), Vec::<Shutter>::new().as_slice());
     }
 
     #[test]
