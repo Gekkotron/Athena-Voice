@@ -22,6 +22,7 @@ const T = {
     no_phrases: 'no phrases — save sensors first',
     test_console: 'Test console', test_console_help: 'Send a text command to the assistant — test tool, nothing is stored server-side.',
     send: 'Send', sending: 'Sending…', network_error: 'network error',
+    action_onoff: 'on/off device',
   },
   fr: {
     save: 'Enregistrer', skills: 'Compétences',
@@ -44,6 +45,7 @@ const T = {
     no_phrases: 'aucune phrase — enregistrez des capteurs',
     test_console: 'Console de test', test_console_help: 'Envoyer une commande texte à l’assistant — outil de test, rien n’est stocké côté serveur.',
     send: 'Envoyer', sending: 'Envoi…', network_error: 'erreur réseau',
+    action_onoff: 'appareil on/off',
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
@@ -324,6 +326,10 @@ function listEditor(f, current, opts = {}) {
             cell.value = choices.includes(row[c.key]) ? row[c.key] : choices[0];
             // A select change can re-enable/disable sibling cells — re-render.
             cell.onchange = () => { row[c.key] = cell.value; edited(); render(); };
+          } else if (c.type === 'bool') {
+            cell = el('input', { type: 'checkbox' });
+            cell.checked = row[c.key] === true;
+            cell.onchange = () => { row[c.key] = cell.checked; edited(); };
           } else {
             cell = el('input', { type: c.type === 'number' ? 'number' : 'text' });
             cell.value = row[c.key] ?? '';
@@ -392,6 +398,8 @@ async function renderDetail(skill) {
   } : null;
   const findSensorsTable = () =>
     widgets.find(([f]) => f.key === 'sensors')?.[1].querySelector('table');
+  const findActionsTable = () =>
+    widgets.find(([f]) => f.key === 'actions')?.[1].querySelector('table');
   const readCell = (row) => {
     const id = Number(row.id);
     const r = jd.reads[id];
@@ -437,6 +445,16 @@ async function renderDetail(skill) {
       if (nameChanged || row.prefix !== typed) findSensorsTable()?.rerender();
     },
   } : undefined;
+  const actionOpts = jd ? {
+    onEdit: () => { jd.stale = true; findActionsTable()?.classList.add('stale'); },
+    rowDetail: (row) => {
+      const locales = jd.phraseGroups[`jeedom.turn_on.${Number(row.on_id)}`];
+      const phrases = locales ? (locales[lang] || Object.values(locales)[0] || []) : [];
+      if (!phrases.length) return null;
+      return el('span', { class: 'hint' },
+        el('span', { text: `${t('you_can_say')} ${phrases.slice(0, 2).map((p) => `« ${p} »`).join(', ')}` }));
+    },
+  } : undefined;
   const pmsg = el('p', { class: 'help' });
   async function refreshPhrases() {
     if (!jd) return;
@@ -450,6 +468,8 @@ async function renderDetail(skill) {
     jd.stale = false;
     const table = findSensorsTable();
     if (table) { table.classList.remove('stale'); table.rerender(); }
+    const atable = findActionsTable();
+    if (atable) { atable.classList.remove('stale'); atable.rerender(); }
     const anySensorGroup = Object.keys(jd.phraseGroups).some((k) => /^jeedom\.read\.\d+$/.test(k));
     pmsg.textContent = anySensorGroup ? '' : t('no_phrases');
   }
@@ -508,7 +528,8 @@ async function renderDetail(skill) {
     return el('span', {}, ...bits);
   }
   const widgets = fields.map((f) => {
-    const w = fieldInput(f, skill.config[f.key], f.key === 'sensors' ? sensorOpts : undefined);
+    const w = fieldInput(f, skill.config[f.key],
+      f.key === 'sensors' ? sensorOpts : f.key === 'actions' ? actionOpts : undefined);
     card.append(w);
     return [f, w];
   });
@@ -533,7 +554,7 @@ async function renderDetail(skill) {
           const body = await (await api('/api/skills/jeedom/discover', { method: 'POST' })).json();
           if (body.status !== 'ok') { jmsg.textContent = t(`jeedom_${body.status}`); return; }
           jmsg.textContent = '';
-          renderDiscoveryTree(tree, body.rooms, findSensorsTable());
+          renderDiscoveryTree(tree, body.rooms, findSensorsTable(), findActionsTable());
         },
       }),
       el('button', {
@@ -586,7 +607,7 @@ async function renderDetail(skill) {
               .map(([field, value]) => ({ field, value }));
           }
           // Sensors NOT in the table go through the existing tree flow.
-          renderDiscoveryTree(tree, body.rooms, table);
+          renderDiscoveryTree(tree, body.rooms, table, findActionsTable());
           table?.rerender();
         },
       }),
@@ -662,9 +683,11 @@ async function uploadCard() {
   return card;
 }
 
-function renderDiscoveryTree(container, rooms, sensorsTable) {
+function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable) {
   const existing = new Set((sensorsTable?.getRows() || []).map((r) => Number(r.id)));
+  const existingActions = new Set((actionsTable?.getRows() || []).map((r) => Number(r.on_id)));
   const boxes = [];
+  const actionBoxes = [];
   container.replaceChildren();
   if (!rooms.length) {
     container.append(el('p', { class: 'help', text: t('nothing_discovered') }));
@@ -685,6 +708,17 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
           badge ? el('span', { class: 'badge', text: badge }) : '',
         ));
       }
+      for (const act of (eq.actions || [])) {
+        const box = el('input', { type: 'checkbox' });
+        box.checked = existingActions.has(act.on_id);
+        box.disabled = existingActions.has(act.on_id);
+        actionBoxes.push({ box, act, eqName: eq.name, room: room.name });
+        section.append(el('div', { class: 'skill-row' },
+          box,
+          el('span', { class: 'name', text: `${eq.name} — on/off` }),
+          el('span', { class: 'badge', text: t('action_onoff') }),
+        ));
+      }
     }
     container.append(section);
   }
@@ -701,6 +735,17 @@ function renderDiscoveryTree(container, rooms, sensorsTable) {
         kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
         on_label: cmd.on_label || '',
         off_label: cmd.off_label || '',
+      })));
+      const pickedActions = actionBoxes.filter(({ box }) => box.checked && !box.disabled);
+      // 'état' is a generic command name, so the composed spoken name comes
+      // from the EQUIPMENT name — "portail du garage" — like generic sensors.
+      actionsTable?.addRows(pickedActions.map(({ act, eqName, room }) => ({
+        name: composeSensorName('état', eqName, room),
+        on_id: act.on_id,
+        off_id: act.off_id,
+        room: (room || '').toLowerCase(),
+        prefix: guessRoomPrefix(room),
+        confirm: false,
       })));
       container.replaceChildren();
     },

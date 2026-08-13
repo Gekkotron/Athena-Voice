@@ -471,9 +471,15 @@ async fn fetch_json(http: &reqwest::Client, url: Url) -> Result<serde_json::Valu
     if !status.is_success() {
         return Err(HostFnError::HttpFailed(format!("status {status}")));
     }
-    resp.json::<serde_json::Value>()
+    let bytes = resp
+        .bytes()
         .await
-        .map_err(|e| HostFnError::HttpFailed(redact_query_values(&e.to_string(), &url)))
+        .map_err(|e| HostFnError::HttpFailed(redact_query_values(&e.to_string(), &url)))?;
+    // Jeedom's simple API answers action executions with plain text or an
+    // empty body; surface that as a JSON string rather than a decode error.
+    Ok(serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+        serde_json::Value::String(String::from_utf8_lossy(&bytes).trim().to_string())
+    }))
 }
 
 fn host_http_get_json(
@@ -860,5 +866,55 @@ mod tests {
             Some("bonjour"),
         );
         assert_eq!(ctx.config.get("missing"), None);
+    }
+
+    async fn serve_body(body: &'static str) -> wiremock::MockServer {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn fetch_json_parses_json_bodies() {
+        let server = serve_body(r#"{"value": 21.5}"#).await;
+        let url = reqwest::Url::parse(&server.uri()).unwrap();
+        let v = fetch_json(&reqwest::Client::new(), url).await.unwrap();
+        assert_eq!(v["value"], 21.5);
+    }
+
+    #[tokio::test]
+    async fn fetch_json_wraps_plain_text_bodies_as_string() {
+        // Jeedom answers an action execution with plain text ("ok") or an
+        // empty body — that is a SUCCESS, not a decode error.
+        let server = serve_body("ok").await;
+        let url = reqwest::Url::parse(&server.uri()).unwrap();
+        let v = fetch_json(&reqwest::Client::new(), url).await.unwrap();
+        assert_eq!(v, serde_json::Value::String("ok".into()));
+
+        let empty = serve_body("").await;
+        let url = reqwest::Url::parse(&empty.uri()).unwrap();
+        let v = fetch_json(&reqwest::Client::new(), url).await.unwrap();
+        assert_eq!(v, serde_json::Value::String(String::new()));
+    }
+
+    #[tokio::test]
+    async fn fetch_json_still_errors_on_http_failure() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let url = reqwest::Url::parse(&server.uri()).unwrap();
+        assert!(
+            fetch_json(&reqwest::Client::new(), url).await.is_err(),
+            "non-2xx must stay an error"
+        );
     }
 }

@@ -35,6 +35,7 @@ pub enum FieldKind {
     Url,
     Host,
     List,
+    Bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

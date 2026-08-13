@@ -101,6 +101,50 @@ fn parse_sensors(raw: &str) -> Vec<Sensor> {
     v
 }
 
+/// One controllable on/off device: two Jeedom action command ids behind a
+/// single spoken name. Like sensors, `name` stores the FULL composed
+/// spoken form ("lumière du salon"); room/prefix are auxiliary metadata.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct ActionDevice {
+    name: String,
+    #[serde(default)]
+    room: String,
+    #[serde(default)]
+    prefix: String,
+    on_id: u64,
+    off_id: u64,
+    /// True → the assistant asks "Tu confirmes : … ?" and waits for a
+    /// spoken oui/confirme before executing.
+    #[serde(default)]
+    confirm: bool,
+}
+
+static ACTIONS: OnceCell<Vec<ActionDevice>> = OnceCell::new();
+
+fn parse_actions(raw: &str) -> Vec<ActionDevice> {
+    let Ok(mut v) = serde_json::from_str::<Vec<ActionDevice>>(raw) else {
+        return Vec::new();
+    };
+    for d in &mut v {
+        d.name = clean_spoken(&d.name);
+        d.room = clean_spoken(&d.room);
+        d.prefix = clean_spoken(&d.prefix.replace('’', "'"));
+    }
+    v
+}
+
+fn actions(ctx: &HostCtx) -> &'static [ActionDevice] {
+    ACTIONS
+        .get_or_init(|| {
+            let raw = ctx.config_get_toml("actions").unwrap_or_default();
+            if raw.is_empty() {
+                return Vec::new();
+            }
+            parse_actions(&raw)
+        })
+        .as_slice()
+}
+
 fn sensors(ctx: &HostCtx) -> &'static [Sensor] {
     SENSORS
         .get_or_init(|| {
@@ -125,7 +169,10 @@ impl Skill for JeedomSkill {
     }
 
     fn pattern_rules(&self, locale: &str) -> Vec<PatternRule> {
-        rules_for(locale, sensors(&HostCtx::for_testing()))
+        let ctx = HostCtx::for_testing();
+        let mut rules = rules_for(locale, sensors(&ctx));
+        rules.extend(action_rules(locale, actions(&ctx)));
+        rules
     }
 
     fn handle(&mut self, intent: Intent, ctx: &mut HostCtx) -> Result<SkillResponse, SkillError> {
@@ -146,8 +193,10 @@ impl Skill for JeedomSkill {
         // ("toutes les températures") rather than a single sensor.
         if let Some(metric) = intent.name.strip_prefix("jeedom.read_all.") {
             let list = sensors(ctx);
-            let matching: Vec<&Sensor> =
-                list.iter().filter(|s| metric_of(s) == metric || s.name.contains(metric)).collect();
+            let matching: Vec<&Sensor> = list
+                .iter()
+                .filter(|s| metric_of(s) == metric || s.name.contains(metric))
+                .collect();
             if matching.is_empty() {
                 return Ok(SkillResponse::speak(if en {
                     format!("no sensor matches {metric}")
@@ -160,12 +209,90 @@ impl Skill for JeedomSkill {
                 match read_value(ctx, sensor) {
                     Ok(v) => clauses.push(enum_clause(sensor, &v, en)),
                     Err(()) => {
-                        let place = if sensor.room.is_empty() { sensor.name.clone() } else { sensor.room.clone() };
-                        clauses.push(if en { format!("{place} unavailable") } else { format!("{place} indisponible") });
+                        let place = if sensor.room.is_empty() {
+                            sensor.name.clone()
+                        } else {
+                            sensor.room.clone()
+                        };
+                        clauses.push(if en {
+                            format!("{place} unavailable")
+                        } else {
+                            format!("{place} indisponible")
+                        });
                     }
                 }
             }
             return Ok(SkillResponse::speak(clauses.join(", ")));
+        }
+
+        // On/off device intents: the key riding in the intent name is the
+        // device's on_id, for both directions.
+        let turn = intent
+            .name
+            .strip_prefix("jeedom.turn_on.")
+            .map(|k| (k, true))
+            .or_else(|| {
+                intent
+                    .name
+                    .strip_prefix("jeedom.turn_off.")
+                    .map(|k| (k, false))
+            });
+        if let Some((key, on)) = turn {
+            let Some(device) = key
+                .parse::<u64>()
+                .ok()
+                .and_then(|k| actions(ctx).iter().find(|d| d.on_id == k))
+            else {
+                return Ok(SkillResponse::speak(if en {
+                    "sorry, I don't know that device"
+                } else {
+                    "désolé, je ne connais pas cet appareil"
+                }));
+            };
+            let cmd_id = if on { device.on_id } else { device.off_id };
+            if device.confirm {
+                let label = action_label(device, on, en);
+                let pending = Pending {
+                    cmd_id,
+                    label: label.clone(),
+                };
+                if let Ok(bytes) = serde_json::to_vec(&pending) {
+                    let _ = ctx.tmp_set(PENDING_KEY, &bytes, PENDING_TTL_SEC);
+                }
+                return Ok(SkillResponse::speak(if en {
+                    format!("Confirm: {label}?")
+                } else {
+                    format!("Tu confirmes : {label} ?")
+                }));
+            }
+            return Ok(done_or_error(exec_cmd(ctx, cmd_id), en));
+        }
+
+        if intent.name == "jeedom.confirm" {
+            return Ok(match load_pending(ctx) {
+                Some(p) => {
+                    clear_pending(ctx);
+                    done_or_error(exec_cmd(ctx, p.cmd_id), en)
+                }
+                None => SkillResponse::speak(if en {
+                    "Nothing to confirm."
+                } else {
+                    "Rien à confirmer."
+                }),
+            });
+        }
+        if intent.name == "jeedom.cancel" {
+            return Ok(match load_pending(ctx) {
+                Some(_) => {
+                    clear_pending(ctx);
+                    SkillResponse::speak(if en { "Cancelled." } else { "Annulé." })
+                }
+                None => SkillResponse::speak(if en {
+                    "Nothing to confirm."
+                } else {
+                    "Rien à confirmer."
+                }),
+            });
         }
 
         let asked = intent
@@ -214,7 +341,11 @@ fn speak_reading(ctx: &HostCtx, sensor: &Sensor, en: bool) -> Result<SkillRespon
 fn binary_label<'a>(sensor: &'a Sensor, value: &str, en: bool) -> &'a str {
     let on = value == "1" || value.eq_ignore_ascii_case("true");
     if on {
-        if sensor.on_label.is_empty() { if en { "on" } else { "activé" } } else { &sensor.on_label }
+        if sensor.on_label.is_empty() {
+            if en { "on" } else { "activé" }
+        } else {
+            &sensor.on_label
+        }
     } else if sensor.off_label.is_empty() {
         if en { "off" } else { "désactivé" }
     } else {
@@ -234,7 +365,11 @@ fn phrase_reading(sensor: &Sensor, value: &str, en: bool) -> String {
             format!("la {} est {label}", sensor.name)
         };
     }
-    let unit = if sensor.unit.is_empty() { String::new() } else { format!(" {}", sensor.unit) };
+    let unit = if sensor.unit.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", sensor.unit)
+    };
     if en {
         format!("the {} is {value}{unit}", sensor.name)
     } else {
@@ -248,11 +383,19 @@ fn phrase_reading(sensor: &Sensor, value: &str, en: bool) -> String {
 /// as `phrase_reading` so enumeration and single-sensor readings never
 /// disagree on what a binary value means.
 fn enum_clause(sensor: &Sensor, value: &str, en: bool) -> String {
-    let place = if sensor.room.is_empty() { sensor.name.clone() } else { sensor.room.clone() };
+    let place = if sensor.room.is_empty() {
+        sensor.name.clone()
+    } else {
+        sensor.room.clone()
+    };
     if sensor.kind == "binary" {
         format!("{place} {}", binary_label(sensor, value, en))
     } else {
-        let unit = if sensor.unit.is_empty() { String::new() } else { format!(" {}", sensor.unit) };
+        let unit = if sensor.unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", sensor.unit)
+        };
         format!("{place} {value}{unit}")
     }
 }
@@ -280,7 +423,11 @@ fn metric_of(sensor: &Sensor) -> String {
             .unwrap_or(head)
             .trim_end()
     };
-    if head.is_empty() { name } else { head.to_string() }
+    if head.is_empty() {
+        name
+    } else {
+        head.to_string()
+    }
 }
 
 /// Fuzzy-resolves the spoken sensor name against a sensor list; highest
@@ -365,10 +512,7 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
                 format!("quelle est la {name}"),
                 format!("quel est le niveau de {name}"),
             ],
-            "en" => vec![
-                format!("what is the {name}"),
-                format!("what's the {name}"),
-            ],
+            "en" => vec![format!("what is the {name}"), format!("what's the {name}")],
             _ => Vec::new(),
         };
         // Sensors tied to a room also answer room-scoped phrasings —
@@ -433,9 +577,16 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
     metrics.sort();
     metrics.dedup();
     for metric in metrics {
-        let plural = if metric.ends_with('s') { metric.clone() } else { format!("{metric}s") };
+        let plural = if metric.ends_with('s') {
+            metric.clone()
+        } else {
+            format!("{metric}s")
+        };
         let enum_phrases: Vec<String> = match locale {
-            "fr" => vec![format!("toutes les {plural}"), format!("toutes les {metric}")],
+            "fr" => vec![
+                format!("toutes les {plural}"),
+                format!("toutes les {metric}"),
+            ],
             "en" => vec![format!("all {plural}"), format!("all the {plural}")],
             _ => Vec::new(),
         };
@@ -448,8 +599,85 @@ fn rules_for(locale: &str, configured: &[Sensor]) -> Vec<PatternRule> {
     rules
 }
 
-/// Reads one command value through Jeedom's simple HTTP GET API.
-fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
+/// Match rules for configured on/off devices, plus the global
+/// confirm/cancel rules when any device requires confirmation. The device
+/// key riding in the intent name is always `on_id`.
+fn action_rules(locale: &str, devices: &[ActionDevice]) -> Vec<PatternRule> {
+    if devices.is_empty() {
+        return Vec::new();
+    }
+    let mut rules = Vec::new();
+    for d in devices {
+        let name = &d.name;
+        let (on_phrases, off_phrases): (Vec<String>, Vec<String>) = match locale {
+            "fr" => (
+                vec![
+                    format!("allume la {name}"),
+                    format!("allume le {name}"),
+                    format!("allume {name}"),
+                    format!("active {name}"),
+                ],
+                vec![
+                    format!("éteins la {name}"),
+                    format!("éteins le {name}"),
+                    format!("éteins {name}"),
+                    format!("coupe {name}"),
+                    format!("désactive {name}"),
+                ],
+            ),
+            "en" => (
+                vec![
+                    format!("turn on the {name}"),
+                    format!("turn on {name}"),
+                    format!("switch on the {name}"),
+                ],
+                vec![
+                    format!("turn off the {name}"),
+                    format!("turn off {name}"),
+                    format!("switch off the {name}"),
+                ],
+            ),
+            _ => return Vec::new(),
+        };
+        rules.push(PatternRule {
+            intent: format!("jeedom.turn_on.{}", d.on_id),
+            phrases: on_phrases,
+            slots: Vec::new(),
+        });
+        rules.push(PatternRule {
+            intent: format!("jeedom.turn_off.{}", d.on_id),
+            phrases: off_phrases,
+            slots: Vec::new(),
+        });
+    }
+    if devices.iter().any(|d| d.confirm) {
+        let (yes, no): (Vec<String>, Vec<String>) = match locale {
+            "fr" => (
+                vec!["oui".into(), "confirme".into(), "c'est confirmé".into()],
+                vec!["non".into(), "annule".into()],
+            ),
+            "en" => (
+                vec!["yes".into(), "confirm".into()],
+                vec!["no".into(), "cancel".into()],
+            ),
+            _ => (Vec::new(), Vec::new()),
+        };
+        rules.push(PatternRule {
+            intent: "jeedom.confirm".into(),
+            phrases: yes,
+            slots: Vec::new(),
+        });
+        rules.push(PatternRule {
+            intent: "jeedom.cancel".into(),
+            phrases: no,
+            slots: Vec::new(),
+        });
+    }
+    rules
+}
+
+/// Builds the authenticated simple-API URL for one command id.
+fn jeedom_url(ctx: &HostCtx, id: u64) -> Result<String, ()> {
     let base = ctx
         .config_get_toml("base_url")
         .filter(|s| !s.is_empty())
@@ -458,19 +686,78 @@ fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
         .config_get_toml("api_key")
         .filter(|s| !s.is_empty())
         .ok_or(())?;
-    let url = format!(
-        "{}/core/api/jeeApi.php?apikey={api_key}&type=cmd&id={}",
+    Ok(format!(
+        "{}/core/api/jeeApi.php?apikey={api_key}&type=cmd&id={id}",
         base.trim_end_matches('/'),
-        sensor.id
-    );
+    ))
+}
+
+/// Executes one Jeedom ACTION command — same GET as a read; for an
+/// action-type command the call runs it. The body (plain "ok", empty, or
+/// JSON) is irrelevant: any 2xx counts as executed.
+fn exec_cmd(ctx: &HostCtx, id: u64) -> Result<(), ()> {
+    let url = jeedom_url(ctx, id)?;
+    match ctx.http_get_json(&url) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            ctx.log("warn", &format!("jeedom: action exec failed: {e}"));
+            Err(())
+        }
+    }
+}
+
+/// Pending confirmation, stored in the skill's tmp KV. The tmp store has
+/// no delete: "clear" = overwrite with an EMPTY payload (1 s TTL), and
+/// every reader treats an empty payload as absent.
+#[derive(Debug, serde::Serialize, Deserialize)]
+struct Pending {
+    cmd_id: u64,
+    label: String,
+}
+
+const PENDING_KEY: &str = "pending_action";
+const PENDING_TTL_SEC: u64 = 30;
+
+fn action_label(d: &ActionDevice, on: bool, en: bool) -> String {
+    match (on, en) {
+        (true, false) => format!("allumer {}", d.name),
+        (false, false) => format!("éteindre {}", d.name),
+        (true, true) => format!("turn on {}", d.name),
+        (false, true) => format!("turn off {}", d.name),
+    }
+}
+
+fn load_pending(ctx: &HostCtx) -> Option<Pending> {
+    let bytes = ctx.tmp_get(PENDING_KEY).ok().flatten()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn clear_pending(ctx: &HostCtx) {
+    let _ = ctx.tmp_set(PENDING_KEY, b"", 1);
+}
+
+fn done_or_error(executed: Result<(), ()>, en: bool) -> SkillResponse {
+    match executed {
+        Ok(()) => SkillResponse::speak(if en { "Done." } else { "C'est fait." }),
+        Err(()) => SkillResponse::speak(if en {
+            "sorry, I can't reach Jeedom right now"
+        } else {
+            "désolé, je n'arrive pas à joindre Jeedom"
+        }),
+    }
+}
+
+/// Reads one command value through Jeedom's simple HTTP GET API.
+fn read_value(ctx: &HostCtx, sensor: &Sensor) -> Result<String, ()> {
+    let url = jeedom_url(ctx, sensor.id)?;
     match ctx.http_get_json(&url) {
         // Numeric sensors come back as a bare JSON scalar; be tolerant of
         // string-wrapped numbers and `{"value": …}` envelopes too.
         Ok(v) => {
-            let value = v
-                .get("value")
-                .cloned()
-                .unwrap_or(v);
+            let value = v.get("value").cloned().unwrap_or(v);
             let spoken = match value {
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::String(s) => s,
@@ -573,6 +860,46 @@ pub fn config_schema(_input: String) -> FnResult<String> {
                     },
                 ],
             },
+            ConfigField {
+                key: "actions".into(),
+                label: "Actions".into(),
+                kind: FieldKind::List,
+                required: false,
+                help: "On/off devices: spoken name → Jeedom on/off action command ids".into(),
+                default: String::new(),
+                item_fields: vec![
+                    ItemField {
+                        key: "name".into(),
+                        kind: FieldKind::String,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "on_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "off_id".into(),
+                        kind: FieldKind::Number,
+                        required: true,
+                    },
+                    ItemField {
+                        key: "room".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "prefix".into(),
+                        kind: FieldKind::String,
+                        required: false,
+                    },
+                    ItemField {
+                        key: "confirm".into(),
+                        kind: FieldKind::Bool,
+                        required: false,
+                    },
+                ],
+            },
         ],
     };
     Ok(serde_json::to_string(&schema)?)
@@ -584,8 +911,13 @@ mod tests {
 
     fn s(name: &str, id: u64, unit: &str, room: &str, kind: &str, on: &str, off: &str) -> Sensor {
         Sensor {
-            name: name.into(), id, unit: unit.into(), room: room.into(),
-            kind: kind.into(), on_label: on.into(), off_label: off.into(),
+            name: name.into(),
+            id,
+            unit: unit.into(),
+            room: room.into(),
+            kind: kind.into(),
+            on_label: on.into(),
+            off_label: off.into(),
             prefix: String::new(),
         }
     }
@@ -595,6 +927,156 @@ mod tests {
             prefix: prefix.into(),
             ..s(name, id, "", room, "numeric", "", "")
         }
+    }
+
+    fn a(name: &str, on_id: u64, off_id: u64, confirm: bool) -> ActionDevice {
+        ActionDevice {
+            name: name.into(),
+            room: String::new(),
+            prefix: String::new(),
+            on_id,
+            off_id,
+            confirm,
+        }
+    }
+
+    #[test]
+    fn actions_parse_cleans_and_defaults() {
+        let raw = r#"[{"name":"lumière 💡 du salon","on_id":124,"off_id":125},
+                      {"name":"prise garage","room":"garage","on_id":7,"off_id":8,"confirm":true}]"#;
+        let v = parse_actions(raw);
+        assert_eq!(v[0].name, "lumière du salon", "symbols stripped");
+        assert!(!v[0].confirm, "confirm defaults to false");
+        assert!(v[1].confirm);
+        assert_eq!(
+            parse_actions("not json"),
+            Vec::<ActionDevice>::new().as_slice()
+        );
+    }
+
+    #[test]
+    fn action_rules_generate_on_off_phrases() {
+        let list = vec![a("lumière du salon", 124, 125, false)];
+        let rules = action_rules("fr", &list);
+        let on = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.turn_on.124")
+            .unwrap();
+        assert!(
+            on.phrases
+                .contains(&"allume la lumière du salon".to_string()),
+            "got: {:?}",
+            on.phrases
+        );
+        assert!(on.phrases.contains(&"allume lumière du salon".to_string()));
+        let off = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.turn_off.124")
+            .unwrap();
+        assert!(
+            off.phrases
+                .contains(&"éteins la lumière du salon".to_string()),
+            "got: {:?}",
+            off.phrases
+        );
+
+        let en = action_rules("en", &list);
+        assert!(en.iter().any(|r| {
+            r.intent == "jeedom.turn_on.124"
+                && r.phrases
+                    .contains(&"turn on the lumière du salon".to_string())
+        }));
+    }
+
+    #[test]
+    fn confirm_rules_only_when_a_device_requires_confirmation() {
+        let plain = vec![a("lumière du salon", 124, 125, false)];
+        assert!(
+            !action_rules("fr", &plain)
+                .iter()
+                .any(|r| r.intent == "jeedom.confirm")
+        );
+
+        let confirmed = vec![a("portail", 30, 31, true)];
+        let rules = action_rules("fr", &confirmed);
+        let confirm = rules.iter().find(|r| r.intent == "jeedom.confirm").unwrap();
+        assert!(confirm.phrases.contains(&"oui".to_string()));
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.intent == "jeedom.cancel" && r.phrases.contains(&"annule".to_string()))
+        );
+    }
+
+    #[test]
+    fn no_action_rules_without_devices() {
+        assert!(action_rules("fr", &[]).is_empty());
+    }
+
+    #[test]
+    fn action_labels_phrase_both_locales() {
+        let d = a("lumière du salon", 124, 125, true);
+        assert_eq!(action_label(&d, true, false), "allumer lumière du salon");
+        assert_eq!(action_label(&d, false, false), "éteindre lumière du salon");
+        assert_eq!(action_label(&d, true, true), "turn on lumière du salon");
+        assert_eq!(action_label(&d, false, true), "turn off lumière du salon");
+    }
+
+    #[test]
+    fn pending_roundtrips_through_json() {
+        let p = Pending {
+            cmd_id: 124,
+            label: "allumer lumière du salon".into(),
+        };
+        let bytes = serde_json::to_vec(&p).unwrap();
+        let back: Pending = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.cmd_id, 124);
+        assert_eq!(back.label, p.label);
+    }
+
+    fn speak_text(r: SkillResponse) -> String {
+        match r {
+            SkillResponse::Speak { text } => text,
+            other => panic!("expected Speak, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirm_with_nothing_pending_says_so() {
+        // Host-side tmp_get is always None — exactly the nothing-pending path.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.confirm".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "Rien à confirmer.");
+    }
+
+    #[test]
+    fn cancel_with_nothing_pending_says_so() {
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.cancel".into(),
+            slots: Default::default(),
+            locale: "en".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "Nothing to confirm.");
+    }
+
+    #[test]
+    fn turn_intent_for_unknown_device_apologises() {
+        // Host-side config is empty, so no device matches key 999.
+        let mut ctx = HostCtx::for_testing();
+        let intent = Intent {
+            name: "jeedom.turn_on.999".into(),
+            slots: Default::default(),
+            locale: "fr".into(),
+        };
+        let r = JeedomSkill.handle(intent, &mut ctx).unwrap();
+        assert_eq!(speak_text(r), "désolé, je ne connais pas cet appareil");
     }
 
     #[test]
@@ -638,15 +1120,35 @@ mod tests {
 
     #[test]
     fn room_query_phrases_are_generated() {
-        let list = vec![s("température du salon", 142, "degrés", "salon", "numeric", "", "")];
+        let list = vec![s(
+            "température du salon",
+            142,
+            "degrés",
+            "salon",
+            "numeric",
+            "",
+            "",
+        )];
         let rules = rules_for("fr", &list);
-        let all: Vec<&str> = rules.iter().flat_map(|r| r.phrases.iter().map(String::as_str)).collect();
-        assert!(all.contains(&"quelle température dans le salon"), "got: {all:?}");
+        let all: Vec<&str> = rules
+            .iter()
+            .flat_map(|r| r.phrases.iter().map(String::as_str))
+            .collect();
+        assert!(
+            all.contains(&"quelle température dans le salon"),
+            "got: {all:?}"
+        );
         assert!(all.contains(&"température dans le salon"));
         // Natural full-sentence French: "quelle est la
         // température dans le salon" / "… du salon".
-        assert!(all.contains(&"quelle est la température dans le salon"), "got: {all:?}");
-        assert!(all.contains(&"quelle est la température du salon"), "got: {all:?}");
+        assert!(
+            all.contains(&"quelle est la température dans le salon"),
+            "got: {all:?}"
+        );
+        assert!(
+            all.contains(&"quelle est la température du salon"),
+            "got: {all:?}"
+        );
         assert!(all.contains(&"température du salon"));
         // the room rule routes to the literal per-sensor intent
         assert!(rules.iter().any(|r| r.intent == "jeedom.read.142"
@@ -661,14 +1163,18 @@ mod tests {
             .iter()
             .flat_map(|r| r.phrases.iter().map(String::as_str))
             .collect();
-        assert!(all.contains(&"quelle est la température d'alicia"), "got: {all:?}");
+        assert!(
+            all.contains(&"quelle est la température d'alicia"),
+            "got: {all:?}"
+        );
         assert!(all.contains(&"température d'alicia"), "got: {all:?}");
         assert!(
             !all.iter().any(|p| p.contains("dans")),
             "no dans-form for an unmapped prefix: {all:?}"
         );
         assert!(
-            !all.iter().any(|p| p.contains("du alicia") || p.contains("de la alicia")),
+            !all.iter()
+                .any(|p| p.contains("du alicia") || p.contains("de la alicia")),
             "legacy article enumeration must be gone when a prefix is set: {all:?}"
         );
     }
@@ -682,10 +1188,19 @@ mod tests {
             .flat_map(|r| r.phrases.iter().map(String::as_str))
             .collect();
         assert!(all.contains(&"température du salon"), "got: {all:?}");
-        assert!(all.contains(&"quelle est la température du salon"), "got: {all:?}");
+        assert!(
+            all.contains(&"quelle est la température du salon"),
+            "got: {all:?}"
+        );
         assert!(all.contains(&"température dans le salon"), "got: {all:?}");
-        assert!(all.contains(&"quelle température dans le salon"), "got: {all:?}");
-        assert!(all.contains(&"quelle est la température dans le salon"), "got: {all:?}");
+        assert!(
+            all.contains(&"quelle température dans le salon"),
+            "got: {all:?}"
+        );
+        assert!(
+            all.contains(&"quelle est la température dans le salon"),
+            "got: {all:?}"
+        );
         assert!(
             !all.contains(&"température de la salon"),
             "wrong-gender enumeration gone when prefix set: {all:?}"
@@ -694,36 +1209,99 @@ mod tests {
 
     #[test]
     fn metric_word_strips_configured_prefix() {
-        assert_eq!(metric_of(&sp("température d'alicia", 7, "alicia", "d'")), "température");
+        assert_eq!(
+            metric_of(&sp("température d'alicia", 7, "alicia", "d'")),
+            "température"
+        );
     }
 
     #[test]
     fn enumeration_rule_per_metric() {
         let list = vec![
-            s("température du salon", 142, "degrés", "salon", "numeric", "", ""),
-            s("température de la chambre", 150, "degrés", "chambre", "numeric", "", ""),
+            s(
+                "température du salon",
+                142,
+                "degrés",
+                "salon",
+                "numeric",
+                "",
+                "",
+            ),
+            s(
+                "température de la chambre",
+                150,
+                "degrés",
+                "chambre",
+                "numeric",
+                "",
+                "",
+            ),
             s("humidité du salon", 143, "%", "salon", "numeric", "", ""),
         ];
         let rules = rules_for("fr", &list);
-        let enum_rules: Vec<_> = rules.iter().filter(|r| r.intent.starts_with("jeedom.read_all.")).collect();
-        assert_eq!(enum_rules.len(), 2, "one per distinct metric: température, humidité");
-        assert!(enum_rules.iter().any(|r| r.intent == "jeedom.read_all.température"
-            && r.phrases.contains(&"toutes les températures".to_string())));
+        let enum_rules: Vec<_> = rules
+            .iter()
+            .filter(|r| r.intent.starts_with("jeedom.read_all."))
+            .collect();
+        assert_eq!(
+            enum_rules.len(),
+            2,
+            "one per distinct metric: température, humidité"
+        );
+        assert!(
+            enum_rules
+                .iter()
+                .any(|r| r.intent == "jeedom.read_all.température"
+                    && r.phrases.contains(&"toutes les températures".to_string()))
+        );
     }
 
     #[test]
     fn metric_word_strips_room_suffix() {
-        assert_eq!(metric_of(&s("température du salon", 1, "", "salon", "", "", "")), "température");
-        assert_eq!(metric_of(&s("température de la chambre", 1, "", "chambre", "", "", "")), "température");
-        assert_eq!(metric_of(&s("capteur exotique", 1, "", "", "", "", "")), "capteur exotique");
+        assert_eq!(
+            metric_of(&s("température du salon", 1, "", "salon", "", "", "")),
+            "température"
+        );
+        assert_eq!(
+            metric_of(&s(
+                "température de la chambre",
+                1,
+                "",
+                "chambre",
+                "",
+                "",
+                ""
+            )),
+            "température"
+        );
+        assert_eq!(
+            metric_of(&s("capteur exotique", 1, "", "", "", "", "")),
+            "capteur exotique"
+        );
     }
 
     #[test]
     fn enum_clause_labels_binary_sensors() {
-        let temp = s("température du salon", 1, "degrés", "salon", "numeric", "", "");
+        let temp = s(
+            "température du salon",
+            1,
+            "degrés",
+            "salon",
+            "numeric",
+            "",
+            "",
+        );
         assert_eq!(enum_clause(&temp, "21.5", false), "salon 21.5 degrés");
 
-        let door = s("porte du garage", 2, "", "garage", "binary", "ouverte", "fermée");
+        let door = s(
+            "porte du garage",
+            2,
+            "",
+            "garage",
+            "binary",
+            "ouverte",
+            "fermée",
+        );
         assert_eq!(enum_clause(&door, "1", false), "garage ouverte");
 
         let presence = s("présence chambre", 3, "", "chambre", "binary", "", "");
@@ -732,13 +1310,44 @@ mod tests {
 
     #[test]
     fn binary_reading_uses_labels_and_falls_back() {
-        let door = s("porte du garage", 201, "", "garage", "binary", "ouverte", "fermée");
-        assert_eq!(phrase_reading(&door, "1", false), "la porte du garage est ouverte");
-        assert_eq!(phrase_reading(&door, "0", false), "la porte du garage est fermée");
+        let door = s(
+            "porte du garage",
+            201,
+            "",
+            "garage",
+            "binary",
+            "ouverte",
+            "fermée",
+        );
+        assert_eq!(
+            phrase_reading(&door, "1", false),
+            "la porte du garage est ouverte"
+        );
+        assert_eq!(
+            phrase_reading(&door, "0", false),
+            "la porte du garage est fermée"
+        );
         let plain = s("présence salon", 202, "", "salon", "binary", "", "");
-        assert_eq!(phrase_reading(&plain, "1", false), "la présence salon est activé");
-        let temp = s("température du salon", 142, "degrés", "salon", "numeric", "", "");
-        assert_eq!(phrase_reading(&temp, "21.5", false), "la température du salon est de 21.5 degrés");
-        assert_eq!(phrase_reading(&temp, "21.5", true), "the température du salon is 21.5 degrés");
+        assert_eq!(
+            phrase_reading(&plain, "1", false),
+            "la présence salon est activé"
+        );
+        let temp = s(
+            "température du salon",
+            142,
+            "degrés",
+            "salon",
+            "numeric",
+            "",
+            "",
+        );
+        assert_eq!(
+            phrase_reading(&temp, "21.5", false),
+            "la température du salon est de 21.5 degrés"
+        );
+        assert_eq!(
+            phrase_reading(&temp, "21.5", true),
+            "the température du salon is 21.5 degrés"
+        );
     }
 }
