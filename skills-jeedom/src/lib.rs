@@ -222,6 +222,10 @@ impl Skill for JeedomSkill {
         let ctx = HostCtx::for_testing();
         let mut rules = rules_for(locale, sensors(&ctx));
         rules.extend(action_rules(locale, actions(&ctx)));
+        rules.extend(shutter_rules(locale, shutters(&ctx)));
+        if actions(&ctx).iter().any(|d| d.confirm) || shutters(&ctx).iter().any(|s| s.confirm) {
+            rules.extend(confirm_rules(locale));
+        }
         rules
     }
 
@@ -700,30 +704,44 @@ fn action_rules(locale: &str, devices: &[ActionDevice]) -> Vec<PatternRule> {
             slots: Vec::new(),
         });
     }
-    if devices.iter().any(|d| d.confirm) {
-        let (yes, no): (Vec<String>, Vec<String>) = match locale {
-            "fr" => (
-                vec!["oui".into(), "confirme".into(), "c'est confirmé".into()],
-                vec!["non".into(), "annule".into()],
-            ),
-            "en" => (
-                vec!["yes".into(), "confirm".into()],
-                vec!["no".into(), "cancel".into()],
-            ),
-            _ => (Vec::new(), Vec::new()),
-        };
-        rules.push(PatternRule {
+    rules
+}
+
+/// The shared spoken confirm/cancel rules — registered once by
+/// `pattern_rules` when any on/off device or shutter has `confirm: true`.
+fn confirm_rules(locale: &str) -> Vec<PatternRule> {
+    let (yes, no): (Vec<String>, Vec<String>) = match locale {
+        "fr" => (
+            vec!["oui".into(), "confirme".into(), "c'est confirmé".into()],
+            vec!["non".into(), "annule".into()],
+        ),
+        "en" => (
+            vec!["yes".into(), "confirm".into()],
+            vec!["no".into(), "cancel".into()],
+        ),
+        _ => return Vec::new(),
+    };
+    vec![
+        PatternRule {
             intent: "jeedom.confirm".into(),
             phrases: yes,
             slots: Vec::new(),
-        });
-        rules.push(PatternRule {
+        },
+        PatternRule {
             intent: "jeedom.cancel".into(),
             phrases: no,
             slots: Vec::new(),
-        });
+        },
+    ]
+}
+
+/// Match rules for configured shutters (grown in the shutter-rules task).
+fn shutter_rules(locale: &str, list: &[Shutter]) -> Vec<PatternRule> {
+    let _ = locale;
+    if list.is_empty() {
+        return Vec::new();
     }
-    rules
+    Vec::new()
 }
 
 /// Builds the authenticated simple-API URL for one command id.
@@ -1118,23 +1136,32 @@ mod tests {
     }
 
     #[test]
-    fn confirm_rules_only_when_a_device_requires_confirmation() {
-        let plain = vec![a("lumière du salon", 124, 125, false)];
-        assert!(
-            !action_rules("fr", &plain)
-                .iter()
-                .any(|r| r.intent == "jeedom.confirm")
-        );
-
+    fn action_rules_carry_no_confirm_rules() {
+        // Confirm/cancel are shared between on/off devices and shutters and are
+        // registered once by pattern_rules — never by action_rules itself.
         let confirmed = vec![a("portail", 30, 31, true)];
-        let rules = action_rules("fr", &confirmed);
-        let confirm = rules.iter().find(|r| r.intent == "jeedom.confirm").unwrap();
+        assert!(
+            !action_rules("fr", &confirmed)
+                .iter()
+                .any(|r| r.intent == "jeedom.confirm" || r.intent == "jeedom.cancel")
+        );
+    }
+
+    #[test]
+    fn confirm_rules_cover_both_locales() {
+        let fr = confirm_rules("fr");
+        let confirm = fr.iter().find(|r| r.intent == "jeedom.confirm").unwrap();
         assert!(confirm.phrases.contains(&"oui".to_string()));
         assert!(
-            rules
-                .iter()
+            fr.iter()
                 .any(|r| r.intent == "jeedom.cancel" && r.phrases.contains(&"annule".to_string()))
         );
+        let en = confirm_rules("en");
+        assert!(
+            en.iter()
+                .any(|r| r.intent == "jeedom.confirm" && r.phrases.contains(&"yes".to_string()))
+        );
+        assert!(confirm_rules("de").is_empty(), "unknown locale yields nothing");
     }
 
     #[test]
