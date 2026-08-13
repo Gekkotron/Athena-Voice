@@ -735,13 +735,115 @@ fn confirm_rules(locale: &str) -> Vec<PatternRule> {
     ]
 }
 
-/// Match rules for configured shutters (grown in the shutter-rules task).
+/// Match rules for configured shutters. Stop and position rules exist only
+/// for shutters that configured those command ids; the two group rules are
+/// registered once whenever any shutter exists. Key = `up_id`.
 fn shutter_rules(locale: &str, list: &[Shutter]) -> Vec<PatternRule> {
-    let _ = locale;
     if list.is_empty() {
         return Vec::new();
     }
-    Vec::new()
+    let mut rules = Vec::new();
+    for s in list {
+        let name = &s.name;
+        let (open, close, stop, pos): (Vec<String>, Vec<String>, Vec<String>, Vec<String>) =
+            match locale {
+                "fr" => (
+                    vec![
+                        format!("ouvre le {name}"),
+                        format!("ouvre la {name}"),
+                        format!("ouvre {name}"),
+                        format!("monte le {name}"),
+                        format!("lève le {name}"),
+                    ],
+                    vec![
+                        format!("ferme le {name}"),
+                        format!("ferme la {name}"),
+                        format!("ferme {name}"),
+                        format!("descends le {name}"),
+                        format!("baisse le {name}"),
+                    ],
+                    vec![
+                        format!("stop le {name}"),
+                        format!("stop {name}"),
+                        format!("arrête le {name}"),
+                    ],
+                    vec![
+                        format!("ouvre le {name} à {{position}}"),
+                        format!("ouvre le {name} à {{position}} pour cent"),
+                        format!("mets le {name} à {{position}}"),
+                        format!("mets le {name} à {{position}} pour cent"),
+                    ],
+                ),
+                "en" => (
+                    vec![
+                        format!("open the {name}"),
+                        format!("open {name}"),
+                        format!("raise the {name}"),
+                    ],
+                    vec![
+                        format!("close the {name}"),
+                        format!("close {name}"),
+                        format!("lower the {name}"),
+                    ],
+                    vec![format!("stop the {name}"), format!("stop {name}")],
+                    vec![
+                        format!("set the {name} to {{position}}"),
+                        format!("set the {name} to {{position}} percent"),
+                        format!("open the {name} to {{position}} percent"),
+                    ],
+                ),
+                _ => return Vec::new(),
+            };
+        rules.push(PatternRule {
+            intent: format!("jeedom.shutter_open.{}", s.up_id),
+            phrases: open,
+            slots: Vec::new(),
+        });
+        rules.push(PatternRule {
+            intent: format!("jeedom.shutter_close.{}", s.up_id),
+            phrases: close,
+            slots: Vec::new(),
+        });
+        if s.stop_id != 0 {
+            rules.push(PatternRule {
+                intent: format!("jeedom.shutter_stop.{}", s.up_id),
+                phrases: stop,
+                slots: Vec::new(),
+            });
+        }
+        if s.slider_id != 0 {
+            rules.push(PatternRule {
+                intent: format!("jeedom.shutter_pos.{}", s.up_id),
+                phrases: pos,
+                slots: vec![SlotSpec {
+                    name: "position".into(),
+                    kind: SlotKind::Number,
+                }],
+            });
+        }
+    }
+    let (open_all, close_all): (Vec<String>, Vec<String>) = match locale {
+        "fr" => (
+            vec!["ouvre tous les volets".into(), "ouvre les volets".into()],
+            vec!["ferme tous les volets".into(), "ferme les volets".into()],
+        ),
+        "en" => (
+            vec!["open all the shutters".into(), "open the shutters".into()],
+            vec!["close all the shutters".into(), "close the shutters".into()],
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+    rules.push(PatternRule {
+        intent: "jeedom.shutter_open_all".into(),
+        phrases: open_all,
+        slots: Vec::new(),
+    });
+    rules.push(PatternRule {
+        intent: "jeedom.shutter_close_all".into(),
+        phrases: close_all,
+        slots: Vec::new(),
+    });
+    rules
 }
 
 /// Builds the authenticated simple-API URL for one command id.
@@ -1133,6 +1235,86 @@ mod tests {
                 && r.phrases
                     .contains(&"turn on the lumière du salon".to_string())
         }));
+    }
+
+    #[test]
+    fn shutter_rules_generate_open_close_phrases() {
+        let list = vec![sh("volet du salon", 210, 211)];
+        let rules = shutter_rules("fr", &list);
+        let open = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_open.210")
+            .unwrap();
+        assert!(
+            open.phrases.contains(&"ouvre le volet du salon".to_string()),
+            "got: {:?}",
+            open.phrases
+        );
+        assert!(open.phrases.contains(&"monte le volet du salon".to_string()));
+        let close = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_close.210")
+            .unwrap();
+        assert!(
+            close.phrases.contains(&"ferme le volet du salon".to_string()),
+            "got: {:?}",
+            close.phrases
+        );
+        assert!(close.phrases.contains(&"baisse le volet du salon".to_string()));
+
+        let en = shutter_rules("en", &list);
+        assert!(en.iter().any(|r| r.intent == "jeedom.shutter_open.210"
+            && r.phrases.contains(&"open the volet du salon".to_string())));
+    }
+
+    #[test]
+    fn shutter_stop_and_pos_rules_require_their_ids() {
+        let plain = vec![sh("volet du salon", 210, 211)];
+        let rules = shutter_rules("fr", &plain);
+        assert!(!rules.iter().any(|r| r.intent.starts_with("jeedom.shutter_stop.")));
+        assert!(!rules.iter().any(|r| r.intent.starts_with("jeedom.shutter_pos.")));
+
+        let mut full = sh("volet du salon", 210, 211);
+        full.stop_id = 212;
+        full.slider_id = 213;
+        let rules = shutter_rules("fr", &[full]);
+        let stop = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_stop.210")
+            .unwrap();
+        assert!(
+            stop.phrases.contains(&"stop le volet du salon".to_string()),
+            "got: {:?}",
+            stop.phrases
+        );
+        let pos = rules
+            .iter()
+            .find(|r| r.intent == "jeedom.shutter_pos.210")
+            .unwrap();
+        assert!(
+            pos.phrases
+                .contains(&"ouvre le volet du salon à {position}".to_string()),
+            "got: {:?}",
+            pos.phrases
+        );
+        assert_eq!(pos.slots.len(), 1);
+        assert_eq!(pos.slots[0].name, "position");
+        assert!(matches!(pos.slots[0].kind, SlotKind::Number));
+    }
+
+    #[test]
+    fn shutter_group_rules_exist_once() {
+        let list = vec![sh("volet du salon", 210, 211), sh("volet de la chambre", 220, 221)];
+        let rules = shutter_rules("fr", &list);
+        let all_open: Vec<_> = rules
+            .iter()
+            .filter(|r| r.intent == "jeedom.shutter_open_all")
+            .collect();
+        assert_eq!(all_open.len(), 1, "one group rule regardless of shutter count");
+        assert!(all_open[0].phrases.contains(&"ouvre tous les volets".to_string()));
+        assert!(rules.iter().any(|r| r.intent == "jeedom.shutter_close_all"
+            && r.phrases.contains(&"ferme tous les volets".to_string())));
+        assert!(shutter_rules("fr", &[]).is_empty(), "no shutters, no rules");
     }
 
     #[test]
