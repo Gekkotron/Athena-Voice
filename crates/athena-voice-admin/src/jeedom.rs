@@ -184,8 +184,9 @@ pub(crate) struct DiscoveredShutter {
 }
 
 /// Shutter name vocabulary, index-aligned: `SHUTTER_UP[i]` pairs `SHUTTER_DOWN[i]`.
-const SHUTTER_UP: [&str; 4] = ["monter", "monté", "up", "ouvrir"];
-const SHUTTER_DOWN: [&str; 4] = ["descendre", "descendu", "down", "fermer"];
+/// "open"/"close" cover English-labeled Zigbee plugins (Open/Close/Stop).
+const SHUTTER_UP: [&str; 5] = ["monter", "monté", "up", "ouvrir", "open"];
+const SHUTTER_DOWN: [&str; 5] = ["descendre", "descendu", "down", "fermer", "close"];
 const SHUTTER_STOP_NAMES: [&str; 2] = ["stop", "arrêter"];
 
 /// Attaches this equipment's stop/slider commands to a freshly paired
@@ -589,6 +590,37 @@ mod tests {
                 stop_id: Some(32),
                 slider_id: None
             }]
+        );
+    }
+
+    #[test]
+    fn shutters_pair_by_english_open_close_names() {
+        // Real-world Zigbee shutter (English-labeled plugin): action commands
+        // named Open/Close/Stop with no FLAP generic types, sitting beside
+        // unrelated on/off pairs (Calibration, Motor Reversal) that must
+        // still pair as plain on/off devices afterwards.
+        let cmds = vec![
+            ac(300, "Open", None, "other"),
+            ac(301, "Close", None, "other"),
+            ac(302, "Stop", None, "other"),
+            ac(310, "Calibration On", Some("ENERGY_ON"), "other"),
+            ac(311, "Calibration Off", Some("ENERGY_OFF"), "other"),
+        ];
+        let mut used = std::collections::HashSet::new();
+        let v = pair_shutters(&cmds, &mut used);
+        assert_eq!(
+            v,
+            vec![DiscoveredShutter {
+                up_id: 300,
+                down_id: 301,
+                stop_id: Some(302),
+                slider_id: None
+            }]
+        );
+        let remaining: Vec<ActionCmd> = cmds.into_iter().filter(|c| !used.contains(&c.id)).collect();
+        assert_eq!(
+            pair_actions(&remaining),
+            vec![DiscoveredAction { on_id: 310, off_id: 311 }]
         );
     }
 
