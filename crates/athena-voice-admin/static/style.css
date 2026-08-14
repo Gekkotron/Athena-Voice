@@ -45,10 +45,11 @@ main { max-width: 1200px; margin: 1.5rem auto; padding: 0 1rem; display: grid; g
 .badge.off { color: var(--danger); border-color: currentColor; }
 .badge.type-onoff { color: var(--accent); border-color: currentColor; }
 .badge.type-shutter { color: var(--ok); border-color: currentColor; }
+.badge.type-sensor { color: var(--muted); }
 
 label { display: block; margin: .75rem 0 .25rem; font-weight: 600; font-size: .85rem; }
 .help { color: var(--muted); font-size: .8rem; margin: .2rem 0 0; }
-input[type=text], input[type=password], input[type=number] {
+input[type=text], input[type=password], input[type=number], input[type=search] {
   width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 8px;
   background: var(--bg); color: var(--ink); font: inherit; font-size: .9rem;
 }
@@ -100,6 +101,37 @@ tr:has(+ .row-detail) td { border-bottom: 0; }
 .chip.sync { color: var(--accent); border-color: currentColor; }
 .chip button, .hint button { padding: 0 .3rem; font-size: .72rem; }
 table.stale .hint::before { content: '· '; color: var(--accent); font-weight: 700; }
+
+/* Discovery results: filter toolbar + room groups in a scrollable panel */
+.hidden { display: none !important; }
+.disc-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+  margin: .75rem 0 .5rem;
+}
+.disc-toolbar .disc-search { flex: 1 1 12rem; width: auto; }
+.disc-toolbar select { flex: 0 1 auto; max-width: 14rem; }
+.disc-count { color: var(--muted); font-size: .8rem; white-space: nowrap; margin-left: auto; }
+.disc-rooms {
+  max-height: 26rem; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+}
+.disc-room { padding: 0 .85rem .35rem; }
+.disc-room + .disc-room { border-top: 1px solid var(--line); }
+.disc-room-head {
+  position: sticky; top: 0; z-index: 1; background: var(--bg);
+  display: flex; align-items: center; gap: .5rem; padding: .55rem 0 .35rem;
+  font-weight: 600; font-size: .85rem;
+}
+.disc-room-head .badge { font-size: .7rem; }
+.disc-row {
+  display: flex; align-items: center; gap: .6rem; margin: 0;
+  padding: .35rem .5rem; border-radius: 8px; font-weight: 400; font-size: .85rem;
+  cursor: pointer;
+}
+.disc-row:hover { background: var(--row); }
+.disc-row .name { flex: 1; font-weight: 500; }
+.disc-row:has(input:disabled) { opacity: .55; cursor: default; }
+.disc-rooms + button, .disc-toolbar ~ button { margin-top: .75rem; }
 
 /* Test console */
 .test-row { display: flex; gap: .5rem; }

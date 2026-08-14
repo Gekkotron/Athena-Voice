@@ -27,6 +27,10 @@ const T = {
     section_connection: 'Connection', section_sensors: 'Sensors',
     section_actions: 'On/off devices', section_shutters: 'Shutters',
     section_discovery: 'Discovery',
+    filter_search: 'Search a device…', filter_all_rooms: 'All rooms',
+    filter_all_types: 'All types', type_sensor: 'sensor',
+    no_filter_match: 'No device matches the filters.',
+    devices_shown: (n, total) => `${n} / ${total} devices`,
   },
   fr: {
     save: 'Enregistrer', skills: 'Compétences',
@@ -54,6 +58,10 @@ const T = {
     section_connection: 'Connexion', section_sensors: 'Capteurs',
     section_actions: 'Appareils on/off', section_shutters: 'Volets',
     section_discovery: 'Découverte',
+    filter_search: 'Rechercher un appareil…', filter_all_rooms: 'Toutes les pièces',
+    filter_all_types: 'Tous les types', type_sensor: 'capteur',
+    no_filter_match: 'Aucun appareil ne correspond aux filtres.',
+    devices_shown: (n, total) => `${n} / ${total} appareils`,
   },
 };
 const lang = (navigator.language || 'en').startsWith('fr') ? 'fr' : 'en';
@@ -759,6 +767,12 @@ async function uploadCard() {
   return card;
 }
 
+// Accent-insensitive haystack for the discovery search box — "temperature"
+// must find "Température".
+function searchable(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable, shuttersTable) {
   const existing = new Set((sensorsTable?.getRows() || []).map((r) => Number(r.id)));
   const existingActions = new Set((actionsTable?.getRows() || []).map((r) => Number(r.on_id)));
@@ -771,8 +785,24 @@ function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable, shutt
     container.append(el('p', { class: 'help', text: t('nothing_discovered') }));
     return;
   }
+  // Every result row is built once, then the toolbar filters by toggling a
+  // .hidden class — so checked boxes survive any filter change (and a device
+  // checked then filtered out is still added by "Add selection").
+  const entries = []; // {row, roomSection, roomName, type, hay, box}
+  const roomSections = [];
+  const addEntry = (roomSection, roomName, type, box, row, hayParts) => {
+    entries.push({ row, roomSection, roomName, type, box, hay: searchable(hayParts.join(' ')) });
+    roomSection.list.append(row);
+  };
   for (const room of rooms) {
-    const section = el('div', {}, el('label', { text: room.name || '—' }));
+    const roomName = room.name || '—';
+    const count = el('span', { class: 'badge' });
+    const list = el('div');
+    const node = el('div', { class: 'disc-room' },
+      el('div', { class: 'disc-room-head' }, el('span', { text: roomName }), count),
+      list);
+    const roomSection = { node, list, count, name: roomName };
+    roomSections.push(roomSection);
     for (const eq of room.equipments) {
       for (const cmd of eq.cmds) {
         const box = el('input', { type: 'checkbox' });
@@ -780,22 +810,23 @@ function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable, shutt
         box.disabled = existing.has(cmd.id); // already mapped — keep it in the table
         boxes.push({ box, cmd, eqName: eq.name, room: room.name });
         const badge = cmd.subtype === 'binary' ? 'on/off' : (cmd.unit || '');
-        section.append(el('div', { class: 'skill-row' },
+        addEntry(roomSection, roomName, 'sensor', box, el('label', { class: 'disc-row' },
           box,
           el('span', { class: 'name', text: `${eq.name} — ${cmd.name}` }),
           badge ? el('span', { class: 'badge', text: badge }) : '',
-        ));
+          el('span', { class: 'badge type-sensor', text: t('type_sensor') }),
+        ), [eq.name, cmd.name, roomName]);
       }
       for (const act of (eq.actions || [])) {
         const box = el('input', { type: 'checkbox' });
         box.checked = existingActions.has(act.on_id);
         box.disabled = existingActions.has(act.on_id);
         actionBoxes.push({ box, act, eqName: eq.name, room: room.name });
-        section.append(el('div', { class: 'skill-row' },
+        addEntry(roomSection, roomName, 'onoff', box, el('label', { class: 'disc-row' },
           box,
           el('span', { class: 'name', text: `${eq.name} — on/off` }),
           el('span', { class: 'badge type-onoff', text: t('action_onoff') }),
-        ));
+        ), [eq.name, roomName]);
       }
       for (const sh of (eq.shutters || [])) {
         const box = el('input', { type: 'checkbox' });
@@ -806,57 +837,110 @@ function renderDiscoveryTree(container, rooms, sensorsTable, actionsTable, shutt
           sh.stop_id !== undefined ? t('with_stop') : '',
           sh.slider_id !== undefined ? t('with_position') : '',
         ].filter(Boolean).join(' ');
-        section.append(el('div', { class: 'skill-row' },
+        addEntry(roomSection, roomName, 'shutter', box, el('label', { class: 'disc-row' },
           box,
           el('span', { class: 'name', text: `${eq.name}${extras ? ` (${extras})` : ''}` }),
           el('span', { class: 'badge type-shutter', text: t('action_shutter') }),
-        ));
+        ), [eq.name, roomName]);
       }
     }
-    container.append(section);
   }
-  container.append(el('button', {
-    text: t('add_selection'),
-    onclick: () => {
-      const picked = boxes.filter(({ box }) => box.checked && !box.disabled);
-      sensorsTable?.addRows(picked.map(({ cmd, eqName, room }) => ({
-        name: composeSensorName(cmd.name, eqName, room),
-        id: cmd.id,
-        unit: cmd.unit || '',
-        room: (room || '').toLowerCase(),
-        prefix: guessRoomPrefix(room),
-        kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
-        on_label: cmd.on_label || '',
-        off_label: cmd.off_label || '',
-      })));
-      const pickedActions = actionBoxes.filter(({ box }) => box.checked && !box.disabled);
-      // 'état' is a generic command name, so the composed spoken name comes
-      // from the EQUIPMENT name — "portail du garage" — like generic sensors.
-      actionsTable?.addRows(pickedActions.map(({ act, eqName, room }) => ({
-        name: composeSensorName('état', eqName, room),
-        on_id: act.on_id,
-        off_id: act.off_id,
-        room: (room || '').toLowerCase(),
-        prefix: guessRoomPrefix(room),
-        confirm: false,
-      })));
-      const pickedShutters = shutterBoxes.filter(({ box }) => box.checked && !box.disabled);
-      // Compose from the EQUIPMENT name (like generic sensors): equipment
-      // "Volet" in room "Chambre" → "volet de la chambre". Absent stop/slider
-      // ids stay undefined and are dropped by JSON.stringify on save.
-      shuttersTable?.addRows(pickedShutters.map(({ sh, eqName, room }) => ({
-        name: composeSensorName('état', eqName, room),
-        up_id: sh.up_id,
-        down_id: sh.down_id,
-        stop_id: sh.stop_id,
-        slider_id: sh.slider_id,
-        room: (room || '').toLowerCase(),
-        prefix: guessRoomPrefix(room),
-        confirm: false,
-      })));
-      container.replaceChildren();
-    },
-  }));
+  // --- Toolbar: search + room + type, with a live shown/total counter. ---
+  const search = el('input', { type: 'search', class: 'disc-search', placeholder: t('filter_search'), autocomplete: 'off' });
+  const roomSel = el('select', {},
+    el('option', { value: '', text: t('filter_all_rooms') }),
+    ...roomSections.map((s) => el('option', { value: s.name, text: s.name })));
+  const typeSel = el('select', {},
+    el('option', { value: '', text: t('filter_all_types') }),
+    el('option', { value: 'sensor', text: t('type_sensor') }),
+    el('option', { value: 'onoff', text: t('action_onoff') }),
+    el('option', { value: 'shutter', text: t('action_shutter') }));
+  const counter = el('span', { class: 'disc-count' });
+  const empty = el('p', { class: 'help hidden', text: t('no_filter_match') });
+  const addBtn = el('button', { text: t('add_selection') });
+  const roomsWrap = el('div', { class: 'disc-rooms' }, ...roomSections.map((s) => s.node));
+  const applyFilters = () => {
+    const q = searchable(search.value.trim());
+    const shownPerRoom = new Map();
+    let shown = 0;
+    for (const e of entries) {
+      const visible = (!q || e.hay.includes(q))
+        && (!roomSel.value || e.roomName === roomSel.value)
+        && (!typeSel.value || e.type === typeSel.value);
+      e.row.classList.toggle('hidden', !visible);
+      if (visible) {
+        shown += 1;
+        shownPerRoom.set(e.roomSection, (shownPerRoom.get(e.roomSection) || 0) + 1);
+      }
+    }
+    for (const s of roomSections) {
+      const n = shownPerRoom.get(s) || 0;
+      s.count.textContent = String(n);
+      s.node.classList.toggle('hidden', n === 0);
+    }
+    counter.textContent = t('devices_shown')(shown, entries.length);
+    empty.classList.toggle('hidden', shown > 0);
+    roomsWrap.classList.toggle('hidden', shown === 0);
+  };
+  const refreshAddBtn = () => {
+    const n = [...boxes, ...actionBoxes, ...shutterBoxes]
+      .filter(({ box }) => box.checked && !box.disabled).length;
+    addBtn.textContent = n ? `${t('add_selection')} (${n})` : t('add_selection');
+    addBtn.disabled = n === 0;
+  };
+  search.addEventListener('input', applyFilters);
+  roomSel.addEventListener('change', applyFilters);
+  typeSel.addEventListener('change', applyFilters);
+  roomsWrap.addEventListener('change', (e) => {
+    if (e.target.type === 'checkbox') refreshAddBtn();
+  });
+  container.append(
+    el('div', { class: 'disc-toolbar' }, search, roomSel, typeSel, counter),
+    empty,
+    roomsWrap,
+    addBtn,
+  );
+  applyFilters();
+  refreshAddBtn();
+  addBtn.addEventListener('click', () => {
+    const picked = boxes.filter(({ box }) => box.checked && !box.disabled);
+    sensorsTable?.addRows(picked.map(({ cmd, eqName, room }) => ({
+      name: composeSensorName(cmd.name, eqName, room),
+      id: cmd.id,
+      unit: cmd.unit || '',
+      room: (room || '').toLowerCase(),
+      prefix: guessRoomPrefix(room),
+      kind: cmd.subtype === 'binary' ? 'binary' : 'numeric',
+      on_label: cmd.on_label || '',
+      off_label: cmd.off_label || '',
+    })));
+    const pickedActions = actionBoxes.filter(({ box }) => box.checked && !box.disabled);
+    // 'état' is a generic command name, so the composed spoken name comes
+    // from the EQUIPMENT name — "portail du garage" — like generic sensors.
+    actionsTable?.addRows(pickedActions.map(({ act, eqName, room }) => ({
+      name: composeSensorName('état', eqName, room),
+      on_id: act.on_id,
+      off_id: act.off_id,
+      room: (room || '').toLowerCase(),
+      prefix: guessRoomPrefix(room),
+      confirm: false,
+    })));
+    const pickedShutters = shutterBoxes.filter(({ box }) => box.checked && !box.disabled);
+    // Compose from the EQUIPMENT name (like generic sensors): equipment
+    // "Volet" in room "Chambre" → "volet de la chambre". Absent stop/slider
+    // ids stay undefined and are dropped by JSON.stringify on save.
+    shuttersTable?.addRows(pickedShutters.map(({ sh, eqName, room }) => ({
+      name: composeSensorName('état', eqName, room),
+      up_id: sh.up_id,
+      down_id: sh.down_id,
+      stop_id: sh.stop_id,
+      slider_id: sh.slider_id,
+      room: (room || '').toLowerCase(),
+      prefix: guessRoomPrefix(room),
+      confirm: false,
+    })));
+    container.replaceChildren();
+  });
 }
 
 renderList();
