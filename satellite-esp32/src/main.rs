@@ -35,6 +35,49 @@ mod hw {
         Tick,
     }
 
+    /// Per-chip wiring (see config.rs / README). The chip cfgs come from
+    /// esp-idf-sys via build.rs.
+    struct Wiring {
+        mic_bclk: esp_idf_svc::hal::gpio::AnyIOPin,
+        mic_ws: esp_idf_svc::hal::gpio::AnyIOPin,
+        mic_sd: esp_idf_svc::hal::gpio::AnyIOPin,
+        spk_bclk: esp_idf_svc::hal::gpio::AnyIOPin,
+        spk_lrc: esp_idf_svc::hal::gpio::AnyIOPin,
+        spk_din: esp_idf_svc::hal::gpio::AnyIOPin,
+        /// BOOT button (GPIO0 on both chips): push-to-talk.
+        button: esp_idf_svc::hal::gpio::Gpio0,
+    }
+
+    /// Classic ESP32 (WROOM): GPIO6–11 belong to the internal flash, so
+    /// the mic sits on 32/25/33 and the amp on 27/26/22.
+    #[cfg(esp32)]
+    fn wiring(pins: esp_idf_svc::hal::gpio::Pins) -> Wiring {
+        use esp_idf_svc::hal::gpio::IOPin;
+        Wiring {
+            mic_bclk: pins.gpio32.downgrade(),
+            mic_ws: pins.gpio25.downgrade(),
+            mic_sd: pins.gpio33.downgrade(),
+            spk_bclk: pins.gpio27.downgrade(),
+            spk_lrc: pins.gpio26.downgrade(),
+            spk_din: pins.gpio22.downgrade(),
+            button: pins.gpio0,
+        }
+    }
+
+    #[cfg(esp32s3)]
+    fn wiring(pins: esp_idf_svc::hal::gpio::Pins) -> Wiring {
+        use esp_idf_svc::hal::gpio::IOPin;
+        Wiring {
+            mic_bclk: pins.gpio4.downgrade(),
+            mic_ws: pins.gpio5.downgrade(),
+            mic_sd: pins.gpio6.downgrade(),
+            spk_bclk: pins.gpio15.downgrade(),
+            spk_lrc: pins.gpio16.downgrade(),
+            spk_din: pins.gpio7.downgrade(),
+            button: pins.gpio0,
+        }
+    }
+
     pub fn run() {
         esp_idf_svc::sys::link_patches();
         esp_idf_svc::log::EspLogger::initialize_default();
@@ -43,6 +86,7 @@ mod hw {
         let cfg = &config::CONFIG;
         let peripherals = Peripherals::take().expect("peripherals");
         let sysloop = EspSystemEventLoop::take().expect("sysloop");
+        let w = wiring(peripherals.pins);
 
         let _wifi = net::connect_wifi(peripherals.modem, sysloop, cfg.wifi_ssid, cfg.wifi_pass)
             .expect("wifi");
@@ -66,8 +110,7 @@ mod hw {
         // BOOT button (active low, pull-up), polled with debounce.
         spawn("button", {
             let tx = tx.clone();
-            let mut button =
-                PinDriver::input(peripherals.pins.gpio0).expect("button pin");
+            let mut button = PinDriver::input(w.button).expect("button pin");
             button
                 .set_pull(esp_idf_svc::hal::gpio::Pull::Up)
                 .expect("button pull-up");
@@ -90,13 +133,8 @@ mod hw {
         spawn("mic", {
             let tx = tx.clone();
             let streaming = Arc::clone(&streaming);
-            let mut m = mic::driver::Mic::new(
-                peripherals.i2s0,
-                peripherals.pins.gpio4,
-                peripherals.pins.gpio5,
-                peripherals.pins.gpio6,
-            )
-            .expect("mic i2s");
+            let mut m = mic::driver::Mic::new(peripherals.i2s0, w.mic_bclk, w.mic_ws, w.mic_sd)
+                .expect("mic i2s");
             move || {
                 let mut tracker =
                     mic::SilenceTracker::new(mic::SILENCE_RMS, mic::SILENCE_MS, 20);
@@ -141,13 +179,8 @@ mod hw {
             }
         });
 
-        let spk = speaker::Speaker::new(
-            peripherals.i2s1,
-            peripherals.pins.gpio15,
-            peripherals.pins.gpio16,
-            peripherals.pins.gpio7,
-        )
-        .expect("speaker i2s");
+        let spk = speaker::Speaker::new(peripherals.i2s1, w.spk_bclk, w.spk_lrc, w.spk_din)
+            .expect("speaker i2s");
 
         info!("ready (sat_id={}): press BOOT to talk", cfg.sat_id);
 

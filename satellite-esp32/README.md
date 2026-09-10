@@ -1,7 +1,8 @@
 # athena-satellite-esp32
 
-Firmware for an ESP32-S3 voice satellite: an INMP441 I2S microphone and a
-MAX98357A I2S amplifier, speaking Athena-Voice's MQTT satellite protocol
+Firmware for an ESP32 voice satellite — classic ESP32 (WROOM) or ESP32-S3
+— with an INMP441 I2S microphone and a MAX98357A I2S amplifier, speaking
+Athena-Voice's MQTT satellite protocol
 (`athena/sat/<sat-id>/session/<uuid>/…`, see the root README). Push a
 button, speak, and the answer plays back on the speaker — the heavy
 lifting (STT, skills, TTS) happens on the server running `serve`.
@@ -12,6 +13,20 @@ root.
 
 ## Wiring
 
+Classic ESP32 (WROOM) — the default build. GPIO6–11 are wired to the
+module's internal flash, so the satellite avoids them:
+
+| INMP441 | ESP32 (WROOM) |     | MAX98357A | ESP32 (WROOM) |
+|---------|---------------|-----|-----------|---------------|
+| VDD     | 3V3           |     | VIN       | 5V            |
+| GND     | GND           |     | GND       | GND           |
+| SCK     | GPIO32        |     | BCLK      | GPIO27        |
+| WS      | GPIO25        |     | LRC       | GPIO26        |
+| SD      | GPIO33        |     | DIN       | GPIO22        |
+| L/R     | GND           |     |           |               |
+
+ESP32-S3 (`MCU=esp32s3`):
+
 | INMP441 | ESP32-S3 |         | MAX98357A | ESP32-S3 |
 |---------|----------|---------|-----------|----------|
 | VDD     | 3V3      |         | VIN       | 5V       |
@@ -21,14 +36,15 @@ root.
 | SD      | GPIO6    |         | DIN       | GPIO7    |
 | L/R     | GND      |         |           |          |
 
-Pin bindings live in `src/main.rs` (ESP-IDF pins are typed objects) if
-your board needs different ones. The BOOT button (GPIO0) is the
-push-to-talk trigger.
+Per-chip pin bindings live in `wiring()` in `src/main.rs` (ESP-IDF pins
+are typed objects) if your board needs different ones. On both chips the
+BOOT button (GPIO0) is the push-to-talk trigger.
 
 ## Toolchain (one-time)
 
-This crate targets `xtensa-esp32s3-espidf` and is excluded from the repo's
-Rust workspace. It needs Espressif's Rust toolchain:
+This crate targets Xtensa (`xtensa-esp32-espidf` by default,
+`xtensa-esp32s3-espidf` with `MCU=esp32s3`) and is excluded from the
+repo's Rust workspace. It needs Espressif's Rust toolchain:
 
 ```bash
 cargo install espup espflash ldproxy
@@ -51,9 +67,13 @@ Config is baked in at build time (toml-cfg): rebuild after editing.
 ## Build, flash, run
 
 ```bash
-./build.sh                     # cross-compile (release)
+./build.sh                     # classic ESP32 (WROOM) — the default
+MCU=esp32s3 ./build.sh         # ESP32-S3 instead
 cargo run --release            # flash over USB + serial monitor (espflash)
 ```
+
+(For an S3, flash with
+`MCU=esp32s3 cargo run --release --target xtensa-esp32s3-espidf`.)
 
 With the server up (`cargo run --release -p athena-voice-cli -- serve …`
 on a host the ESP32 can reach), press BOOT, speak, and wait for the

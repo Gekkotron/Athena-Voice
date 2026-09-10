@@ -1,5 +1,12 @@
 [build]
-target = "xtensa-esp32s3-espidf"
+# Default chip: classic ESP32 (WROOM). Build for an ESP32-S3 with
+#   MCU=esp32s3 ./build.sh   (build.sh maps MCU to the matching --target).
+target = "xtensa-esp32-espidf"
+
+[target.xtensa-esp32-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+rustflags = ["--cfg", "espidf_time64"]
 
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
@@ -10,5 +17,7 @@ rustflags = ["--cfg", "espidf_time64"]
 build-std = ["std", "panic_abort"]
 
 [env]
-MCU = "esp32s3"
+# Overridden by the real environment when set (cargo [env] does not
+# force): MCU=esp32s3 ./build.sh picks the S3.
+MCU = "esp32"
 ESP_IDF_VERSION = "v5.3.3"

@@ -102,11 +102,13 @@ pub mod driver {
     }
 
     impl Mic {
+        /// Pins are `AnyIOPin` so `main.rs` can bind different GPIOs per
+        /// chip (classic ESP32 vs S3).
         pub fn new(
             i2s: I2S0,
-            bclk: gpio::Gpio4,
-            ws: gpio::Gpio5,
-            din: gpio::Gpio6,
+            bclk: gpio::AnyIOPin,
+            ws: gpio::AnyIOPin,
+            din: gpio::AnyIOPin,
         ) -> Result<Self, EspError> {
             let cfg = StdConfig::new(
                 Config::default(),

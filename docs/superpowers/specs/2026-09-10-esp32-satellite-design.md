@@ -136,5 +136,7 @@ dependencies.
   README documents `espup install` and sourcing `export-esp.sh`.
 - `esp-sr` FFI from Rust (phase 2) is the least-trodden path; phase 1 is
   deliberately independent of it.
-- Classic ESP32 (non-S3) is out of scope; RAM headroom and WakeNet models
-  assume S3.
+- ~~Classic ESP32 (non-S3) is out of scope~~ — amended 2026-09-10: the
+  owner's board is a classic ESP32-WROOM, so the firmware supports both
+  chips (WROOM default, S3 via `MCU=esp32s3`); phase-2 WakeNet model
+  availability on the classic chip must be re-verified (may be S3-only).

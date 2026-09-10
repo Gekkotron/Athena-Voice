@@ -26,11 +26,13 @@ pub struct Speaker {
 }
 
 impl Speaker {
+    /// Pins are `AnyIOPin` so `main.rs` can bind different GPIOs per
+    /// chip (classic ESP32 vs S3).
     pub fn new(
         i2s: I2S1,
-        bclk: gpio::Gpio15,
-        lrc: gpio::Gpio16,
-        dout: gpio::Gpio7,
+        bclk: gpio::AnyIOPin,
+        lrc: gpio::AnyIOPin,
+        dout: gpio::AnyIOPin,
     ) -> Result<Self, EspError> {
         let (tx, rx) = channel::<Msg>();
         // The gpio/i2s handles aren't Send-friendly to re-create per rate
@@ -90,9 +92,9 @@ impl Speaker {
 
 fn make_driver<'a>(
     i2s: &'a mut I2S1,
-    bclk: &'a mut gpio::Gpio15,
-    lrc: &'a mut gpio::Gpio16,
-    dout: &'a mut gpio::Gpio7,
+    bclk: &'a mut gpio::AnyIOPin,
+    lrc: &'a mut gpio::AnyIOPin,
+    dout: &'a mut gpio::AnyIOPin,
     rate: u32,
 ) -> Result<I2sDriver<'a, I2sTx>, EspError> {
     let cfg = StdConfig::new(

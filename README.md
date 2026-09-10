@@ -251,9 +251,9 @@ Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
 `athena/events/#` mirrors the runtime's full event bus for observability.
 
 A ready-made hardware satellite lives in [`satellite-esp32/`](satellite-esp32/):
-ESP32-S3 firmware for an INMP441 microphone and MAX98357A amplifier with
-push-to-talk — wiring, toolchain setup, and flashing instructions in its
-README.
+firmware for a classic ESP32 (WROOM) or ESP32-S3 with an INMP441
+microphone and MAX98357A amplifier, push-to-talk — wiring, toolchain
+setup, and flashing instructions in its README.
 
 ## Troubleshooting
 

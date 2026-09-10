@@ -58,6 +58,7 @@ detection (today the client streams on demand, no hands-free trigger).
 - [ ] satellite-esp32: on-device "Jarvis" wake word via esp-sr WakeNet (phase 2 of the ESP32-S3 firmware)
       The push-to-talk firmware exists in satellite-esp32/ (standalone crate, excluded from the workspace, targets xtensa-esp32s3-espidf; requires the espup toolchain — see its README). Spec: docs/superpowers/specs/2026-09-10-esp32-satellite-design.md.
       Add the espressif/esp-sr ESP-IDF component via esp-idf-sys extra_components with a bindings header, wrap WakeNet in src/wake.rs as WakeNet::detect(&[i16]) -> bool, select the stock "Jarvis" WakeNet9 model in sdkconfig (verify the exact Kconfig name in the esp-sr docs — do not invent it), add the model partition to the flash layout, and feed idle-state mic frames to it in main.rs so a detection acts exactly like a BOOT press.
+      The firmware now builds for classic ESP32 (default, the owner's WROOM board) and ESP32-S3 (MCU=esp32s3): check the esp-sr docs for which WakeNet versions/models the classic ESP32 supports — "Jarvis" may be S3-only, in which case wake word lands S3-only and the classic chip keeps push-to-talk.
       Success criteria: (a) ./satellite-esp32/build.sh compiles with esp-sr; (b) ./satellite-esp32/test.sh still green; (c) saying "Jarvis" starts a session like a button press — live-verified on hardware, or the task marked blocked pending hardware.
 
 ## In progress
