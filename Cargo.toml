@@ -27,6 +27,9 @@ exclude = [
     "skills-tmp-test",
     # Scratch crate, not part of the product build.
     "test-minimal",
+    # ESP32-S3 satellite firmware; targets xtensa-esp32s3-espidf and can't
+    # share the workspace's native target. Build with satellite-esp32/build.sh.
+    "satellite-esp32",
 ]
 
 [workspace.package]

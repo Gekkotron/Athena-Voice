@@ -1,0 +1,41 @@
+[package]
+name = "athena-satellite-esp32"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT"
+authors = ["Gekkotron <60887050+Gekkotron@users.noreply.github.com>"]
+
+# Standalone: never join the repo's native-target workspace (this crate
+# targets xtensa-esp32s3-espidf).
+[workspace]
+
+[[bin]]
+name = "athena-satellite-esp32"
+path = "src/main.rs"
+
+[features]
+default = ["hardware"]
+# Everything that needs ESP-IDF. Host tests run with --no-default-features
+# (see test.sh) so the protocol logic stays testable without the Xtensa
+# toolchain or an ESP-IDF checkout.
+hardware = ["dep:esp-idf-svc", "dep:toml-cfg"]
+
+[dependencies]
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+esp-idf-svc = { version = "0.51", optional = true }
+toml-cfg = { version = "0.2", optional = true }
+
+[build-dependencies]
+embuild = "0.33"
+toml-cfg = "0.2"
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
