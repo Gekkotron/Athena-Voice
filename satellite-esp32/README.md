@@ -66,6 +66,10 @@ Config is baked in at build time (toml-cfg): rebuild after editing.
 
 ## Build, flash, run
 
+Commands below run from this folder; from the repo root use
+`./satellite-esp32/build.sh` (and `cargo run` needs `cd satellite-esp32`
+first — the crate is not part of the root workspace).
+
 ```bash
 ./build.sh                     # classic ESP32 (WROOM) — the default
 MCU=esp32s3 ./build.sh         # ESP32-S3 instead
