@@ -32,6 +32,11 @@ pub enum Command {
     Publish { topic: String, payload: Vec<u8> },
     ConfigureSpeaker { sample_rate: u32 },
     Play(Vec<u8>),
+    /// What STT heard — shown on the serial monitor (a satellite
+    /// without an amp is still fully usable that way).
+    ShowTranscript { text: String, is_final: bool },
+    /// The spoken answer as text, from `tts/text`.
+    ShowAnswer(String),
     /// Back to idle — hook for LEDs/logging and re-arming the mic.
     SessionEnded,
 }
@@ -160,7 +165,30 @@ impl Session {
                 vec![Command::Play(payload)]
             }
             "done" => self.finish(),
-            // transcript / tts/text are display-only; nothing to show yet.
+            "transcript" => {
+                let Some(v) = json(&payload) else {
+                    return Vec::new();
+                };
+                match v.get("text").and_then(serde_json::Value::as_str) {
+                    Some(text) => vec![Command::ShowTranscript {
+                        text: text.to_string(),
+                        is_final: v
+                            .get("is_final")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                    }],
+                    None => Vec::new(),
+                }
+            }
+            "tts/text" => {
+                match json(&payload)
+                    .as_ref()
+                    .and_then(|v| v.get("text")?.as_str())
+                {
+                    Some(text) => vec![Command::ShowAnswer(text.to_string())],
+                    None => Vec::new(),
+                }
+            }
             _ => Vec::new(),
         }
     }
@@ -183,6 +211,10 @@ impl Session {
         self.deadline_ms = None;
         vec![Command::SessionEnded]
     }
+}
+
+fn json(payload: &[u8]) -> Option<serde_json::Value> {
+    serde_json::from_slice(payload).ok()
 }
 
 #[cfg(test)]
@@ -286,6 +318,55 @@ mod tests {
             panic!("expected play");
         };
         assert_eq!(bytes, &[9, 9]);
+    }
+
+    #[test]
+    fn transcript_is_surfaced_for_display() {
+        let (mut s, sid) = started(0);
+        s.handle(Input::SilenceDetected, 1000);
+        let cmds = s.handle(
+            Input::Inbound {
+                topic: format!("athena/sat/esp32-sat/session/{sid}/transcript"),
+                payload: br#"{"text":"quelle heure est-il","is_final":true}"#.to_vec(),
+            },
+            2000,
+        );
+        let Command::ShowTranscript { text, is_final } = &cmds[0] else {
+            panic!("expected ShowTranscript, got {cmds:?}");
+        };
+        assert_eq!(text, "quelle heure est-il");
+        assert!(is_final);
+    }
+
+    #[test]
+    fn answer_text_is_surfaced_for_display() {
+        let (mut s, sid) = started(0);
+        s.handle(Input::SilenceDetected, 1000);
+        let cmds = s.handle(
+            Input::Inbound {
+                topic: format!("athena/sat/esp32-sat/session/{sid}/tts/text"),
+                payload: br#"{"text":"il est 15 h 14"}"#.to_vec(),
+            },
+            2000,
+        );
+        let Command::ShowAnswer(text) = &cmds[0] else {
+            panic!("expected ShowAnswer, got {cmds:?}");
+        };
+        assert_eq!(text, "il est 15 h 14");
+    }
+
+    #[test]
+    fn malformed_display_payloads_are_ignored() {
+        let (mut s, sid) = started(0);
+        s.handle(Input::SilenceDetected, 1000);
+        let cmds = s.handle(
+            Input::Inbound {
+                topic: format!("athena/sat/esp32-sat/session/{sid}/tts/text"),
+                payload: b"not json".to_vec(),
+            },
+            2000,
+        );
+        assert!(cmds.is_empty());
     }
 
     #[test]

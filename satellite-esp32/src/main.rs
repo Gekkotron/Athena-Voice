@@ -206,6 +206,10 @@ mod hw {
                         spk.set_sample_rate(sample_rate);
                     }
                     Command::Play(bytes) => spk.enqueue(bytes),
+                    Command::ShowTranscript { text, is_final } => {
+                        info!("heard{}: {text}", if is_final { "" } else { " (partial)" });
+                    }
+                    Command::ShowAnswer(text) => info!("answer: {text}"),
                     Command::SessionEnded => {
                         streaming.store(false, Ordering::Relaxed);
                         info!("session ended, idle");

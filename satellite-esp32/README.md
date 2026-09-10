@@ -40,6 +40,11 @@ Per-chip pin bindings live in `wiring()` in `src/main.rs` (ESP-IDF pins
 are typed objects) if your board needs different ones. On both chips the
 BOOT button (GPIO0) is the push-to-talk trigger.
 
+**The amplifier is optional**: without one, the transcript and the answer
+text are printed on the serial monitor (`heard: …` / `answer: …`), so a
+mic-only satellite is fully usable — audio starts playing the day you
+wire an amp in.
+
 ## Toolchain (one-time)
 
 This crate targets Xtensa (`xtensa-esp32-espidf` by default,
