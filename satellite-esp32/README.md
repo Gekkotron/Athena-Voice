@@ -7,9 +7,10 @@ Athena-Voice's MQTT satellite protocol
 button, speak, and the answer plays back on the speaker — the heavy
 lifting (STT, skills, TTS) happens on the server running `serve`.
 
-Current trigger is push-to-talk on the BOOT button; on-device wake word
-("Jarvis", via esp-sr WakeNet) is planned — see `PLAN.md` in the repo
-root.
+Trigger: push-to-talk on the BOOT button on both chips, plus a hands-free
+**"Alexa" wake word (esp-sr WakeNet) on the ESP32-S3** — Espressif ships
+no usable WakeNet models for the classic ESP32, so the WROOM stays
+push-to-talk only.
 
 ## Wiring
 
@@ -81,8 +82,19 @@ MCU=esp32s3 ./build.sh         # ESP32-S3 instead
 cargo run --release            # flash over USB + serial monitor (espflash)
 ```
 
-(For an S3, flash with
-`MCU=esp32s3 cargo run --release --target xtensa-esp32s3-espidf`.)
+For an S3, flash with `./flash-s3.sh` instead — it writes the custom
+partition table **and** the wake-word model partition, which a plain
+`cargo run` would skip (the firmware then boots into push-to-talk and
+logs a warning instead of wake word).
+
+## Wake word (ESP32-S3 only)
+
+The S3 build listens for **"Alexa"** (esp-sr WakeNet9, `wn9_alexa`) while
+idle; a detection acts exactly like a BOOT press, and detection pauses
+during a session so TTS playback can't retrigger it. The model lives in
+the `model` flash partition (`partitions_s3.csv`, flashed by
+`flash-s3.sh`). To change the wake word, pick another `CONFIG_SR_WN_*`
+model in `sdkconfig.defaults.esp32s3` and re-run `./flash-s3.sh`.
 
 With the server up (`cargo run --release -p athena-voice-cli -- serve …`
 on a host the ESP32 can reach), press BOOT, speak, and wait for the

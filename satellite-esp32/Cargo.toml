@@ -33,6 +33,14 @@ toml-cfg = { version = "0.2", optional = true }
 embuild = "0.33"
 toml-cfg = "0.2"
 
+# esp-sr provides WakeNet (on-device wake word). Models are S3/P4-only:
+# the classic ESP32 build compiles the component but selects no model and
+# never references it (src/wake.rs is cfg(esp32s3)).
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-sr", version = "=2.5.3" }
+bindings_header = "src/sr_bindings.h"
+bindings_module = "sr"
+
 [profile.release]
 opt-level = "s"
 

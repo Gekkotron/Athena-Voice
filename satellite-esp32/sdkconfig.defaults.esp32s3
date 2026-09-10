@@ -1,0 +1,8 @@
+# Applied on top of sdkconfig.defaults for the S3 target only (native
+# ESP-IDF behavior: <file>.<target> is appended automatically).
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_s3.csv"
+# Wake word: "Alexa" (WakeNet9). S3/P4-only in esp-sr's Kconfig.
+CONFIG_MODEL_IN_FLASH=y
+CONFIG_SR_WN_WN9_ALEXA=y

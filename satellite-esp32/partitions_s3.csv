@@ -1,0 +1,7 @@
+# ESP32-S3 layout (>= 8 MB flash): room for the app plus the esp-sr
+# wake-word model partition ("model", read by esp_srmodel_init).
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xf000,   0x1000
+factory,  app,  factory, 0x10000,  0x300000
+model,    data, spiffs,  0x310000, 0x100000

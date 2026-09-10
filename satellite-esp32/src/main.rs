@@ -3,6 +3,7 @@ mod mic;
 mod net;
 mod session;
 mod speaker;
+mod wake;
 
 #[cfg(feature = "hardware")]
 fn main() {
@@ -29,6 +30,10 @@ mod hw {
 
     enum AppEvent {
         Button,
+        /// Wake word detected — same effect as Button. Only the S3 mic
+        /// path constructs it (WakeNet models are S3-only).
+        #[cfg_attr(not(esp32s3), allow(dead_code))]
+        Wake,
         Frame(Vec<u8>),
         UtteranceEnd,
         Mqtt(String, Vec<u8>),
@@ -128,11 +133,14 @@ mod hw {
         });
 
         // Mic: streams frames while the flag is set; signals end of
-        // utterance via the silence tracker.
+        // utterance via the silence tracker. When idle+armed on an S3,
+        // frames feed WakeNet instead ("Alexa" → same as a BOOT press).
         let streaming = Arc::new(AtomicBool::new(false));
+        let armed = Arc::new(AtomicBool::new(true));
         spawn("mic", {
             let tx = tx.clone();
             let streaming = Arc::clone(&streaming);
+            let armed = Arc::clone(&armed);
             let mut m = mic::driver::Mic::new(peripherals.i2s0, w.mic_bclk, w.mic_ws, w.mic_sd)
                 .expect("mic i2s");
             move || {
@@ -140,9 +148,30 @@ mod hw {
                     mic::SilenceTracker::new(mic::SILENCE_RMS, mic::SILENCE_MS, 20);
                 let mut frame = Vec::with_capacity(mic::FRAME_SAMPLES * 2);
                 let mut was_streaming = false;
+                #[cfg(esp32s3)]
+                let mut wakenet = crate::wake::WakeNet::new();
+                #[cfg(not(esp32s3))]
+                let _ = &armed; // classic ESP32: push-to-talk only
                 loop {
                     if !streaming.load(Ordering::Relaxed) {
                         was_streaming = false;
+                        #[cfg(esp32s3)]
+                        if armed.load(Ordering::Relaxed) {
+                            if let Some(wn) = wakenet.as_mut() {
+                                match m.read_frame(&mut frame) {
+                                    Ok(samples) => {
+                                        if wn.feed(samples) {
+                                            let _ = tx.send(AppEvent::Wake);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("mic read failed: {e}");
+                                        std::thread::sleep(Duration::from_millis(100));
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                         std::thread::sleep(Duration::from_millis(20));
                         continue;
                     }
@@ -189,6 +218,10 @@ mod hw {
         while let Ok(event) = rx.recv() {
             let input = match event {
                 AppEvent::Button => Input::Trigger,
+                AppEvent::Wake => {
+                    info!("wake word detected");
+                    Input::Trigger
+                }
                 AppEvent::Frame(bytes) => Input::MicFrame(bytes),
                 AppEvent::UtteranceEnd => Input::SilenceDetected,
                 AppEvent::Mqtt(topic, payload) => Input::Inbound { topic, payload },
@@ -219,6 +252,9 @@ mod hw {
             if *session.state() == State::Streaming {
                 streaming.store(true, Ordering::Relaxed);
             }
+            // Wake detection only listens while the session is idle, so
+            // TTS playback can't retrigger it.
+            armed.store(*session.state() == State::Idle, Ordering::Relaxed);
         }
     }
 

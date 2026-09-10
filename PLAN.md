@@ -55,15 +55,12 @@ detection (today the client streams on demand, no hands-free trigger).
       Do NOT vendor wake models; document where to fetch or how to train one in the config header.
       Success criteria: (a) live-verified hands-free round trip: spoken wake word → question → spoken answer, without touching the keyboard; (b) no session traffic before detection; (c) existing client modes and tests unchanged and green.
 
-- [ ] satellite-esp32: on-device "Jarvis" wake word via esp-sr WakeNet (phase 2 of the ESP32-S3 firmware)
-      The push-to-talk firmware exists in satellite-esp32/ (standalone crate, excluded from the workspace, targets xtensa-esp32s3-espidf; requires the espup toolchain — see its README). Spec: docs/superpowers/specs/2026-09-10-esp32-satellite-design.md.
-      Add the espressif/esp-sr ESP-IDF component via esp-idf-sys extra_components with a bindings header, wrap WakeNet in src/wake.rs as WakeNet::detect(&[i16]) -> bool, select the stock "Jarvis" WakeNet9 model in sdkconfig (verify the exact Kconfig name in the esp-sr docs — do not invent it), add the model partition to the flash layout, and feed idle-state mic frames to it in main.rs so a detection acts exactly like a BOOT press.
-      The firmware now builds for classic ESP32 (default, the owner's WROOM board) and ESP32-S3 (MCU=esp32s3): check the esp-sr docs for which WakeNet versions/models the classic ESP32 supports — "Jarvis" may be S3-only, in which case wake word lands S3-only and the classic chip keeps push-to-talk.
-      Success criteria: (a) ./satellite-esp32/build.sh compiles with esp-sr; (b) ./satellite-esp32/test.sh still green; (c) saying "Jarvis" starts a session like a button press — live-verified on hardware, or the task marked blocked pending hardware.
-
 ## In progress
 
 ## Done
+
+- [x] satellite-esp32: on-device "Alexa" wake word via esp-sr WakeNet, ESP32-S3 only (2026-09-11)
+      Owner switched the wake word from Jarvis to Alexa. esp-sr 2.5.3 added via esp-idf-sys extra_components (bindings module `sr`); src/wake.rs wraps WakeNet (esp_srmodel_init on the `model` partition → esp_wn_handle_from_name → detect with internal chunk buffering); idle-state mic frames feed it on the S3 and a detection acts like a BOOT press, disarmed while a session is active. Custom partitions_s3.csv (staged into embuild's CMake project via ESP_IDF_GLOB_PARTTABLE_* env) + sdkconfig.defaults.esp32s3 select wn9_alexa; flash-s3.sh flashes app + partition table + srmodels.bin (espflash alone skips the model). Verified: both targets compile clean, 22 host tests green, srmodels.bin (284K) produced. CONFIRMED LIMITATION: esp-sr's Kconfig gates all WakeNet9/10 models to S3/P4 and ships no usable classic-ESP32 models, so the owner's WROOM keeps push-to-talk — hands-free on the WROOM would need different hardware (S3) per the "no wake audio leaves the satellite" rule. Live "Alexa" round trip pending S3 hardware.
 
 - [x] Assist heartbeat for the app's online indicator (2026-08-03)
       The bridge publishes `{"timestamp": epoch-secs, "millis": uptime-ms, "uptime_minutes": …}` to `assist/heartbeat/` (trailing slash = the app's literal subscription) every 10 s; the DomoticApp flags the assistant offline after 16 s without a beat and reads only `timestamp`. Unit-tested; spawned from Runtime wiring so bridge tests stay deterministic.

@@ -21,3 +21,8 @@ build-std = ["std", "panic_abort"]
 # force): MCU=esp32s3 ./build.sh picks the S3.
 MCU = "esp32"
 ESP_IDF_VERSION = "v5.3.3"
+# Stage the custom partition table into embuild's generated CMake
+# project (CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves there, not in
+# the crate). Harmless on the esp32 target, which uses the default table.
+ESP_IDF_GLOB_PARTTABLE_BASE = { value = ".", relative = true }
+ESP_IDF_GLOB_PARTTABLE_CSV = "partitions_s3.csv"
