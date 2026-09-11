@@ -97,6 +97,7 @@ impl Runtime {
         assist: Option<assist::AssistInit>,
         session_idle: std::time::Duration,
     ) -> Result<Self, RuntimeError> {
+        let topic_root: Arc<str> = Arc::from(mqtt_cfg.topic_root.as_str());
         let client = MqttClient::connect(mqtt_cfg)?;
         let sessions = Arc::new(SessionManager::default());
         let event_bus = Arc::new(EventBus::new(1024));
@@ -176,6 +177,7 @@ impl Runtime {
 
         let deps = SatelliteDeps {
             mqtt: client.tx.clone(),
+            topic_root: topic_root.clone(),
             event_loop: client.event_loop.clone(),
             factory,
             session_manager: sessions.clone(),
@@ -189,7 +191,7 @@ impl Runtime {
         let satellite_task = spawn_satellite(deps);
 
         // Also start the MQTT event mirror task so athena/events/* is populated.
-        let mirror = event_bus::spawn_mqtt_mirror(event_bus.sender(), client.tx);
+        let mirror = event_bus::spawn_mqtt_mirror(topic_root, event_bus.sender(), client.tx);
 
         // Reap sessions whose satellite went silent without sending `end` —
         // their DAG actors would otherwise stay parked until shutdown.

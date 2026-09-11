@@ -114,6 +114,7 @@ async fn build_bridge(publisher: Arc<RecordingPublisher>) -> Arc<AssistBridge> {
         username: None,
         password: None,
         keep_alive_secs: 30,
+        topic_root: "athena".into(),
     })
     .expect("mqtt client");
     let http = reqwest::Client::new();

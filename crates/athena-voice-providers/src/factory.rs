@@ -54,6 +54,10 @@ pub enum StageChoice {
 pub struct MqttBrokerAddr {
     pub host: String,
     pub port: u16,
+    /// Topic namespace (`[mqtt] topic_root`): provider topics live at
+    /// `<root>/providers/<kind>/<name>/…`, so the workers must be
+    /// started with the same root.
+    pub topic_root: String,
 }
 
 pub struct ProviderFactory {
@@ -139,7 +143,7 @@ async fn build_stt(
             // Leak a static string so the `Stt::name()` API can return &'static str.
             let leaked: &'static str = Box::leak(name.clone().into_boxed_str());
             Ok(Arc::new(
-                MqttStt::connect(&broker.host, broker.port, leaked).await,
+                MqttStt::connect(&broker.host, broker.port, &broker.topic_root, leaked).await,
             ))
         }
         StageChoice::None
@@ -183,7 +187,7 @@ async fn build_tts(
             let broker = broker.ok_or("MqttTts requires an [mqtt] broker address")?;
             let leaked: &'static str = Box::leak(name.clone().into_boxed_str());
             Ok(Arc::new(
-                MqttTts::connect(&broker.host, broker.port, leaked).await,
+                MqttTts::connect(&broker.host, broker.port, &broker.topic_root, leaked).await,
             ))
         }
         StageChoice::None

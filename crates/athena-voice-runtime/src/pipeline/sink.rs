@@ -36,6 +36,7 @@ pub enum SinkMsg {
 pub fn spawn_sink(
     session: SessionId,
     sat: SatelliteId,
+    topic_root: std::sync::Arc<str>,
     mqtt: AsyncClient,
     mut chunk_rx: mpsc::Receiver<SinkMsg>,
     event_tx: broadcast::Sender<Event>,
@@ -53,7 +54,7 @@ pub fn spawn_sink(
                                 let meta = meta_payload(format, sample_rate);
                                 if let Err(e) = mqtt
                                     .publish(
-                                        topics::session_tts_meta(&sat, session),
+                                        topics::session_tts_meta(&topic_root, &sat, session),
                                         QoS::AtLeastOnce,
                                         false,
                                         meta.to_string(),
@@ -79,7 +80,7 @@ pub fn spawn_sink(
                     Some(SinkMsg::Chunk(chunk)) => {
                         if let Err(e) = mqtt
                             .publish(
-                                topics::session_tts(&sat, session),
+                                topics::session_tts(&topic_root, &sat, session),
                                 QoS::AtMostOnce,
                                 false,
                                 chunk.to_vec(),
@@ -97,7 +98,7 @@ pub fn spawn_sink(
         let done = json!({ "outcome": "ok" });
         if let Err(e) = mqtt
             .publish(
-                topics::session_done(&sat, session),
+                topics::session_done(&topic_root, &sat, session),
                 QoS::AtLeastOnce,
                 false,
                 done.to_string(),

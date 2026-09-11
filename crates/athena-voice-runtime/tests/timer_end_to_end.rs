@@ -74,6 +74,7 @@ async fn timer_set_then_expires() {
         username: None,
         password: None,
         keep_alive_secs: 30,
+        topic_root: "athena".into(),
     })
     .expect("mqtt client");
     let http = reqwest::Client::new();

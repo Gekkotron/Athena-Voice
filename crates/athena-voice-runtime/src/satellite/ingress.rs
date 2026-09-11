@@ -24,6 +24,9 @@ use crate::wasm::dispatcher::SkillDispatcherHandle;
 /// Dependencies for a running SatelliteAdapter.
 pub struct SatelliteDeps {
     pub mqtt: AsyncClient,
+    /// Namespace every satellite/provider topic lives under
+    /// (`[mqtt] topic_root`, default `athena`).
+    pub topic_root: Arc<str>,
     pub event_loop: Arc<Mutex<EventLoop>>,
     pub factory: Arc<ProviderFactory>,
     pub session_manager: Arc<SessionManager>,
@@ -57,6 +60,7 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
         // Spawn transcript egress: subscribes to the event bus and republishes
         // TranscriptPartial/TranscriptFinal onto athena/sat/<sat>/session/<sid>/transcript.
         let egress_task = spawn_transcript_egress(
+            deps.topic_root.clone(),
             deps.mqtt.clone(),
             deps.event_bus.clone(),
             deps.session_manager.clone(),
@@ -116,7 +120,7 @@ pub fn spawn_satellite(deps: SatelliteDeps) -> JoinHandle<()> {
 async fn resubscribe(deps: &SatelliteDeps) {
     if let Err(e) = deps
         .mqtt
-        .subscribe(topics::sat_wildcard(), QoS::AtLeastOnce)
+        .subscribe(topics::sat_wildcard(&deps.topic_root), QoS::AtLeastOnce)
         .await
     {
         warn!(error = %e, "satellite subscribe failed");
@@ -135,7 +139,7 @@ async fn resubscribe(deps: &SatelliteDeps) {
 }
 
 fn handle_publish(deps: &SatelliteDeps, topic: &str, payload: &[u8]) {
-    let Some(parsed) = topics::parse_satellite_topic(topic) else {
+    let Some(parsed) = topics::parse_satellite_topic(&deps.topic_root, topic) else {
         return;
     };
     match parsed {
@@ -264,6 +268,7 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
     sink::spawn_sink(
         sid,
         sat,
+        deps.topic_root.clone(),
         deps.mqtt.clone(),
         chunk_rx,
         deps.event_bus.clone(),
@@ -279,6 +284,7 @@ enum EgressKind {
 }
 
 fn spawn_transcript_egress(
+    topic_root: Arc<str>,
     mqtt: AsyncClient,
     event_tx: broadcast::Sender<Event>,
     sessions: Arc<SessionManager>,
@@ -312,8 +318,12 @@ fn spawn_transcript_egress(
                         let sat_opt = sessions.get(session).map(|s| s.sat.clone());
                         if let Some(sat) = sat_opt {
                             let topic = match topic_kind {
-                                EgressKind::Transcript => topics::session_transcript(&sat, session),
-                                EgressKind::TtsText => topics::session_tts_text(&sat, session),
+                                EgressKind::Transcript => {
+                                    topics::session_transcript(&topic_root, &sat, session)
+                                }
+                                EgressKind::TtsText => {
+                                    topics::session_tts_text(&topic_root, &sat, session)
+                                }
                             };
                             let _ = mqtt
                                 .publish(topic, QoS::AtLeastOnce, false, payload)

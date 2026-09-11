@@ -50,6 +50,7 @@ pub enum State {
 }
 
 pub struct Session {
+    root: String,
     sat_id: String,
     locale: String,
     state: State,
@@ -58,8 +59,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(sat_id: &str, locale: &str) -> Self {
+    /// `root` must match the server's `[mqtt] topic_root`.
+    pub fn new(root: &str, sat_id: &str, locale: &str) -> Self {
         Self {
+            root: root.to_string(),
             sat_id: sat_id.to_string(),
             locale: locale.to_string(),
             state: State::Idle,
@@ -75,8 +78,8 @@ impl Session {
     /// The five response filters `main.rs` subscribes to once at connect.
     /// Never the `athena/sat/<id>/#` wildcard — the broker would echo our
     /// own audio stream back at us.
-    pub fn subscriptions(sat_id: &str) -> [String; 5] {
-        let base = format!("athena/sat/{sat_id}/session/+");
+    pub fn subscriptions(root: &str, sat_id: &str) -> [String; 5] {
+        let base = format!("{root}/sat/{sat_id}/session/+");
         [
             format!("{base}/transcript"),
             format!("{base}/tts"),
@@ -98,7 +101,7 @@ impl Session {
 
     fn topic(&self, suffix: &str) -> String {
         let sid = self.sid.as_deref().unwrap_or_default();
-        format!("athena/sat/{}/session/{sid}/{suffix}", self.sat_id)
+        format!("{}/sat/{}/session/{sid}/{suffix}", self.root, self.sat_id)
     }
 
     fn on_trigger(&mut self, now_ms: u64) -> Vec<Command> {
@@ -144,7 +147,7 @@ impl Session {
         let Some(sid) = self.sid.as_deref() else {
             return Vec::new();
         };
-        let prefix = format!("athena/sat/{}/session/{sid}/", self.sat_id);
+        let prefix = format!("{}/sat/{}/session/{sid}/", self.root, self.sat_id);
         let Some(suffix) = topic.strip_prefix(&prefix) else {
             return Vec::new();
         };
@@ -229,14 +232,14 @@ mod tests {
     }
 
     fn started(now_ms: u64) -> (Session, String) {
-        let mut s = Session::new("esp32-sat", "fr");
+        let mut s = Session::new("athena", "esp32-sat", "fr");
         let sid = sid_from_start_topic(&s.handle(Input::Trigger, now_ms));
         (s, sid)
     }
 
     #[test]
     fn trigger_starts_session_with_uuid_and_locale() {
-        let mut s = Session::new("esp32-sat", "fr");
+        let mut s = Session::new("athena", "esp32-sat", "fr");
         let cmds = s.handle(Input::Trigger, 0);
         let Command::Publish { topic, payload } = &cmds[0] else {
             panic!("expected publish");
@@ -435,13 +438,13 @@ mod tests {
 
     #[test]
     fn mic_frames_outside_streaming_are_dropped() {
-        let mut s = Session::new("esp32-sat", "fr");
+        let mut s = Session::new("athena", "esp32-sat", "fr");
         assert!(s.handle(Input::MicFrame(vec![1]), 0).is_empty());
     }
 
     #[test]
     fn subscriptions_cover_the_five_response_topics() {
-        let subs = Session::subscriptions("esp32-sat");
+        let subs = Session::subscriptions("athena", "esp32-sat");
         assert_eq!(
             subs,
             [

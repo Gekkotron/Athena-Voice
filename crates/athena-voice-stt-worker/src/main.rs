@@ -43,6 +43,11 @@ struct Args {
     #[arg(long, default_value = "whisper")]
     name: String,
 
+    /// Topic namespace — must match `[mqtt] topic_root` in the server
+    /// config (default `athena`).
+    #[arg(long, default_value = "athena")]
+    topic_root: String,
+
     /// Path to the whisper-cli binary.
     #[arg(long, default_value = "./whisper.cpp/build/bin/whisper-cli")]
     whisper_bin: PathBuf,
@@ -86,8 +91,8 @@ async fn main() -> anyhow::Result<()> {
         model_size
     );
 
-    let request_topic = format!("athena/providers/stt/{}/request", args.name);
-    let response_topic = format!("athena/providers/stt/{}/response", args.name);
+    let request_topic = format!("{}/providers/stt/{}/request", args.topic_root, args.name);
+    let response_topic = format!("{}/providers/stt/{}/response", args.topic_root, args.name);
 
     let mut opts = MqttOptions::new(
         format!("athena-stt-worker-{}-{}", args.name, std::process::id()),

@@ -105,7 +105,7 @@ mod hw {
 
         // MQTT inbound → events.
         let (mqtt_tx, mqtt_rx) = channel::<(String, Vec<u8>)>();
-        let mut mqtt = net::Mqtt::connect(cfg.mqtt_url, cfg.sat_id, mqtt_tx).expect("mqtt");
+        let mut mqtt = net::Mqtt::connect(cfg.mqtt_url, cfg.topic_root, cfg.sat_id, mqtt_tx).expect("mqtt");
         spawn("mqtt-fwd", {
             let tx = tx.clone();
             move || {
@@ -224,10 +224,13 @@ mod hw {
         let spk = speaker::Speaker::new(peripherals.i2s1, w.spk_bclk, w.spk_lrc, w.spk_din)
             .expect("speaker i2s");
 
-        info!("ready (sat_id={}): press BOOT to talk", cfg.sat_id);
+        info!(
+            "ready (root={}, sat_id={}): press BOOT to talk",
+            cfg.topic_root, cfg.sat_id
+        );
 
         let boot = Instant::now();
-        let mut session = Session::new(cfg.sat_id, cfg.locale);
+        let mut session = Session::new(cfg.topic_root, cfg.sat_id, cfg.locale);
         while let Ok(event) = rx.recv() {
             let input = match event {
                 AppEvent::Button => Input::Trigger,

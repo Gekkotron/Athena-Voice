@@ -32,6 +32,11 @@ database_url = "sqlite:///tmp/athena-voice.db?mode=rwc"
 host = "127.0.0.1"
 port = 1883
 client_id = "athena-voice-local"
+# Namespace for every topic this project owns (<root>/sat/…, /events/…,
+# /providers/…). Change it if your broker already hosts an unrelated
+# `athena/` tree — the workers (--topic-root) and every satellite
+# (topic_root in its config) must use the same value.
+# topic_root = "athena"
 
 [providers]
 stt = { mqtt_stt = { name = "whisper" } }

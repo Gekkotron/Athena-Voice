@@ -17,6 +17,9 @@ pub struct Config {
     sat_id: &'static str,
     #[default("fr")]
     locale: &'static str,
+    /// Must match the server's `[mqtt] topic_root`.
+    #[default("athena")]
+    topic_root: &'static str,
 }
 
 // Wiring (ESP-IDF pins are typed, so the per-chip bindings live in

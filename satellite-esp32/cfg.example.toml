@@ -6,3 +6,5 @@ wifi_pass = "hunter2"
 mqtt_url = "mqtt://192.168.1.10:1883"
 sat_id = "esp32-sat"
 locale = "fr"
+# Must match the server's [mqtt] topic_root.
+topic_root = "athena"

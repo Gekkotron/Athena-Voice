@@ -19,6 +19,16 @@ pub struct MqttConfig {
     pub username: Option<String>,
     pub password: Option<String>,
     pub keep_alive_secs: u64,
+    /// Namespace for every topic this project owns (`<root>/sat/…`,
+    /// `<root>/events/…`, `<root>/providers/…`). Configurable because a
+    /// shared broker may already use `athena/`; satellites and workers
+    /// must be given the same root.
+    #[serde(default = "default_topic_root")]
+    pub topic_root: String,
+}
+
+fn default_topic_root() -> String {
+    crate::mqtt::topics::DEFAULT_ROOT.to_string()
 }
 
 pub struct MqttClient {
@@ -59,6 +69,7 @@ mod tests {
             username: None,
             password: None,
             keep_alive_secs: 30,
+            topic_root: default_topic_root(),
         })
         .expect("construct");
         // Publish call is queued in-memory; without a broker it never succeeds,

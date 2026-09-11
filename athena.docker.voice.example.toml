@@ -41,6 +41,10 @@ database_url = "sqlite:///data/athena-voice.db?mode=rwc"
 host = "192.168.1.2"      # <-- your LAN broker (or "mosquitto" with --profile broker)
 port = 1883
 client_id = "athena-voice"
+# Namespace for every topic this project owns. Change it if your broker
+# already hosts an unrelated `athena/` tree — then pass the same value to
+# the workers (ATHENA_TOPIC_ROOT in .env) and every satellite.
+# topic_root = "athena"
 # username = "athena"
 # password = "change-me"  # or keep secrets out of the file via ATHENA__MQTT__PASSWORD
 

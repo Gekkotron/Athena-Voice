@@ -69,10 +69,11 @@ impl Mqtt {
     /// automatic reconnects re-establish the subscriptions too.
     pub fn connect(
         url: &str,
+        topic_root: &str,
         sat_id: &str,
         tx: Sender<(String, Vec<u8>)>,
     ) -> Result<Self, EspError> {
-        let filters = Session::subscriptions(sat_id);
+        let filters = Session::subscriptions(topic_root, sat_id);
         let client_id = format!("athena-sat-{sat_id}");
         let conf = MqttClientConfiguration {
             client_id: Some(&client_id),

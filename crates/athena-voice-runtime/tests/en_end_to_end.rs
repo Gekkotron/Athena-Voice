@@ -73,6 +73,7 @@ async fn english_session_answers_in_english() {
         username: None,
         password: None,
         keep_alive_secs: 30,
+        topic_root: "athena".into(),
     })
     .expect("mqtt client");
     let http = reqwest::Client::new();

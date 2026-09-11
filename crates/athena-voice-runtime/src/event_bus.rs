@@ -31,6 +31,7 @@ impl EventBus {
 /// Spawns a task that consumes broadcast events and publishes each as JSON on
 /// `athena/events/<kind>`. Returns the JoinHandle so the caller can shut it down.
 pub fn spawn_mqtt_mirror(
+    topic_root: std::sync::Arc<str>,
     tx: broadcast::Sender<Event>,
     mqtt: rumqttc::AsyncClient,
 ) -> JoinHandle<()> {
@@ -58,7 +59,7 @@ pub fn spawn_mqtt_mirror(
                             continue;
                         }
                     };
-                    let topic = crate::mqtt::topics::event_topic(&kind);
+                    let topic = crate::mqtt::topics::event_topic(&topic_root, &kind);
                     if let Err(e) = mqtt
                         .publish(topic, rumqttc::QoS::AtLeastOnce, false, payload)
                         .await

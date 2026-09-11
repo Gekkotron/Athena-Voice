@@ -130,10 +130,19 @@ pub struct MqttConfig {
     pub password: Option<String>,
     #[serde(default = "default_keep_alive")]
     pub keep_alive_secs: u64,
+    /// Namespace for every topic the project owns. Change it when the
+    /// broker is shared with other software already using `athena/`;
+    /// the STT/TTS workers and every satellite need the same value.
+    #[serde(default = "default_topic_root")]
+    pub topic_root: String,
 }
 
 fn default_keep_alive() -> u64 {
     30
+}
+
+fn default_topic_root() -> String {
+    "athena".to_string()
 }
 
 #[derive(Debug, Error)]

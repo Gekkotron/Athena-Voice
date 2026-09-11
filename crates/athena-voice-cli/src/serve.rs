@@ -137,6 +137,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
     let broker = athena_voice_providers::factory::MqttBrokerAddr {
         host: cfg.mqtt.host.clone(),
         port: cfg.mqtt.port,
+        topic_root: cfg.mqtt.topic_root.clone(),
     };
     let factory = Arc::new(
         ProviderFactory::build(&cfg.providers, Some(&broker))
@@ -153,6 +154,7 @@ pub async fn run(args: ServeArgs) -> anyhow::Result<()> {
         username: cfg.mqtt.username.clone(),
         password: cfg.mqtt.password.clone(),
         keep_alive_secs: cfg.mqtt.keep_alive_secs,
+        topic_root: cfg.mqtt.topic_root.clone(),
     };
     // Web-edited settings override TOML key-by-key; disabled skills are
     // unloaded right after the directory scan.

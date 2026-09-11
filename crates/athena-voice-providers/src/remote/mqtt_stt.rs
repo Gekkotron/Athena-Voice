@@ -59,10 +59,11 @@ impl MqttStt {
     pub async fn connect(
         broker_host: impl Into<String>,
         broker_port: u16,
+        topic_root: &str,
         provider_name: &'static str,
     ) -> Self {
-        let request_topic = format!("athena/providers/stt/{provider_name}/request");
-        let response_topic = format!("athena/providers/stt/{provider_name}/response");
+        let request_topic = format!("{topic_root}/providers/stt/{provider_name}/request");
+        let response_topic = format!("{topic_root}/providers/stt/{provider_name}/response");
         let client = MqttProviderClient::connect(
             broker_host,
             broker_port,

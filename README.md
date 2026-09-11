@@ -326,6 +326,22 @@ Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
 
 `athena/events/#` mirrors the runtime's full event bus for observability.
 
+**Changing the namespace.** Every topic above (plus
+`athena/providers/…`, used between the runtime and the STT/TTS workers)
+sits under a configurable root — set `[mqtt] topic_root` when your broker
+is shared with other software already using `athena/`:
+
+```toml
+[mqtt]
+topic_root = "assist"    # default: "athena"
+```
+
+All four participants must agree on it: the server (config above), each
+worker (`--topic-root assist`, or `ATHENA_TOPIC_ROOT` in `.env` for the
+Docker `voice` profile), and every satellite (`topic_root` in
+`satellite-esp32/cfg.toml`). A satellite publishing under a different
+root is simply ignored, so two deployments can share one broker.
+
 A ready-made hardware satellite lives in [`satellite-esp32/`](satellite-esp32/):
 firmware for a classic ESP32 (WROOM) or ESP32-S3 with an INMP441
 microphone and MAX98357A amplifier, push-to-talk — wiring, toolchain

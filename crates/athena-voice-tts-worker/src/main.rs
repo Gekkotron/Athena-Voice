@@ -45,6 +45,11 @@ struct Args {
     #[arg(long, default_value = "say")]
     name: String,
 
+    /// Topic namespace — must match `[mqtt] topic_root` in the server
+    /// config (default `athena`).
+    #[arg(long, default_value = "athena")]
+    topic_root: String,
+
     /// Synthesis engine. `say` is macOS-only; `piper` is portable
     /// (Linux included) and needs --piper-model.
     #[arg(long, value_enum, default_value_t = Engine::Say)]
@@ -161,8 +166,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let request_topic = format!("athena/providers/tts/{}/request", args.name);
-    let response_topic = format!("athena/providers/tts/{}/response", args.name);
+    let request_topic = format!("{}/providers/tts/{}/request", args.topic_root, args.name);
+    let response_topic = format!("{}/providers/tts/{}/response", args.topic_root, args.name);
 
     let mut opts = MqttOptions::new(
         format!("athena-tts-worker-{}-{}", args.name, std::process::id()),

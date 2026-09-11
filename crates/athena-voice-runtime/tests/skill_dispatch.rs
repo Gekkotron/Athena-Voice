@@ -73,6 +73,7 @@ async fn end_to_end_skill_dispatch() {
         username: None,
         password: None,
         keep_alive_secs: 30,
+        topic_root: "athena".into(),
     })
     .expect("mqtt client");
     let http = reqwest::Client::new();
