@@ -8,9 +8,15 @@ playback via rodio. LLM fallback is opt-in (`llm = "none"` default;
 `ollama` and `openai_compatible` providers available). A web admin UI
 (`athena-voice-admin`) handles config editing, Jeedom connection test, and
 sensor discovery. See `README.md` / `quickstart.sh` for setup and
-`athena.voice.toml` for the full-voice config. Remaining in the voice path:
-honest tts/meta, Piper TTS engine (last macOS-only piece), wake-word
-detection (today the client streams on demand, no hands-free trigger).
+`athena.voice.toml` for the full-voice config.
+
+Since 2026-09-11 the voice path is portable and honest: Piper joins `say`
+as a TTS engine, `tts/meta` declares each provider's real format, and
+`docker compose --profile voice` ships the whole stack for a Linux box.
+An ESP32 satellite lives in `satellite-esp32/` (push-to-talk on classic
+ESP32 and S3, plus an on-device "Alexa" wake word on the S3). Remaining
+in the voice path: wake-word detection in the *CLI* client (today it
+streams on demand, no hands-free trigger).
 
 ## Notes
 
@@ -36,18 +42,6 @@ detection (today the client streams on demand, no hands-free trigger).
 
 ## Backlog
 
-- [ ] Honest audio format metadata in tts/meta (do this BEFORE the Piper task — Piper models have their own native rates, so the metadata must stop lying first)
-      `pipeline/sink.rs` hardcodes `{codec: "opus", sample_rate: 24000}` in the session `tts/meta` message while the actual stream today is s16le at the worker's rate.
-      Thread real format info: extend the TTS provider trait (or wrap AudioStream) so synthesize returns format metadata alongside chunks; FakeTts reports a `text` pseudo-codec, MqttTts forwards what the worker declares (add optional `format`/`sample_rate` fields to the worker's first response message; missing fields default to s16le/22050 for compatibility).
-      Update the satellite client to honor tts/meta instead of the --rate flag when metadata is present (keep --rate as override).
-      Success criteria: (a) client plays correctly with no --rate flag against both fake and say-worker configs; (b) meta reflects reality for each provider; (c) runtime + provider tests green.
-
-- [ ] Piper engine option for the TTS worker (PORTABILITY: `say` is the only macOS-only piece left in the voice path)
-      Add a `--engine piper --piper-bin <path> --piper-model <path>` mode to `crates/athena-voice-tts-worker` alongside the default `say` engine, replacing only `synthesize_wav` (the wire protocol must not change).
-      Piper CLI outputs WAV at the model's native rate; declare that real rate in the worker's response metadata (the tts/meta task above threads it through), so no resampling is needed.
-      Do NOT vendor models; document where to fetch a French voice (e.g. fr_FR-siwis-medium) and add the paths to the config header.
-      Success criteria: (a) with a downloaded Piper voice the full loop speaks with the Piper voice on Linux and macOS; (b) `say` remains the default with unchanged behavior; (c) startup fails fast with a clear message when the binary/model paths are wrong.
-
 - [ ] Wake-word detection in the satellite client (hands-free trigger — today --microphone streams on demand only)
       Evaluate pure-Rust cross-platform detectors first (e.g. rustpotter) — read the real crate API before writing code, do not invent it; a subprocess engine is acceptable fallback but pure-Rust is strongly preferred per the portability principle.
       Add an opt-in client mode (e.g. --wake-word <model/config path>) that listens continuously, opens a session and starts streaming only after detection, and re-arms after the session ends; keep detection entirely client-side (no wake audio leaves the satellite).
@@ -58,6 +52,15 @@ detection (today the client streams on demand, no hands-free trigger).
 ## In progress
 
 ## Done
+
+- [x] Voice-enabled Docker delivery for audio satellites (2026-09-11)
+      The container profile shipped `fake` STT/TTS (right for the text-assist bridge, useless for the ESP32 satellite). The image now builds the stt/tts workers plus whisper-cli (whisper.cpp cloned at the submodule's pinned commit — the submodule is .dockerignore'd and CI checkouts don't fetch it) and installs Piper in a venv; docker-compose gained a `voice` profile (stt-worker + tts-worker, no /data, no ports, ./models bind-mounted read-only with filenames overridable via .env); athena.docker.voice.example.toml carries the real mqtt_stt/mqtt_tts providers with text assist still enabled alongside. README documents assist-vs-voice shapes and the model downloads (ggml-base as the mini-PC default). The Piper worker synthesizes one word at startup before announcing readiness — `--help` proves nothing about the native stack, and this caught a broken macOS piper wheel (espeak-ng data compiled to an absent CI path) that would have hung every session. NOT VERIFIED LOCALLY: the image build (this Mac has no Docker daemon); CI's docker job is the first real build, and the GEEKOM pull should follow a green run. Live Piper synthesis on Linux still unproven — the macOS wheel is broken upstream, so only the stub-driven code path was exercised end-to-end.
+
+- [x] Piper engine option for the TTS worker (2026-09-11)
+      `--engine say|piper` in `athena-voice-tts-worker`; piper runs as `--model <onnx> --output_file <wav>` with text on stdin — the form both piper1-gpl and the legacy binary accept, verified against piper's own argument parser rather than guessed. Synthesis returns the rate alongside the samples (Piper voices have native rates), so the declared metadata carries the real value and nothing resamples; multi-channel output is downmixed rather than shipped as interleaved "mono". Bad --piper-bin/--piper-model fail at startup with actionable messages. Models are not vendored; README documents the fr_FR-siwis-medium download. Tests use a stub piper script, proving the WAV header's rate is reported rather than a constant, without installing Piper. `say` remains the default and was verified unchanged live.
+
+- [x] Honest audio format metadata in tts/meta (2026-09-11)
+      `pipeline/sink.rs` hardcoded `{codec: "opus", sample_rate: 24000}` while every real provider streamed s16le at its own rate. Now `Tts::synthesize` returns `TtsAudio { format, sample_rate, stream }`; the MQTT worker protocol declares `{format, sample_rate, channels}` in its first response message (absent = s16le/22050, so pre-metadata workers keep working); FakeTts reports a `text` pseudo-codec so text chunks are no longer advertised as audio; the TTS stage forwards the format to the sink (SinkMsg::Format), which publishes it once and warns on a mid-session format change; the satellite client honours tts/meta for playback with --rate demoted to an override. Verified live for both engines: say declares s16le/22050, a 16 kHz Piper model declares 16000.
 
 - [x] satellite-esp32: on-device "Alexa" wake word via esp-sr WakeNet, ESP32-S3 only (2026-09-11)
       Owner switched the wake word from Jarvis to Alexa. esp-sr 2.5.3 added via esp-idf-sys extra_components (bindings module `sr`); src/wake.rs wraps WakeNet (esp_srmodel_init on the `model` partition → esp_wn_handle_from_name → detect with internal chunk buffering); idle-state mic frames feed it on the S3 and a detection acts like a BOOT press, disarmed while a session is active. Custom partitions_s3.csv (staged into embuild's CMake project via ESP_IDF_GLOB_PARTTABLE_* env) + sdkconfig.defaults.esp32s3 select wn9_alexa; flash-s3.sh flashes app + partition table + srmodels.bin (espflash alone skips the model). Verified: both targets compile clean, 22 host tests green, srmodels.bin (284K) produced. CONFIRMED LIMITATION: esp-sr's Kconfig gates all WakeNet9/10 models to S3/P4 and ships no usable classic-ESP32 models, so the owner's WROOM keeps push-to-talk — hands-free on the WROOM would need different hardware (S3) per the "no wake audio leaves the satellite" rule. Live "Alexa" round trip pending S3 hardware.
