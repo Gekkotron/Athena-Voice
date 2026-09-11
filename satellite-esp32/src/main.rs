@@ -151,49 +151,46 @@ mod hw {
                     mic::SilenceTracker::new(mic::SILENCE_RMS, mic::SILENCE_MS, 20);
                 let mut frame = Vec::with_capacity(mic::FRAME_SAMPLES * 2);
                 let mut was_streaming = false;
+                // Raw input level once per second (50 × 20 ms frames) —
+                // the monitor's proof that the mic is wired right:
+                // silence sits well under 100, speech in the thousands.
+                let mut meter = mic::LevelMeter::new(50);
                 #[cfg(esp32s3)]
                 let mut wakenet = crate::wake::WakeNet::new();
                 #[cfg(not(esp32s3))]
                 let _ = &armed; // classic ESP32: push-to-talk only
                 loop {
-                    if !streaming.load(Ordering::Relaxed) {
-                        was_streaming = false;
-                        #[cfg(esp32s3)]
-                        if armed.load(Ordering::Relaxed) {
-                            if let Some(wn) = wakenet.as_mut() {
-                                match m.read_frame(&mut frame) {
-                                    Ok(samples) => {
-                                        if wn.feed(samples) {
-                                            let _ = tx.send(AppEvent::Wake);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("mic read failed: {e}");
-                                        std::thread::sleep(Duration::from_millis(100));
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                        std::thread::sleep(Duration::from_millis(20));
-                        continue;
-                    }
-                    if !was_streaming {
-                        tracker.reset();
-                        was_streaming = true;
-                    }
-                    match m.read_frame(&mut frame) {
-                        Ok(samples) => {
-                            let done = tracker.push(samples);
-                            let _ = tx.send(AppEvent::Frame(frame.clone()));
-                            if done {
-                                streaming.store(false, Ordering::Relaxed);
-                                let _ = tx.send(AppEvent::UtteranceEnd);
-                            }
-                        }
+                    let samples = match m.read_frame(&mut frame) {
+                        Ok(samples) => samples,
                         Err(e) => {
                             error!("mic read failed: {e}");
                             std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                    };
+                    if let Some((rms, peak)) = meter.push(samples) {
+                        info!("mic: rms {rms:>5} peak {peak:>5}");
+                    }
+                    if streaming.load(Ordering::Relaxed) {
+                        if !was_streaming {
+                            tracker.reset();
+                            was_streaming = true;
+                        }
+                        let done = tracker.push(samples);
+                        let _ = tx.send(AppEvent::Frame(frame.clone()));
+                        if done {
+                            streaming.store(false, Ordering::Relaxed);
+                            let _ = tx.send(AppEvent::UtteranceEnd);
+                        }
+                        continue;
+                    }
+                    was_streaming = false;
+                    #[cfg(esp32s3)]
+                    if armed.load(Ordering::Relaxed) {
+                        if let Some(wn) = wakenet.as_mut() {
+                            if wn.feed(samples) {
+                                let _ = tx.send(AppEvent::Wake);
+                            }
                         }
                     }
                 }

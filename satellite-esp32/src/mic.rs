@@ -83,6 +83,43 @@ fn isqrt(n: u64) -> u64 {
     x
 }
 
+/// Aggregates raw mic levels over a window of frames — the serial
+/// monitor's "is the microphone wired right?" display. `push` returns
+/// `Some((max_frame_rms, peak_sample))` once per window, then resets.
+pub struct LevelMeter {
+    window: u32,
+    frames: u32,
+    rms_max: u32,
+    peak: u16,
+}
+
+impl LevelMeter {
+    pub fn new(window_frames: u32) -> Self {
+        Self {
+            window: window_frames.max(1),
+            frames: 0,
+            rms_max: 0,
+            peak: 0,
+        }
+    }
+
+    pub fn push(&mut self, frame: &[i16]) -> Option<(u32, u16)> {
+        self.rms_max = self.rms_max.max(rms(frame));
+        self.peak = self
+            .peak
+            .max(frame.iter().map(|s| s.unsigned_abs()).max().unwrap_or(0));
+        self.frames += 1;
+        if self.frames < self.window {
+            return None;
+        }
+        let out = (self.rms_max, self.peak);
+        self.frames = 0;
+        self.rms_max = 0;
+        self.peak = 0;
+        Some(out)
+    }
+}
+
 /// I2S capture driver for the INMP441 (hardware only).
 #[cfg(feature = "hardware")]
 pub mod driver {
@@ -174,6 +211,23 @@ mod tests {
         let mut out = vec![7i16; 3];
         convert_inmp441(&raw, &mut out);
         assert_eq!(out, vec![0i16]);
+    }
+
+    #[test]
+    fn level_meter_reports_window_max_and_resets() {
+        let mut meter = LevelMeter::new(3);
+        let quiet = vec![10i16; 4];
+        let loud = vec![-3000i16, 3000, -3000, 3000];
+        assert_eq!(meter.push(&quiet), None);
+        assert_eq!(meter.push(&loud), None);
+        let (rms, peak) = meter.push(&quiet).expect("window complete");
+        assert_eq!(peak, 3000);
+        assert_eq!(rms, 3000); // max frame RMS in the window
+        // Next window starts fresh.
+        assert_eq!(meter.push(&quiet), None);
+        assert_eq!(meter.push(&quiet), None);
+        let (rms, peak) = meter.push(&quiet).expect("window complete");
+        assert_eq!((rms, peak), (10, 10));
     }
 
     #[test]
