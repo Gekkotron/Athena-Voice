@@ -139,7 +139,13 @@ mod hw {
         // MQTT inbound → events.
         let (mqtt_tx, mqtt_rx) = channel::<(String, Vec<u8>)>();
         probe_lens("4-channels", topic_root, sat_id);
-        let mut mqtt = net::Mqtt::connect(mqtt_url, &client_id, &filters, mqtt_tx).expect("mqtt");
+        let mut mqtt = net::Mqtt::connect(net::Setup {
+            url: mqtt_url,
+            client_id: &client_id,
+            filters: &filters,
+            tx: mqtt_tx,
+        })
+        .expect("mqtt");
         spawn("mqtt-fwd", {
             let tx = tx.clone();
             move || {
