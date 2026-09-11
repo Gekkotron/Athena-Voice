@@ -14,19 +14,7 @@ push-to-talk only.
 
 ## Wiring
 
-Classic ESP32 (WROOM) — the default build. GPIO6–11 are wired to the
-module's internal flash, so the satellite avoids them:
-
-| INMP441 | ESP32 (WROOM) |     | MAX98357A | ESP32 (WROOM) |
-|---------|---------------|-----|-----------|---------------|
-| VDD     | 3V3           |     | VIN       | 5V            |
-| GND     | GND           |     | GND       | GND           |
-| SCK     | GPIO32        |     | BCLK      | GPIO27        |
-| WS      | GPIO25        |     | LRC       | GPIO26        |
-| SD      | GPIO33        |     | DIN       | GPIO22        |
-| L/R     | GND           |     |           |               |
-
-ESP32-S3 (`MCU=esp32s3`):
+ESP32-S3 — the default build (wake word capable):
 
 | INMP441 | ESP32-S3 |         | MAX98357A | ESP32-S3 |
 |---------|----------|---------|-----------|----------|
@@ -36,6 +24,18 @@ ESP32-S3 (`MCU=esp32s3`):
 | WS      | GPIO5    |         | LRC       | GPIO16   |
 | SD      | GPIO6    |         | DIN       | GPIO7    |
 | L/R     | GND      |         |           |          |
+
+Classic ESP32 (WROOM, `MCU=esp32`, push-to-talk only). GPIO6–11 are
+wired to the module's internal flash, so the satellite avoids them:
+
+| INMP441 | ESP32 (WROOM) |     | MAX98357A | ESP32 (WROOM) |
+|---------|---------------|-----|-----------|---------------|
+| VDD     | 3V3           |     | VIN       | 5V            |
+| GND     | GND           |     | GND       | GND           |
+| SCK     | GPIO32        |     | BCLK      | GPIO27        |
+| WS      | GPIO25        |     | LRC       | GPIO26        |
+| SD      | GPIO33        |     | DIN       | GPIO22        |
+| L/R     | GND           |     |           |               |
 
 Per-chip pin bindings live in `wiring()` in `src/main.rs` (ESP-IDF pins
 are typed objects) if your board needs different ones. On both chips the
@@ -48,9 +48,9 @@ wire an amp in.
 
 ## Toolchain (one-time)
 
-This crate targets Xtensa (`xtensa-esp32-espidf` by default,
-`xtensa-esp32s3-espidf` with `MCU=esp32s3`) and is excluded from the
-repo's Rust workspace. It needs Espressif's Rust toolchain:
+This crate targets Xtensa (`xtensa-esp32s3-espidf` by default,
+`xtensa-esp32-espidf` with `MCU=esp32`) and is excluded from the repo's
+Rust workspace. It needs Espressif's Rust toolchain:
 
 ```bash
 cargo install espup espflash ldproxy
@@ -77,15 +77,16 @@ Commands below run from this folder; from the repo root use
 first — the crate is not part of the root workspace).
 
 ```bash
-./build.sh                     # classic ESP32 (WROOM) — the default
-MCU=esp32s3 ./build.sh         # ESP32-S3 instead
-cargo run --release            # flash over USB + serial monitor (espflash)
+./build.sh                     # ESP32-S3 — the default
+./flash-s3.sh                  # S3: flash app + partition table + wake model
+MCU=esp32 ./build.sh           # classic ESP32 (WROOM) instead
 ```
 
-For an S3, flash with `./flash-s3.sh` instead — it writes the custom
+Always flash the S3 with `./flash-s3.sh` — it writes the custom
 partition table **and** the wake-word model partition, which a plain
 `cargo run` would skip (the firmware then boots into push-to-talk and
-logs a warning instead of wake word).
+logs a warning instead of wake word). For a WROOM, flash with
+`MCU=esp32 cargo run --release --target xtensa-esp32-espidf`.
 
 ## Wake word (ESP32-S3 only)
 

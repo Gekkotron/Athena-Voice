@@ -1,7 +1,7 @@
 [build]
-# Default chip: classic ESP32 (WROOM). Build for an ESP32-S3 with
-#   MCU=esp32s3 ./build.sh   (build.sh maps MCU to the matching --target).
-target = "xtensa-esp32-espidf"
+# Default chip: ESP32-S3 (wake word capable). Build for a classic ESP32
+# (WROOM) with  MCU=esp32 ./build.sh  (build.sh maps MCU to the target).
+target = "xtensa-esp32s3-espidf"
 
 [target.xtensa-esp32-espidf]
 linker = "ldproxy"
@@ -18,8 +18,8 @@ build-std = ["std", "panic_abort"]
 
 [env]
 # Overridden by the real environment when set (cargo [env] does not
-# force): MCU=esp32s3 ./build.sh picks the S3.
-MCU = "esp32"
+# force): MCU=esp32 ./build.sh picks the classic ESP32.
+MCU = "esp32s3"
 ESP_IDF_VERSION = "v5.3.3"
 # Stage the custom partition table into embuild's generated CMake
 # project (CONFIG_PARTITION_TABLE_CUSTOM_FILENAME resolves there, not in
