@@ -126,10 +126,10 @@ answer. The monitor logs the session lifecycle.
 Runs the hardware-free modules (session state machine, sample conversion,
 silence tracking) on the host — no Xtensa toolchain or ESP-IDF needed.
 
-## Known limitation
+## Audio format
 
-The runtime's `tts/meta` currently advertises `codec: "opus"` while the
-bundled TTS worker actually publishes raw s16le PCM chunks; this firmware
-plays chunks as s16le at the advertised `sample_rate`. Already tracked as
-the "Honest audio format metadata in tts/meta" task in the repo root
-`PLAN.md`.
+`tts/meta` now declares the provider's real format, so the firmware
+configures playback from it rather than assuming: `say` announces s16le
+at 22050 Hz, a Piper voice announces its model's native rate. Only
+`codec: "s16le"` is played today — an Opus-encoding provider would need a
+decoder here.
