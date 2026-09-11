@@ -22,8 +22,14 @@ pub fn convert_inmp441(raw: &[u8], out: &mut Vec<i16>) {
     }
 }
 
-/// Detects end of utterance: `push` returns true once frames have stayed
-/// under the silence threshold for `silence_ms` in a row.
+/// Detects end of utterance: `push` returns true once speech has been
+/// heard and frames have then stayed under the silence threshold for
+/// `silence_ms` in a row.
+///
+/// Silence *before* speech never ends an utterance — between the wake
+/// word and the question there is a natural pause, and counting it would
+/// close the recording before the user starts talking. The 10 s cap in
+/// `session.rs` bounds the "user never spoke" case.
 ///
 /// The threshold adapts to the room: a rolling noise-floor estimate
 /// (drops instantly to quieter frames, creeps up slowly — doubling in
@@ -37,6 +43,7 @@ pub struct SilenceTracker {
     run_ms: u32,
     floor: Option<u32>,
     seen_frames: u32,
+    speech_started: bool,
 }
 
 /// Frames ignored before floor learning starts — the DC blocker's
@@ -52,12 +59,20 @@ impl SilenceTracker {
             run_ms: 0,
             floor: None,
             seen_frames: 0,
+            speech_started: false,
         }
     }
 
-    /// Starts a new utterance; the learned noise floor is kept.
+    /// Starts a new utterance; the learned noise floor is kept, but the
+    /// speech gate re-arms.
     pub fn reset(&mut self) {
         self.run_ms = 0;
+        self.speech_started = false;
+    }
+
+    /// Whether speech has been detected in the current utterance.
+    pub fn speech_started(&self) -> bool {
+        self.speech_started
     }
 
     /// Update the noise-floor estimate from an idle-state frame without
@@ -72,11 +87,16 @@ impl SilenceTracker {
         // cold-start speech frame must not set its own bar.
         let threshold = self.threshold();
         self.update_floor(r);
-        if r < threshold {
-            self.run_ms += self.frame_ms;
-        } else {
+        if r >= threshold {
+            self.speech_started = true;
             self.run_ms = 0;
+            return false;
         }
+        if !self.speech_started {
+            // Still waiting for the user to start talking.
+            return false;
+        }
+        self.run_ms += self.frame_ms;
         self.run_ms >= self.silence_ms
     }
 
@@ -350,8 +370,12 @@ mod tests {
         for _ in 0..20 {
             t.observe(&ambient);
         }
-        // Floor must reflect the ambient 800, not the transient ~0:
-        // ambient frames count as silence and end the utterance.
+        // Floor must reflect the ambient 800, not the transient ~0: with
+        // a correct floor the threshold sits at 2400, so ambient counts
+        // as silence. (A floor pinned near 0 would put the threshold at
+        // the 500 minimum and read ambient as *speech*, which never
+        // ends.) The speech frame arms the gate first.
+        t.push(&vec![8000i16; 320]);
         for _ in 0..39 {
             assert!(!t.push(&ambient));
         }
@@ -368,10 +392,56 @@ mod tests {
         }
         t.observe(&dip); // one anomalously quiet frame
         // Ambient must still count as silence afterwards.
+        t.push(&vec![8000i16; 320]); // arm the speech gate
         for _ in 0..39 {
             assert!(!t.push(&ambient));
         }
         assert!(t.push(&ambient));
+    }
+
+    #[test]
+    fn silence_before_speech_never_ends_the_utterance() {
+        // The gap between the wake word and the question: the user has
+        // not started talking yet, so no amount of quiet may close the
+        // utterance (this used to cut recordings at ~1.1 s).
+        let mut t = SilenceTracker::new(500, 800, 20);
+        let ambient = vec![800i16; 320];
+        for _ in 0..20 {
+            t.observe(&ambient); // warm up the floor while idle
+        }
+        for _ in 0..250 {
+            // 5 s of silence, far past silence_ms
+            assert!(!t.push(&ambient), "ended before speech started");
+        }
+        // Speech arrives, then stops: now the rule applies.
+        let speech = vec![8000i16; 320];
+        for _ in 0..10 {
+            assert!(!t.push(&speech));
+        }
+        for _ in 0..39 {
+            assert!(!t.push(&ambient));
+        }
+        assert!(t.push(&ambient), "must end 800 ms after speech stopped");
+    }
+
+    #[test]
+    fn reset_requires_speech_again() {
+        // Each utterance starts fresh: a new session must not inherit
+        // the previous one's "speech already started" state.
+        let mut t = SilenceTracker::new(500, 800, 20);
+        let ambient = vec![800i16; 320];
+        let speech = vec![8000i16; 320];
+        for _ in 0..20 {
+            t.observe(&ambient);
+        }
+        t.push(&speech);
+        for _ in 0..40 {
+            t.push(&ambient);
+        }
+        t.reset();
+        for _ in 0..100 {
+            assert!(!t.push(&ambient), "reset must re-arm the speech gate");
+        }
     }
 
     #[test]
@@ -423,8 +493,13 @@ mod tests {
     fn reset_clears_the_run() {
         let mut t = SilenceTracker::new(500, 40, 20);
         let quiet = vec![0i16; 320];
-        assert!(!t.push(&quiet));
+        let speech = vec![8000i16; 320];
+        t.push(&speech);
+        assert!(!t.push(&quiet)); // 20 ms of silence banked
         t.reset();
+        // The banked silence is gone AND the gate re-armed, so the next
+        // utterance needs speech before any silence counts.
+        t.push(&speech);
         assert!(!t.push(&quiet));
         assert!(t.push(&quiet));
     }

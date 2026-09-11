@@ -151,6 +151,8 @@ mod hw {
                     mic::SilenceTracker::new(mic::SILENCE_RMS, mic::SILENCE_MS, 20);
                 let mut frame = Vec::with_capacity(mic::FRAME_SAMPLES * 2);
                 let mut was_streaming = false;
+                let mut spoke = false;
+                let mut frames_sent: u32 = 0;
                 // Raw input level once per second (50 × 20 ms frames) —
                 // the monitor's proof that the mic is wired right:
                 // silence sits well under 100, speech in the thousands.
@@ -175,10 +177,18 @@ mod hw {
                         if !was_streaming {
                             tracker.reset();
                             was_streaming = true;
+                            spoke = false;
+                            frames_sent = 0;
                         }
                         let done = tracker.push(samples);
+                        if !spoke && tracker.speech_started() {
+                            spoke = true;
+                            info!("speech started");
+                        }
                         let _ = tx.send(AppEvent::Frame(frame.clone()));
+                        frames_sent += 1;
                         if done {
+                            info!("end of utterance ({} ms sent)", frames_sent * 20);
                             streaming.store(false, Ordering::Relaxed);
                             let _ = tx.send(AppEvent::UtteranceEnd);
                         }
