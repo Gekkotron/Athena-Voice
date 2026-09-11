@@ -83,6 +83,32 @@ fn isqrt(n: u64) -> u64 {
     x
 }
 
+/// One-pole DC-blocking high-pass (cutoff ≈ 10 Hz at 16 kHz):
+/// `y[n] = x[n] - x[n-1] + a·y[n-1]` with `a = 255/256`, integer math.
+/// The INMP441 carries a large, slowly drifting DC bias that otherwise
+/// keeps "silence" far above the end-of-utterance RMS threshold.
+pub struct DcBlocker {
+    prev_x: i32,
+    /// y in Q8 fixed point — plain integer `y -= y>>8` stalls below 256
+    /// and would leave a residual offset of up to 255.
+    y_q8: i32,
+}
+
+impl DcBlocker {
+    pub fn new() -> Self {
+        Self { prev_x: 0, y_q8: 0 }
+    }
+
+    pub fn process(&mut self, samples: &mut [i16]) {
+        for s in samples {
+            let x = i32::from(*s);
+            self.y_q8 = ((x - self.prev_x) << 8) + self.y_q8 - (self.y_q8 >> 8);
+            self.prev_x = x;
+            *s = (self.y_q8 >> 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        }
+    }
+}
+
 /// Aggregates raw mic levels over a window of frames — the serial
 /// monitor's "is the microphone wired right?" display. `push` returns
 /// `Some((max_frame_rms, peak_sample))` once per window, then resets.
@@ -136,6 +162,7 @@ pub mod driver {
         driver: I2sDriver<'static, I2sRx>,
         raw: Vec<u8>,
         samples: Vec<i16>,
+        dc: super::DcBlocker,
     }
 
     impl Mic {
@@ -160,6 +187,7 @@ pub mod driver {
                 driver,
                 raw: vec![0u8; FRAME_RAW_BYTES],
                 samples: Vec::with_capacity(super::FRAME_SAMPLES),
+                dc: super::DcBlocker::new(),
             })
         }
 
@@ -172,6 +200,7 @@ pub mod driver {
                 filled += self.driver.read(&mut self.raw[filled..], u32::MAX)?;
             }
             convert_inmp441(&self.raw, &mut self.samples);
+            self.dc.process(&mut self.samples);
             out.clear();
             for s in &self.samples {
                 out.extend_from_slice(&s.to_le_bytes());
@@ -211,6 +240,36 @@ mod tests {
         let mut out = vec![7i16; 3];
         convert_inmp441(&raw, &mut out);
         assert_eq!(out, vec![0i16]);
+    }
+
+    #[test]
+    fn dc_blocker_removes_constant_offset() {
+        let mut dc = DcBlocker::new();
+        let mut frame = vec![5000i16; 320];
+        // Settle over a few frames (one-pole filter decays exponentially).
+        for _ in 0..10 {
+            frame.fill(5000);
+            dc.process(&mut frame);
+        }
+        assert!(rms(&frame) < 100, "residual rms {} too high", rms(&frame));
+    }
+
+    #[test]
+    fn dc_blocker_passes_audio_band_signal() {
+        let mut dc = DcBlocker::new();
+        // 8 kHz square wave at 16 kHz sample rate, on top of a DC offset.
+        let mut frame: Vec<i16> = (0..320)
+            .map(|i| if i % 2 == 0 { 8000 } else { 2000 })
+            .collect();
+        for _ in 0..10 {
+            for (i, s) in frame.iter_mut().enumerate() {
+                *s = if i % 2 == 0 { 8000 } else { 2000 };
+            }
+            dc.process(&mut frame);
+        }
+        // The ±3000 AC component survives; the 5000 DC midpoint is gone.
+        let r = rms(&frame);
+        assert!(r > 2500 && r < 3500, "ac rms {r} out of range");
     }
 
     #[test]
