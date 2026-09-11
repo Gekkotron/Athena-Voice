@@ -36,7 +36,12 @@ pub struct SilenceTracker {
     frame_ms: u32,
     run_ms: u32,
     floor: Option<u32>,
+    seen_frames: u32,
 }
+
+/// Frames ignored before floor learning starts — the DC blocker's
+/// startup transient reads near-zero and must not pin the floor.
+const FLOOR_WARMUP_FRAMES: u32 = 10;
 
 impl SilenceTracker {
     pub fn new(min_threshold: u32, silence_ms: u32, frame_ms: u32) -> Self {
@@ -46,6 +51,7 @@ impl SilenceTracker {
             frame_ms,
             run_ms: 0,
             floor: None,
+            seen_frames: 0,
         }
     }
 
@@ -81,9 +87,18 @@ impl SilenceTracker {
     }
 
     fn update_floor(&mut self, r: u32) {
+        self.seen_frames = self.seen_frames.saturating_add(1);
+        if self.seen_frames <= FLOOR_WARMUP_FRAMES {
+            return;
+        }
         self.floor = Some(match self.floor {
-            None => r,
-            Some(f) if r < f => r,
+            None => r.max(1),
+            // Down: asymmetric EMA — one quiet dip only nudges the
+            // floor 1/8 of the way, a sustained quieter room converges
+            // in well under a second.
+            Some(f) if r < f => f - (f - r).div_ceil(8),
+            // Up: slow creep (doubling ≈ a minute) so speech can't
+            // capture the floor.
             Some(f) => f + (f / 4096).max(1),
         });
     }
@@ -324,13 +339,49 @@ mod tests {
     }
 
     #[test]
+    fn startup_transient_does_not_pin_the_floor() {
+        let mut t = SilenceTracker::new(500, 800, 20);
+        // DC-blocker settling: near-zero frames right after boot.
+        let transient = vec![2i16; 320];
+        let ambient = vec![800i16; 320];
+        for _ in 0..10 {
+            t.observe(&transient);
+        }
+        for _ in 0..20 {
+            t.observe(&ambient);
+        }
+        // Floor must reflect the ambient 800, not the transient ~0:
+        // ambient frames count as silence and end the utterance.
+        for _ in 0..39 {
+            assert!(!t.push(&ambient));
+        }
+        assert!(t.push(&ambient));
+    }
+
+    #[test]
+    fn single_quiet_dip_does_not_pin_the_floor() {
+        let mut t = SilenceTracker::new(500, 800, 20);
+        let ambient = vec![800i16; 320];
+        let dip = vec![50i16; 320];
+        for _ in 0..20 {
+            t.observe(&ambient); // past warmup, floor ≈ 800
+        }
+        t.observe(&dip); // one anomalously quiet frame
+        // Ambient must still count as silence afterwards.
+        for _ in 0..39 {
+            assert!(!t.push(&ambient));
+        }
+        assert!(t.push(&ambient));
+    }
+
+    #[test]
     fn tracker_learns_ambient_noise_floor_as_silence() {
         let mut t = SilenceTracker::new(500, 800, 20);
         // A quiet room that still reads rms≈800 (real INMP441 levels).
         let ambient = vec![800i16; 320];
         let speech = vec![8000i16; 320];
-        for _ in 0..10 {
-            t.observe(&ambient); // idle: learn the floor
+        for _ in 0..20 {
+            t.observe(&ambient); // idle: warmup, then learn the floor
         }
         // Speech clearly above 3x floor resets the run...
         assert!(!t.push(&speech));

@@ -248,7 +248,11 @@ mod hw {
                     Command::ShowAnswer(text) => info!("answer: {text}"),
                     Command::SessionEnded => {
                         streaming.store(false, Ordering::Relaxed);
-                        info!("session ended, idle");
+                        if cfg!(esp32s3) {
+                            info!("session ended — listening for the wake word (or BOOT)");
+                        } else {
+                            info!("session ended — press BOOT to talk");
+                        }
                     }
                 }
             }
