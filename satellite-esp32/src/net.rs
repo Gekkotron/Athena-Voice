@@ -14,7 +14,6 @@ use esp_idf_svc::sys::EspError;
 use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 use log::{info, warn};
 
-use crate::session::Session;
 
 /// Joins the configured network, retrying forever — the satellite is a
 /// headless appliance and must eventually come up when the AP does.
@@ -67,16 +66,18 @@ impl Mqtt {
     /// `tx` as `(topic, payload)`. (Re-)subscribes to the five session
     /// response filters on every `Connected` event, so ESP-IDF's
     /// automatic reconnects re-establish the subscriptions too.
+    /// `filters` and `client_id` are built by the caller at boot, before
+    /// any radio or peripheral is initialised: this device corrupts those
+    /// values somewhere during Wi-Fi bring-up, and strings built while
+    /// they were known-good cannot be re-read wrong here.
     pub fn connect(
         url: &str,
-        topic_root: &str,
-        sat_id: &str,
+        client_id: &str,
+        filters: &[String],
         tx: Sender<(String, Vec<u8>)>,
     ) -> Result<Self, EspError> {
-        let filters = Session::subscriptions(topic_root, sat_id);
-        let client_id = format!("athena-sat-{sat_id}");
         let conf = MqttClientConfiguration {
-            client_id: Some(&client_id),
+            client_id: Some(client_id),
             keep_alive_interval: Some(Duration::from_secs(15)),
             ..Default::default()
         };
@@ -105,7 +106,7 @@ impl Mqtt {
         conn_rx
             .recv_timeout(Duration::from_secs(30))
             .map_err(|_| EspError::from_infallible::<{ esp_idf_svc::sys::ESP_ERR_TIMEOUT }>())?;
-        for f in &filters {
+        for f in filters {
             mqtt.client.subscribe(f, QoS::AtLeastOnce)?;
         }
         // Keep re-subscribing after later reconnects.

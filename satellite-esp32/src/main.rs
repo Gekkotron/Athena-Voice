@@ -105,16 +105,32 @@ mod hw {
         // later by Wi-Fi, PSRAM or the I2S drivers.
         let probe = format!("{topic_root}-{sat_id}");
         info!("self-test: format! ok (len {})", probe.len());
-        let probe = Session::subscriptions(topic_root, sat_id);
-        info!("self-test: subscriptions ok ({})", probe[0]);
-        drop(probe);
+        let mqtt_url = config::checked(cfg.mqtt_url, "mqtt_url", "mqtt://127.0.0.1:1883");
+        // Everything MQTT needs is built here, while the config is known
+        // good, rather than re-read after Wi-Fi bring-up.
+        let filters = Session::subscriptions(topic_root, sat_id);
+        let client_id = format!("athena-sat-{sat_id}");
+        info!("self-test: subscriptions ok ({})", filters[0]);
+
+        // These lengths are read (never the contents) after each
+        // initialisation step. A jump to an implausible value names the
+        // statement that corrupts these locals — the device fails in
+        // Session::subscriptions after Wi-Fi with inputs that were sound
+        // moments earlier.
+        let probe_lens = |stage: &str, root: &str, sat: &str| {
+            info!("probe {stage}: root_len={} sat_len={}", root.len(), sat.len());
+        };
+        probe_lens("0-start", topic_root, sat_id);
 
         let peripherals = Peripherals::take().expect("peripherals");
         let sysloop = EspSystemEventLoop::take().expect("sysloop");
+        probe_lens("1-peripherals", topic_root, sat_id);
         let w = wiring(peripherals.pins);
+        probe_lens("2-wiring", topic_root, sat_id);
 
         let _wifi = net::connect_wifi(peripherals.modem, sysloop, cfg.wifi_ssid, cfg.wifi_pass)
             .expect("wifi");
+        probe_lens("3-wifi", topic_root, sat_id);
 
         // Unbounded on purpose: a stalled broker surfaces as memory
         // pressure, bounded by the 10 s utterance cap in session.rs.
@@ -122,7 +138,8 @@ mod hw {
 
         // MQTT inbound → events.
         let (mqtt_tx, mqtt_rx) = channel::<(String, Vec<u8>)>();
-        let mut mqtt = net::Mqtt::connect(cfg.mqtt_url, topic_root, sat_id, mqtt_tx).expect("mqtt");
+        probe_lens("4-channels", topic_root, sat_id);
+        let mut mqtt = net::Mqtt::connect(mqtt_url, &client_id, &filters, mqtt_tx).expect("mqtt");
         spawn("mqtt-fwd", {
             let tx = tx.clone();
             move || {
