@@ -79,13 +79,28 @@ impl Session {
     /// Never the `athena/sat/<id>/#` wildcard — the broker would echo our
     /// own audio stream back at us.
     pub fn subscriptions(root: &str, sat_id: &str) -> [String; 5] {
-        let base = format!("{root}/sat/{sat_id}/session/+");
+        // Built by concatenation rather than `format!`: the output is
+        // identical, with no formatting machinery between the inputs and
+        // the heap. (A device panicked with "capacity overflow" inside
+        // format! here; keeping this path minimal makes the failure mode
+        // unambiguous.)
+        let mut base = String::with_capacity(root.len() + sat_id.len() + 24);
+        base.push_str(root);
+        base.push_str("/sat/");
+        base.push_str(sat_id);
+        base.push_str("/session/+");
+        let sub = |suffix: &str| {
+            let mut t = String::with_capacity(base.len() + suffix.len());
+            t.push_str(&base);
+            t.push_str(suffix);
+            t
+        };
         [
-            format!("{base}/transcript"),
-            format!("{base}/tts"),
-            format!("{base}/tts/meta"),
-            format!("{base}/tts/text"),
-            format!("{base}/done"),
+            sub("/transcript"),
+            sub("/tts"),
+            sub("/tts/meta"),
+            sub("/tts/text"),
+            sub("/done"),
         ]
     }
 

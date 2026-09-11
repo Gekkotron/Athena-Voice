@@ -96,6 +96,19 @@ mod hw {
         let topic_root = config::checked(cfg.topic_root, "topic_root", "athena");
         let sat_id = config::checked(cfg.sat_id, "sat_id", "esp32-sat");
         let locale = config::checked(cfg.locale, "locale", "fr");
+
+        // Boot self-test, before any peripheral or radio is touched: the
+        // first heap-allocating `format!` and the topic builder that a
+        // device reported panicking on ("capacity overflow" inside
+        // format!). Running it here separates a broken heap/flash
+        // mapping — which fails immediately — from corruption introduced
+        // later by Wi-Fi, PSRAM or the I2S drivers.
+        let probe = format!("{topic_root}-{sat_id}");
+        info!("self-test: format! ok (len {})", probe.len());
+        let probe = Session::subscriptions(topic_root, sat_id);
+        info!("self-test: subscriptions ok ({})", probe[0]);
+        drop(probe);
+
         let peripherals = Peripherals::take().expect("peripherals");
         let sysloop = EspSystemEventLoop::take().expect("sysloop");
         let w = wiring(peripherals.pins);
