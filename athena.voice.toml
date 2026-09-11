@@ -9,6 +9,10 @@
 #        cd whisper.cpp && cmake -B build && cmake --build build -j --target whisper-cli
 #   3. cargo run -p athena-voice-stt-worker                 (own terminal)
 #   4. cargo run -p athena-voice-tts-worker                 (own terminal)
+#      On Linux (no macOS `say`), run Piper instead — see "Voice on Linux
+#      (Piper)" in the README for the one-time model download:
+#        cargo run -p athena-voice-tts-worker -- --engine piper \
+#          --piper-model ~/.local/share/piper/fr_FR-siwis-medium.onnx
 #   5. cargo run -p athena-voice-cli -- serve --config athena.voice.toml
 #   6. Ask by voice or file:
 #        cargo run -p athena-voice-client -- --microphone --play --timeout-secs 30

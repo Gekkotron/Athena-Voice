@@ -54,9 +54,30 @@ cargo run -p athena-voice-client -- --microphone --play --timeout-secs 30   # vo
 cargo run -p athena-voice-client -- --text "météo à Paris" --timing         # latency breakdown
 ```
 
-Linux note: the voice path currently lacks a TTS engine (`say` is macOS) —
-a Piper engine for `athena-voice-tts-worker` is on the roadmap; everything
-else (STT, skills, LLM, client audio) is cross-platform.
+## Voice on Linux (Piper)
+
+`say` is macOS-only, so on Linux the TTS worker runs [Piper](https://github.com/OHF-Voice/piper1-gpl)
+instead. Models are not vendored — fetch one once:
+
+```bash
+pip install piper-tts
+python3 -m piper.download_voices fr_FR-siwis-medium   # or e.g. en_US-lessac-medium
+```
+
+Then point the worker at the downloaded `.onnx` (its `.onnx.json` must sit
+next to it):
+
+```bash
+cargo run -p athena-voice-tts-worker -- \
+  --engine piper --piper-model ~/.local/share/piper/fr_FR-siwis-medium.onnx
+```
+
+Everything else (STT, skills, LLM, client audio) is already
+cross-platform. Piper speaks at its model's native sample rate, which the
+worker reads from Piper's output and declares in `tts/meta`, so clients
+and satellites need no `--rate` flag. `--piper-bin` overrides the
+executable if `piper` is not on `PATH`; wrong paths fail at startup with
+an actionable message rather than mid-session.
 
 ## Manual setup
 

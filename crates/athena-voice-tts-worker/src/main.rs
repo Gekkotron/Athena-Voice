@@ -13,11 +13,15 @@
 //!   describe the actual bytes. Older workers omitting the fields are
 //!   read as s16le/22050.
 //!
-//! The synthesis engine is macOS `say` (output converted to WAV via the
-//! bundled `afconvert`). Swap `synthesize_wav` for a Piper invocation to get
-//! a portable worker; the wire protocol stays identical.
+//! Two engines, same wire protocol: `--engine say` (macOS `say` +
+//! `afconvert`, the default) and `--engine piper --piper-model
+//! <voice.onnx>` (portable, Linux included). Piper speaks at its
+//! model's native rate, which is read from its WAV output and declared
+//! in the metadata — nothing resamples.
 
-use std::process::Command;
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -41,17 +45,48 @@ struct Args {
     #[arg(long, default_value = "say")]
     name: String,
 
+    /// Synthesis engine. `say` is macOS-only; `piper` is portable
+    /// (Linux included) and needs --piper-model.
+    #[arg(long, value_enum, default_value_t = Engine::Say)]
+    engine: Engine,
+
     /// Voice passed to `say -v` for French locales.
     #[arg(long, default_value = "Thomas")]
     voice: String,
 
-    /// Output sample rate in Hz (s16le mono).
+    /// `piper` executable (or `python3 -m piper` wrapper) on PATH.
+    #[arg(long, default_value = "piper")]
+    piper_bin: String,
+
+    /// Path to the Piper voice model (`.onnx`). Its companion
+    /// `.onnx.json` must sit next to it. Not vendored — see "Voice on
+    /// Linux (Piper)" in the README for where to fetch one.
+    #[arg(long)]
+    piper_model: Option<PathBuf>,
+
+    /// Output sample rate in Hz (s16le mono). Ignored by `piper`, which
+    /// speaks at its model's native rate (declared in the metadata).
     #[arg(long, default_value_t = 22_050)]
     rate: u32,
 
     /// Chunk size in milliseconds.
     #[arg(long, default_value_t = 200)]
     chunk_ms: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Engine {
+    /// macOS `say` + `afconvert`.
+    Say,
+    /// Piper CLI: `--model <onnx> --output_file <wav>`, text on stdin.
+    Piper,
+}
+
+/// Validated engine settings, cloned into each request task.
+#[derive(Debug, Clone)]
+enum EngineConfig {
+    Say { voice: String, rate: u32 },
+    Piper { bin: String, model: PathBuf },
 }
 
 #[tokio::main]
@@ -63,10 +98,53 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let args = Args::parse();
 
-    anyhow::ensure!(
-        Command::new("say").arg("--version").output().is_ok(),
-        "`say` not found — this worker currently requires macOS"
-    );
+    // Fail fast, before any MQTT traffic: a worker that can't
+    // synthesize is worse than an absent one (the runtime then speaks a
+    // locale-aware apology instead of hanging).
+    let engine_cfg = match args.engine {
+        Engine::Say => {
+            anyhow::ensure!(
+                Command::new("say").arg("--version").output().is_ok(),
+                "`say` not found — the `say` engine requires macOS; use \
+                 --engine piper --piper-model <voice.onnx> elsewhere"
+            );
+            EngineConfig::Say {
+                voice: args.voice.clone(),
+                rate: args.rate,
+            }
+        }
+        Engine::Piper => {
+            let model = args.piper_model.clone().ok_or_else(|| {
+                anyhow::anyhow!("--engine piper requires --piper-model <voice.onnx>")
+            })?;
+            anyhow::ensure!(
+                model.is_file(),
+                "piper model not found: {} — download a voice (see \
+                 \"Voice on Linux (Piper)\" in the README)",
+                model.display()
+            );
+            let config = model.with_extension("onnx.json");
+            anyhow::ensure!(
+                config.is_file(),
+                "piper model config not found: {} — it ships alongside \
+                 the .onnx voice and must sit next to it",
+                config.display()
+            );
+            anyhow::ensure!(
+                Command::new(&args.piper_bin)
+                    .arg("--help")
+                    .output()
+                    .is_ok(),
+                "piper binary not runnable: {} — install piper (pip \
+                 install piper-tts) or pass --piper-bin <path>",
+                args.piper_bin
+            );
+            EngineConfig::Piper {
+                bin: args.piper_bin.clone(),
+                model,
+            }
+        }
+    };
 
     let request_topic = format!("athena/providers/tts/{}/request", args.name);
     let response_topic = format!("athena/providers/tts/{}/response", args.name);
@@ -82,19 +160,19 @@ async fn main() -> anyhow::Result<()> {
     let (client, mut eventloop) = AsyncClient::new(opts, 64);
     client.subscribe(&request_topic, QoS::AtLeastOnce).await?;
 
-    info!(topic = %request_topic, voice = %args.voice, rate = args.rate, "TTS worker ready");
+    info!(topic = %request_topic, engine = ?args.engine, "TTS worker ready");
 
     loop {
         match eventloop.poll().await {
             Ok(Event::Incoming(Packet::Publish(p))) if p.topic == request_topic => {
                 let client = client.clone();
                 let response_topic = response_topic.clone();
-                let voice = args.voice.clone();
-                let (rate, chunk_ms) = (args.rate, args.chunk_ms);
+                let engine_cfg = engine_cfg.clone();
+                let chunk_ms = args.chunk_ms;
                 let payload = p.payload.to_vec();
                 tokio::spawn(async move {
                     if let Err(e) =
-                        handle_request(&client, &response_topic, &payload, &voice, rate, chunk_ms)
+                        handle_request(&client, &response_topic, &payload, &engine_cfg, chunk_ms)
                             .await
                     {
                         error!(error = %e, "TTS request failed");
@@ -114,8 +192,7 @@ async fn handle_request(
     client: &AsyncClient,
     response_topic: &str,
     payload: &[u8],
-    voice: &str,
-    rate: u32,
+    engine: &EngineConfig,
     chunk_ms: u32,
 ) -> anyhow::Result<()> {
     let request: serde_json::Value = serde_json::from_slice(payload)?;
@@ -137,9 +214,12 @@ async fn handle_request(
 
     info!(session = %session_id, text = %text, "synthesizing");
 
-    let samples = {
-        let voice = voice.to_string();
-        tokio::task::spawn_blocking(move || synthesize_wav(&text, &locale, &voice, rate)).await??
+    // Piper speaks at its model's native rate, so the rate is an
+    // output of synthesis, not an input — it goes straight into the
+    // declared metadata, and nothing resamples.
+    let (samples, rate) = {
+        let engine = engine.clone();
+        tokio::task::spawn_blocking(move || synthesize(&engine, &text, &locale)).await??
     };
 
     // Stream fixed-duration chunks, then the done marker. The FIRST
@@ -183,8 +263,66 @@ async fn handle_request(
     Ok(())
 }
 
+/// Synthesizes `text` to s16le mono samples, returning them with the
+/// rate they are actually at.
+fn synthesize(
+    engine: &EngineConfig,
+    text: &str,
+    locale: &str,
+) -> anyhow::Result<(Vec<i16>, u32)> {
+    match engine {
+        EngineConfig::Say { voice, rate } => {
+            Ok((synthesize_say(text, locale, voice, *rate)?, *rate))
+        }
+        EngineConfig::Piper { bin, model } => synthesize_piper(bin, model, text),
+    }
+}
+
+/// Piper CLI: `--model <onnx> --output_file <wav>`, text on stdin (the
+/// form both piper1-gpl and the legacy binary accept). The WAV header
+/// carries the model's native rate, which we return rather than assume.
+fn synthesize_piper(
+    bin: &str,
+    model: &std::path::Path,
+    text: &str,
+) -> anyhow::Result<(Vec<i16>, u32)> {
+    let dir = tempfile::tempdir()?;
+    let wav = dir.path().join("out.wav");
+
+    let mut child = Command::new(bin)
+        .arg("--model")
+        .arg(model)
+        .arg("--output_file")
+        .arg(&wav)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("piper stdin unavailable"))?
+        .write_all(text.as_bytes())?;
+    let status = child.wait()?;
+    anyhow::ensure!(status.success(), "piper failed ({status})");
+
+    let mut reader = hound::WavReader::open(&wav)?;
+    let spec = reader.spec();
+    let samples: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>()?;
+    // Piper voices are mono; downmix defensively rather than emitting
+    // interleaved stereo as if it were mono.
+    let samples = if spec.channels > 1 {
+        samples
+            .chunks(spec.channels as usize)
+            .map(|f| (f.iter().map(|s| i32::from(*s)).sum::<i32>() / i32::from(spec.channels)) as i16)
+            .collect()
+    } else {
+        samples
+    };
+    Ok((samples, spec.sample_rate))
+}
+
 /// Synthesizes `text` to s16le mono samples at `rate` via `say` + `afconvert`.
-fn synthesize_wav(text: &str, locale: &str, voice: &str, rate: u32) -> anyhow::Result<Vec<i16>> {
+fn synthesize_say(text: &str, locale: &str, voice: &str, rate: u32) -> anyhow::Result<Vec<i16>> {
     let dir = tempfile::tempdir()?;
     let aiff = dir.path().join("out.aiff");
     let wav = dir.path().join("out.wav");
@@ -220,6 +358,100 @@ fn synthesize_wav(text: &str, locale: &str, voice: &str, rate: u32) -> anyhow::R
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Writes a WAV `stub_piper` will hand back, so tests exercise the
+    /// real invocation without installing Piper.
+    fn write_wav(path: &std::path::Path, rate: u32, channels: u16, frames: usize) {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        for i in 0..frames {
+            for c in 0..channels {
+                // Distinct per-channel values so a bad downmix shows up.
+                w.write_sample(((i as i16) + 1) * (1 + c as i16) * 100)
+                    .unwrap();
+            }
+        }
+        w.finalize().unwrap();
+    }
+
+    /// A `piper` stand-in: consumes stdin, honours `--output_file`.
+    fn stub_piper(dir: &std::path::Path, canned_wav: &std::path::Path) -> String {
+        let script = dir.join("piper-stub.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncat > /dev/null\nwhile [ $# -gt 0 ]; do \
+                 if [ \"$1\" = \"--output_file\" ]; then out=\"$2\"; fi; \
+                 shift; done\ncp {} \"$out\"\n",
+                canned_wav.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        script.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn piper_reports_the_models_native_rate_not_a_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let canned = dir.path().join("canned.wav");
+        // A rate that is neither the worker default (22050) nor the old
+        // hardcoded meta value (24000).
+        write_wav(&canned, 16_000, 1, 4);
+        let bin = stub_piper(dir.path(), &canned);
+
+        let (samples, rate) =
+            synthesize_piper(&bin, &dir.path().join("voice.onnx"), "bonjour").unwrap();
+        assert_eq!(rate, 16_000, "the WAV header's rate must be reported");
+        assert_eq!(samples, vec![100, 200, 300, 400]);
+    }
+
+    #[test]
+    fn piper_downmixes_multichannel_output_to_mono() {
+        let dir = tempfile::tempdir().unwrap();
+        let canned = dir.path().join("canned.wav");
+        write_wav(&canned, 22_050, 2, 2);
+        let bin = stub_piper(dir.path(), &canned);
+
+        let (samples, rate) =
+            synthesize_piper(&bin, &dir.path().join("voice.onnx"), "bonjour").unwrap();
+        assert_eq!(rate, 22_050);
+        // Frames are (100,200) and (200,400) → means 150 and 300.
+        assert_eq!(samples, vec![150, 300]);
+    }
+
+    #[test]
+    fn piper_failure_is_an_error_not_silent_empty_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fail.sh");
+        std::fs::write(&script, "#!/bin/sh\ncat > /dev/null\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let err = synthesize_piper(
+            &script.to_string_lossy(),
+            &dir.path().join("voice.onnx"),
+            "bonjour",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("piper failed"),
+            "unexpected error: {err}"
+        );
+    }
+
     #[test]
     fn chunking_math_never_zero() {
         // rate * chunk_ms / 1000 could truncate to 0 for tiny values; the
