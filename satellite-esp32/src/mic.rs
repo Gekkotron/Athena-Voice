@@ -23,35 +23,69 @@ pub fn convert_inmp441(raw: &[u8], out: &mut Vec<i16>) {
 }
 
 /// Detects end of utterance: `push` returns true once frames have stayed
-/// under the RMS threshold for `silence_ms` in a row.
+/// under the silence threshold for `silence_ms` in a row.
+///
+/// The threshold adapts to the room: a rolling noise-floor estimate
+/// (drops instantly to quieter frames, creeps up slowly — doubling in
+/// roughly a minute — so speech can't capture it) sets the bar at
+/// `3 x floor`, never below `min_threshold`. Real INMP441 quiet-room
+/// levels run rms 700-1300, so any fixed number is wrong somewhere.
 pub struct SilenceTracker {
-    threshold: u32,
+    min_threshold: u32,
     silence_ms: u32,
     frame_ms: u32,
     run_ms: u32,
+    floor: Option<u32>,
 }
 
 impl SilenceTracker {
-    pub fn new(threshold: u32, silence_ms: u32, frame_ms: u32) -> Self {
+    pub fn new(min_threshold: u32, silence_ms: u32, frame_ms: u32) -> Self {
         Self {
-            threshold,
+            min_threshold,
             silence_ms,
             frame_ms,
             run_ms: 0,
+            floor: None,
         }
     }
 
+    /// Starts a new utterance; the learned noise floor is kept.
     pub fn reset(&mut self) {
         self.run_ms = 0;
     }
 
+    /// Update the noise-floor estimate from an idle-state frame without
+    /// running silence detection.
+    pub fn observe(&mut self, frame: &[i16]) {
+        self.update_floor(rms(frame));
+    }
+
     pub fn push(&mut self, frame: &[i16]) -> bool {
-        if rms(frame) < self.threshold {
+        let r = rms(frame);
+        // Threshold from the floor as it stood BEFORE this frame — a
+        // cold-start speech frame must not set its own bar.
+        let threshold = self.threshold();
+        self.update_floor(r);
+        if r < threshold {
             self.run_ms += self.frame_ms;
         } else {
             self.run_ms = 0;
         }
         self.run_ms >= self.silence_ms
+    }
+
+    fn threshold(&self) -> u32 {
+        self.floor
+            .map_or(0, |f| f.saturating_mul(3))
+            .max(self.min_threshold)
+    }
+
+    fn update_floor(&mut self, r: u32) {
+        self.floor = Some(match self.floor {
+            None => r,
+            Some(f) if r < f => r,
+            Some(f) => f + (f / 4096).max(1),
+        });
     }
 }
 
@@ -287,6 +321,24 @@ mod tests {
         assert_eq!(meter.push(&quiet), None);
         let (rms, peak) = meter.push(&quiet).expect("window complete");
         assert_eq!((rms, peak), (10, 10));
+    }
+
+    #[test]
+    fn tracker_learns_ambient_noise_floor_as_silence() {
+        let mut t = SilenceTracker::new(500, 800, 20);
+        // A quiet room that still reads rms≈800 (real INMP441 levels).
+        let ambient = vec![800i16; 320];
+        let speech = vec![8000i16; 320];
+        for _ in 0..10 {
+            t.observe(&ambient); // idle: learn the floor
+        }
+        // Speech clearly above 3x floor resets the run...
+        assert!(!t.push(&speech));
+        // ...and the ambient floor now counts as silence.
+        for _ in 0..39 {
+            assert!(!t.push(&ambient));
+        }
+        assert!(t.push(&ambient));
     }
 
     #[test]

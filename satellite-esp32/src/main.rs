@@ -185,6 +185,9 @@ mod hw {
                         continue;
                     }
                     was_streaming = false;
+                    // Idle frames teach the tracker the room's noise
+                    // floor, so the silence threshold fits any mic/room.
+                    tracker.observe(samples);
                     #[cfg(esp32s3)]
                     if armed.load(Ordering::Relaxed) {
                         if let Some(wn) = wakenet.as_mut() {
