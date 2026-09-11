@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use extism::{Manifest, PluginBuilder, Wasm};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
@@ -31,6 +30,7 @@ use athena_voice_providers::testing::fake_tts::FakeTts;
 
 use athena_voice_runtime::intent::IntentMatcher;
 use athena_voice_runtime::pipeline::router::{RouterDeps, spawn_router};
+use athena_voice_runtime::pipeline::sink::SinkMsg;
 use athena_voice_runtime::pipeline::tts::spawn_tts;
 use athena_voice_runtime::wasm::dispatcher::SkillDispatcher;
 use athena_voice_runtime::wasm::host_fns::{MqttPublisher, SkillCtx, host_functions};
@@ -102,7 +102,7 @@ async fn drive_utterance(base_url: &str, utterance: &str) -> String {
         SkillDispatcher::spawn(registry.clone(), ev_tx.clone(), cancel.clone());
 
     let (tok_tx, tok_rx) = mpsc::channel::<String>(16);
-    let (chunk_tx, mut chunk_rx) = mpsc::channel::<Bytes>(32);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<SinkMsg>(32);
     let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
     let tts_task = spawn_tts(
         session,
@@ -137,8 +137,10 @@ async fn drive_utterance(base_url: &str, utterance: &str) -> String {
     .expect("send transcript");
 
     let mut chunks: Vec<String> = Vec::new();
-    while let Ok(Some(chunk)) = timeout(Duration::from_millis(3000), chunk_rx.recv()).await {
-        chunks.push(String::from_utf8_lossy(&chunk).into_owned());
+    while let Ok(Some(msg)) = timeout(Duration::from_millis(3000), chunk_rx.recv()).await {
+        if let SinkMsg::Chunk(chunk) = msg {
+            chunks.push(String::from_utf8_lossy(&chunk).into_owned());
+        }
     }
 
     drop(t_tx);

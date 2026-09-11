@@ -80,9 +80,11 @@ struct Args {
     #[arg(long)]
     play: bool,
 
-    /// Sample rate assumed for `--play` (must match the TTS worker's).
-    #[arg(long, default_value_t = 22_050)]
-    rate: u32,
+    /// Override the playback sample rate for `--play`. Normally taken
+    /// from the runtime's `tts/meta`; this is the escape hatch when a
+    /// provider misreports it.
+    #[arg(long)]
+    rate: Option<u32>,
 
     /// Print a per-stage latency breakdown after the session completes.
     #[arg(long)]
@@ -194,6 +196,8 @@ async fn main() -> anyhow::Result<()> {
     let mut end_sent = false;
     let mut timing = Timing::default();
     let mut tts_chunks: Vec<Vec<u8>> = Vec::new();
+    // Sample rate declared by the runtime in `tts/meta`, if it arrived.
+    let mut meta_rate: Option<u32> = None;
     let mut last_chunk_at = tokio::time::Instant::now();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(args.timeout_secs);
     let mut tick = tokio::time::interval(Duration::from_millis(300));
@@ -284,7 +288,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(Event::Incoming(Packet::Publish(p))) => {
                 let chunks_before = tts_chunks.len();
-                if handle_publish(&base, &p.topic, &p.payload, &mut tts_chunks, &mut timing) {
+                if handle_publish(
+                    &base,
+                    &p.topic,
+                    &p.payload,
+                    &mut tts_chunks,
+                    &mut meta_rate,
+                    &mut timing,
+                ) {
                     break;
                 }
                 if tts_chunks.len() != chunks_before {
@@ -333,7 +344,9 @@ async fn main() -> anyhow::Result<()> {
                  --speak instead, or run the server with a real mqtt_tts worker"
             );
         } else if !tts_chunks.is_empty() {
-            play_pcm(&tts_chunks, args.rate)?;
+            // --rate wins, then tts/meta, then the historical default.
+            let rate = args.rate.or(meta_rate).unwrap_or(22_050);
+            play_pcm(&tts_chunks, rate)?;
         }
     }
     Ok(())
@@ -480,6 +493,7 @@ fn handle_publish(
     topic: &str,
     payload: &[u8],
     tts_chunks: &mut Vec<Vec<u8>>,
+    meta_rate: &mut Option<u32>,
     timing: &mut Timing,
 ) -> bool {
     if let Some(kind) = topic.strip_prefix(base).and_then(|s| s.strip_prefix('/')) {
@@ -493,7 +507,19 @@ fn handle_publish(
                 Timing::mark(&mut timing.transcript);
                 println!("📝 {}", String::from_utf8_lossy(payload));
             }
-            "tts/meta" => println!("🎧 {}", String::from_utf8_lossy(payload)),
+            "tts/meta" => {
+                println!("🎧 {}", String::from_utf8_lossy(payload));
+                // The runtime declares the provider's real format here;
+                // playback follows it unless --rate overrides.
+                if let Some(rate) = serde_json::from_slice::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|v| v.get("sample_rate")?.as_u64())
+                    .and_then(|r| u32::try_from(r).ok())
+                    .filter(|r| *r > 0)
+                {
+                    *meta_rate = Some(rate);
+                }
+            }
             "tts/text" => {
                 // The answer as text, published by the runtime alongside the
                 // synthesized audio.

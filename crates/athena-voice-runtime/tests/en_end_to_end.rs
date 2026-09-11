@@ -34,6 +34,7 @@ use athena_voice_providers::testing::fake_tts::FakeTts;
 use athena_voice_runtime::intent::IntentMatcher;
 use athena_voice_runtime::mqtt::{MqttClient, MqttConfig};
 use athena_voice_runtime::pipeline::router::{RouterDeps, spawn_router};
+use athena_voice_runtime::pipeline::sink::SinkMsg;
 use athena_voice_runtime::pipeline::tts::spawn_tts;
 use athena_voice_runtime::wasm::dispatcher::SkillDispatcher;
 use athena_voice_runtime::wasm::host_fns::{AsyncClientPublisher, SkillCtx, host_functions};
@@ -121,7 +122,7 @@ async fn english_session_answers_in_english() {
         SkillDispatcher::spawn(registry.clone(), ev_tx.clone(), cancel.clone());
 
     let (tok_tx, tok_rx) = mpsc::channel::<String>(16);
-    let (chunk_tx, mut chunk_rx) = mpsc::channel::<Bytes>(32);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<SinkMsg>(32);
     let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
     let tts_task = spawn_tts(
         session,
@@ -162,8 +163,10 @@ async fn english_session_answers_in_english() {
 
     // Collect TTS chunks until the channel closes.
     let mut chunks: Vec<Bytes> = Vec::new();
-    while let Ok(Some(chunk)) = timeout(Duration::from_secs(10), chunk_rx.recv()).await {
-        chunks.push(chunk);
+    while let Ok(Some(msg)) = timeout(Duration::from_secs(10), chunk_rx.recv()).await {
+        if let SinkMsg::Chunk(chunk) = msg {
+            chunks.push(chunk);
+        }
     }
 
     assert!(!chunks.is_empty(), "expected at least one TTS chunk");

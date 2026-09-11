@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures_core::Stream;
 
+use crate::event::AudioFormat;
 use crate::ids::{Locale, SessionId};
 use crate::types::{AudioFrame, Transcript};
 
@@ -40,6 +41,16 @@ pub trait Llm: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
+/// A TTS provider's synthesized audio plus the format it is actually in.
+/// The format is forwarded verbatim to satellites in `tts/meta`, so it
+/// must describe the real bytes — never a hoped-for encoding.
+pub struct TtsAudio {
+    pub format: AudioFormat,
+    /// Hz; 0 for non-audio pseudo-codecs (`Text`).
+    pub sample_rate: u32,
+    pub stream: AudioStream,
+}
+
 #[async_trait]
 pub trait Tts: Send + Sync {
     async fn synthesize(
@@ -47,7 +58,7 @@ pub trait Tts: Send + Sync {
         session: SessionId,
         locale: Locale,
         text: String,
-    ) -> Result<AudioStream, BoxError>;
+    ) -> Result<TtsAudio, BoxError>;
 
     fn name(&self) -> &'static str;
 }

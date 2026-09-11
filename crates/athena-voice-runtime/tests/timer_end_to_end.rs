@@ -24,7 +24,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bytes::Bytes;
 use extism::{Manifest, PluginBuilder, Wasm};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
@@ -39,6 +38,7 @@ use athena_voice_providers::testing::fake_tts::FakeTts;
 use athena_voice_runtime::intent::IntentMatcher;
 use athena_voice_runtime::mqtt::{MqttClient, MqttConfig};
 use athena_voice_runtime::pipeline::router::{RouterDeps, spawn_router};
+use athena_voice_runtime::pipeline::sink::SinkMsg;
 use athena_voice_runtime::pipeline::tts::spawn_tts;
 use athena_voice_runtime::wasm::dispatcher::SkillDispatcher;
 use athena_voice_runtime::wasm::host_fns::{AsyncClientPublisher, SkillCtx, host_functions};
@@ -117,7 +117,7 @@ async fn timer_set_then_expires() {
         SkillDispatcher::spawn(registry.clone(), ev_tx.clone(), cancel.clone());
 
     let (tok_tx, tok_rx) = mpsc::channel::<String>(16);
-    let (chunk_tx, mut chunk_rx) = mpsc::channel::<Bytes>(32);
+    let (chunk_tx, mut chunk_rx) = mpsc::channel::<SinkMsg>(32);
     let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
     let tts_task = spawn_tts(
         session,
@@ -162,10 +162,16 @@ async fn timer_set_then_expires() {
     .await
     .expect("send transcript");
 
-    let first_tok = timeout(Duration::from_secs(10), chunk_rx.recv())
-        .await
-        .expect("timed out waiting for first TTS chunk")
-        .expect("expected a TTS chunk");
+    // The TTS stage declares its format before the chunks; skip it.
+    let first_tok = loop {
+        let msg = timeout(Duration::from_secs(10), chunk_rx.recv())
+            .await
+            .expect("timed out waiting for first TTS chunk")
+            .expect("expected a TTS chunk");
+        if let SinkMsg::Chunk(chunk) = msg {
+            break chunk;
+        }
+    };
     assert!(
         String::from_utf8_lossy(&first_tok).contains("d'accord")
             || String::from_utf8_lossy(&first_tok).contains("minuteur"),
@@ -182,8 +188,10 @@ async fn timer_set_then_expires() {
     // confirmation, so it disambiguates from leftover word-chunks of the
     // first response still queued in `chunk_rx`.
     let mut saw_expiration_chunk = false;
-    while let Ok(Some(chunk)) = timeout(Duration::from_secs(3), chunk_rx.recv()).await {
-        if String::from_utf8_lossy(&chunk).contains("terminé") {
+    while let Ok(Some(msg)) = timeout(Duration::from_secs(3), chunk_rx.recv()).await {
+        if let SinkMsg::Chunk(chunk) = msg
+            && String::from_utf8_lossy(&chunk).contains("terminé")
+        {
             saw_expiration_chunk = true;
         }
     }

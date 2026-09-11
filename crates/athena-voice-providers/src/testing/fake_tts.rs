@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::stream::{self, StreamExt};
 
+use athena_voice_core::event::AudioFormat;
 use athena_voice_core::ids::{Locale, SessionId};
-use athena_voice_core::provider::{AudioStream, BoxError, Tts};
+use athena_voice_core::provider::{BoxError, Tts, TtsAudio};
 
 #[derive(Default)]
 pub struct FakeTts;
@@ -22,13 +23,17 @@ impl Tts for FakeTts {
         _session: SessionId,
         _locale: Locale,
         text: String,
-    ) -> Result<AudioStream, BoxError> {
+    ) -> Result<TtsAudio, BoxError> {
         let chunks: Vec<Bytes> = text
             .split_whitespace()
             .map(|w| Bytes::copy_from_slice(w.as_bytes()))
             .collect();
         let s = stream::iter(chunks.into_iter().map(Ok::<_, BoxError>));
-        Ok(Box::pin(s.boxed()))
+        Ok(TtsAudio {
+            format: AudioFormat::Text,
+            sample_rate: 0,
+            stream: Box::pin(s.boxed()),
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -43,9 +48,9 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn one_chunk_per_word() {
+    async fn one_chunk_per_word_with_text_format() {
         let tts = FakeTts::new();
-        let mut audio = tts
+        let audio = tts
             .synthesize(
                 SessionId::new_v4(),
                 Locale::new("en").unwrap(),
@@ -53,8 +58,10 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(audio.format, AudioFormat::Text);
+        let mut stream = audio.stream;
         let mut chunks = Vec::new();
-        while let Some(c) = audio.next().await {
+        while let Some(c) = stream.next().await {
             chunks.push(c.unwrap());
         }
         assert_eq!(chunks.len(), 2);
@@ -65,7 +72,7 @@ mod tests {
     #[tokio::test]
     async fn empty_text_empty_stream() {
         let tts = FakeTts::new();
-        let mut audio = tts
+        let audio = tts
             .synthesize(
                 SessionId::new_v4(),
                 Locale::new("en").unwrap(),
@@ -73,7 +80,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(audio.next().await.is_none());
+        let mut stream = audio.stream;
+        assert!(stream.next().await.is_none());
     }
 
     #[test]

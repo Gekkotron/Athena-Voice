@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
 use futures::stream::StreamExt;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -12,13 +11,14 @@ use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::provider::Tts;
 
 use crate::pipeline::sentence::{IDLE_FLUSH, SentenceBuffer};
+use crate::pipeline::sink::SinkMsg;
 
 pub fn spawn_tts(
     session: SessionId,
     locale: Locale,
     tts: Arc<dyn Tts>,
     mut token_rx: mpsc::Receiver<String>,
-    chunk_tx: mpsc::Sender<Bytes>,
+    chunk_tx: mpsc::Sender<SinkMsg>,
     event_tx: broadcast::Sender<Event>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
@@ -88,7 +88,7 @@ async fn flush(
     locale: &Locale,
     text: &str,
     mut seq: u32,
-    chunk_tx: &mpsc::Sender<Bytes>,
+    chunk_tx: &mpsc::Sender<SinkMsg>,
     event_tx: &broadcast::Sender<Event>,
     barge_rx: &mut broadcast::Receiver<Event>,
 ) -> u32 {
@@ -98,7 +98,7 @@ async fn flush(
         session,
         text: text.to_string(),
     });
-    let mut audio = match tts
+    let audio = match tts
         .synthesize(session, locale.clone(), text.to_string())
         .await
     {
@@ -108,6 +108,19 @@ async fn flush(
             return seq;
         }
     };
+    // Declare the provider's real format before its chunks; the sink
+    // publishes it once as tts/meta.
+    if chunk_tx
+        .send(SinkMsg::Format {
+            format: audio.format,
+            sample_rate: audio.sample_rate,
+        })
+        .await
+        .is_err()
+    {
+        return seq;
+    }
+    let mut audio = audio.stream;
     loop {
         tokio::select! {
             biased;
@@ -123,7 +136,7 @@ async fn flush(
                 match item {
                     Ok(chunk) => {
                         let bytes_len = chunk.len();
-                        if chunk_tx.send(chunk).await.is_err() {
+                        if chunk_tx.send(SinkMsg::Chunk(chunk)).await.is_err() {
                             return seq;
                         }
                         let _ = event_tx.send(Event::TtsChunk {
@@ -149,8 +162,15 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use athena_voice_core::event::BargeInReason;
+    use athena_voice_core::event::{AudioFormat, BargeInReason};
     use athena_voice_providers::testing::fake_tts::FakeTts;
+
+    fn chunk_bytes(msg: SinkMsg) -> Option<bytes::Bytes> {
+        match msg {
+            SinkMsg::Chunk(b) => Some(b),
+            SinkMsg::Format { .. } => None,
+        }
+    }
 
     #[tokio::test]
     async fn idle_flush_speaks_unpunctuated_answers() {
@@ -175,9 +195,19 @@ mod tests {
         for tok in ["je ", "ne ", "sais ", "pas"] {
             tok_tx.send(tok.to_string()).await.unwrap();
         }
-        let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
+        // The provider's format is declared before its first chunk.
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
             .await
             .expect("idle flush must synthesize buffered text")
+            .expect("message");
+        assert!(
+            matches!(first, SinkMsg::Format { format: AudioFormat::Text, .. }),
+            "expected a Format message first, got {first:?}"
+        );
+        let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
+            .await
+            .expect("chunk after format")
+            .and_then(chunk_bytes)
             .expect("chunk");
         assert_eq!(&chunk[..], b"je");
         drop(tok_tx);
@@ -205,9 +235,11 @@ mod tests {
         }
         drop(tok_tx);
 
-        let mut chunks: Vec<Bytes> = Vec::new();
+        let mut chunks: Vec<bytes::Bytes> = Vec::new();
         while let Some(c) = chunk_rx.recv().await {
-            chunks.push(c);
+            if let Some(b) = chunk_bytes(c) {
+                chunks.push(b);
+            }
         }
         // FakeTts emits one chunk per word. "Bonjour." = 1 chunk, "Comment allez-vous?" = 2 chunks.
         assert_eq!(chunks.len(), 3);
@@ -262,9 +294,11 @@ mod tests {
         tok_tx.send("Nouveau.".into()).await.unwrap();
         drop(tok_tx);
 
-        let mut got: Vec<Bytes> = Vec::new();
+        let mut got: Vec<bytes::Bytes> = Vec::new();
         while let Some(c) = chunk_rx.recv().await {
-            got.push(c);
+            if let Some(b) = chunk_bytes(c) {
+                got.push(b);
+            }
         }
         handle.await.unwrap();
 

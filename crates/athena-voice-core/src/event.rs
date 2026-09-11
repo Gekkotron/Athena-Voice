@@ -18,6 +18,8 @@ pub enum AudioFormat {
     Opus,
     /// 32-bit float PCM, little-endian.
     F32le,
+    /// UTF-8 text chunks (the fake test provider) — display-only.
+    Text,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::provider::{
-    AudioFrameStream, AudioStream, BoxError, CompletionStream, Llm, Stt, TranscriptStream, Tts,
+    AudioFrameStream, BoxError, CompletionStream, Llm, Stt, TranscriptStream, Tts, TtsAudio,
 };
 
 use crate::circuit::CircuitBreaker;
@@ -166,7 +166,7 @@ impl Tts for RetryingTts {
         session: SessionId,
         locale: Locale,
         text: String,
-    ) -> Result<AudioStream, BoxError> {
+    ) -> Result<TtsAudio, BoxError> {
         if self.circuit.can_call().is_err() {
             return Err("tts circuit open".into());
         }
@@ -220,12 +220,16 @@ mod tests {
             _session: SessionId,
             _locale: Locale,
             _text: String,
-        ) -> Result<AudioStream, BoxError> {
+        ) -> Result<TtsAudio, BoxError> {
             let left = self.remaining_failures.fetch_sub(1, Ordering::SeqCst);
             if left > 0 {
                 return Err("boom".into());
             }
-            Ok(Box::pin(stream::empty()))
+            Ok(TtsAudio {
+                format: athena_voice_core::event::AudioFormat::S16le,
+                sample_rate: 22_050,
+                stream: Box::pin(stream::empty()),
+            })
         }
 
         fn name(&self) -> &'static str {

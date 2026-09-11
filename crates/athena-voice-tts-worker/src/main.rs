@@ -5,8 +5,13 @@
 //! - requests arrive on `athena/providers/tts/<name>/request` as JSON
 //!   `{ "session_id": "<uuid>", "locale": "fr", "text": "..." }`
 //! - responses go to `athena/providers/tts/<name>/response` as JSON
-//!   `{ "session_id", "chunk_b64", "done" }` — s16le mono PCM chunks,
-//!   base64-encoded, terminated by a `done: true` marker.
+//!   `{ "session_id", "chunk_b64", "done" }` — base64-encoded audio
+//!   chunks, terminated by a `done: true` marker.
+//! - the FIRST response message also carries the real audio format:
+//!   `{ "format": "s16le", "sample_rate": <hz>, "channels": 1 }`. The
+//!   runtime forwards this to satellites as `tts/meta`, so it must
+//!   describe the actual bytes. Older workers omitting the fields are
+//!   read as s16le/22050.
 //!
 //! The synthesis engine is macOS `say` (output converted to WAV via the
 //! bundled `afconvert`). Swap `synthesize_wav` for a Piper invocation to get
@@ -137,20 +142,41 @@ async fn handle_request(
         tokio::task::spawn_blocking(move || synthesize_wav(&text, &locale, &voice, rate)).await??
     };
 
-    // Stream fixed-duration chunks, then the done marker.
+    // Stream fixed-duration chunks, then the done marker. The FIRST
+    // message declares the real audio format; the runtime forwards it
+    // to satellites as `tts/meta`, so it must not lie.
     let samples_per_chunk = (rate * chunk_ms / 1000).max(1) as usize;
+    let mut declared = false;
     for chunk in samples.chunks(samples_per_chunk) {
         let bytes: Vec<u8> = chunk.iter().flat_map(|s| s.to_le_bytes()).collect();
-        let msg = serde_json::json!({
+        let mut msg = serde_json::json!({
             "session_id": session_id,
             "chunk_b64": STANDARD.encode(&bytes),
             "done": false,
         });
+        if !declared {
+            msg["format"] = serde_json::json!("s16le");
+            msg["sample_rate"] = serde_json::json!(rate);
+            msg["channels"] = serde_json::json!(1);
+            declared = true;
+        }
         client
             .publish(response_topic, QoS::AtLeastOnce, false, msg.to_string())
             .await?;
     }
-    let done = serde_json::json!({ "session_id": session_id, "done": true });
+    // Empty text yields no chunks; the done marker then carries the
+    // format so the runtime still publishes honest metadata.
+    let done = if declared {
+        serde_json::json!({ "session_id": session_id, "done": true })
+    } else {
+        serde_json::json!({
+            "session_id": session_id,
+            "done": true,
+            "format": "s16le",
+            "sample_rate": rate,
+            "channels": 1,
+        })
+    };
     client
         .publish(response_topic, QoS::AtLeastOnce, false, done.to_string())
         .await?;
