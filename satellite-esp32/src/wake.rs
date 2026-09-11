@@ -26,6 +26,14 @@ impl WakeNet {
     /// board flashed without the model still boots into push-to-talk.
     pub fn new() -> Option<Self> {
         unsafe {
+            // WakeNet9 mallocs from PSRAM and dereferences the result
+            // unchecked — verify PSRAM actually initialized first.
+            if esp_idf_svc::sys::heap_caps_get_total_size(esp_idf_svc::sys::MALLOC_CAP_SPIRAM)
+                == 0
+            {
+                warn!("wake: no PSRAM detected — push-to-talk only");
+                return None;
+            }
             let models = sr::esp_srmodel_init(c"model".as_ptr());
             if models.is_null() {
                 warn!("wake: no `model` partition / srmodels — push-to-talk only");

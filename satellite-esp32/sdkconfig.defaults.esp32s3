@@ -3,6 +3,14 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_s3.csv"
+# WakeNet9 allocates its model workspace in PSRAM — without it, esp-sr
+# NULL-derefs inside model_create (StoreProhibited in strncpy). Octal
+# mode matches the S3R8 (e.g. XIAO ESP32S3); IGNORE_NOTFOUND keeps
+# PSRAM-less boards booting (wake.rs then falls back to push-to-talk).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
 # Wake word: "Alexa" (WakeNet9). S3/P4-only in esp-sr's Kconfig.
 CONFIG_MODEL_IN_FLASH=y
 CONFIG_SR_WN_WN9_ALEXA=y
