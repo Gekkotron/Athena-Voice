@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "MQTT TTS worker for Athena-Voice: bridges athena/providers/tts/<name> to a local speech synthesizer (macOS `say`)."
+description = "MQTT TTS worker for Athena-Voice: bridges assist/providers/tts/<name> to a local speech synthesizer (macOS `say`)."
 
 [dependencies]
 anyhow = "1.0"

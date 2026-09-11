@@ -1,10 +1,15 @@
 use athena_voice_core::ids::{SatelliteId, SessionId};
 
-/// Default namespace for every topic this runtime owns. Overridable
-/// (`[mqtt] topic_root`) because a broker shared with other software may
-/// already use `athena/` — satellites and workers must then be told the
-/// same root.
-pub const DEFAULT_ROOT: &str = "athena";
+/// Default namespace for every topic this runtime owns: `assist`, the
+/// same prefix as the text-assist bridge, so one deployment occupies one
+/// root. The shapes below (`sat/`, `events/`, `providers/`) cannot
+/// collide with the bridge's (`transcription/`, `tts/`, `llm/`,
+/// `heartbeat/`).
+///
+/// Overridable (`[mqtt] topic_root`) for a broker shared with other
+/// software — satellites and workers must then be told the same root, or
+/// they publish into a namespace nothing is listening to.
+pub const DEFAULT_ROOT: &str = "assist";
 
 #[must_use]
 pub fn sat_wildcard(root: &str) -> String {
@@ -106,13 +111,13 @@ mod tests {
 
     #[test]
     fn wildcard_matches_spec() {
-        assert_eq!(sat_wildcard(DEFAULT_ROOT), "athena/sat/+/session/#");
+        assert_eq!(sat_wildcard(DEFAULT_ROOT), "assist/sat/+/session/#");
     }
 
     #[test]
     fn text_topic_parses() {
         let sid = SessionId::new_v4();
-        let topic = format!("athena/sat/phone-01/session/{sid}/text");
+        let topic = format!("assist/sat/phone-01/session/{sid}/text");
         assert_eq!(
             parse_satellite_topic(DEFAULT_ROOT, &topic),
             Some(ParsedTopic::Text { sat: sat(), sid })
@@ -123,7 +128,7 @@ mod tests {
     fn transcript_topic_layout() {
         let sid = SessionId::new_v4();
         let s = session_transcript(DEFAULT_ROOT, &sat(), sid);
-        assert!(s.starts_with("athena/sat/phone-01/session/"));
+        assert!(s.starts_with("assist/sat/phone-01/session/"));
         assert!(s.ends_with("/transcript"));
         assert!(s.contains(&sid.to_string()));
     }
@@ -131,7 +136,7 @@ mod tests {
     #[test]
     fn parse_start() {
         let sid = SessionId::new_v4();
-        let topic = format!("athena/sat/phone-01/session/{sid}/start");
+        let topic = format!("assist/sat/phone-01/session/{sid}/start");
         let parsed = parse_satellite_topic(DEFAULT_ROOT, &topic).expect("parses");
         match parsed {
             ParsedTopic::Start { sat, sid: got } => {
@@ -145,7 +150,7 @@ mod tests {
     #[test]
     fn parse_audio() {
         let sid = SessionId::new_v4();
-        let topic = format!("athena/sat/phone-01/session/{sid}/audio");
+        let topic = format!("assist/sat/phone-01/session/{sid}/audio");
         assert!(matches!(
             parse_satellite_topic(DEFAULT_ROOT, &topic),
             Some(ParsedTopic::Audio { .. })
@@ -155,7 +160,7 @@ mod tests {
     #[test]
     fn parse_end() {
         let sid = SessionId::new_v4();
-        let topic = format!("athena/sat/phone-01/session/{sid}/end");
+        let topic = format!("assist/sat/phone-01/session/{sid}/end");
         assert!(matches!(
             parse_satellite_topic(DEFAULT_ROOT, &topic),
             Some(ParsedTopic::End { .. })
@@ -165,27 +170,38 @@ mod tests {
     #[test]
     fn parse_unknown_returns_none() {
         assert!(parse_satellite_topic(DEFAULT_ROOT, "random/topic").is_none());
-        assert!(parse_satellite_topic(DEFAULT_ROOT, "athena/sat/phone-01/session").is_none());
-        assert!(parse_satellite_topic(DEFAULT_ROOT, "athena/sat/phone-01/session/not-a-uuid/audio").is_none());
+        assert!(parse_satellite_topic(DEFAULT_ROOT, "assist/sat/phone-01/session").is_none());
+        assert!(
+            parse_satellite_topic(DEFAULT_ROOT, "assist/sat/phone-01/session/not-a-uuid/audio")
+                .is_none()
+        );
     }
+
+    /// `athena` is a real foreign root here: a broker can already carry
+    /// unrelated home-automation software under it, which is exactly why
+    /// `topic_root` is overridable.
+    const FOREIGN_ROOT: &str = "athena";
 
     #[test]
     fn a_custom_root_moves_every_topic() {
         let sat = SatelliteId::new("kitchen").unwrap();
         let sid = SessionId::new_v4();
         for t in [
-            sat_wildcard("assist"),
-            session_transcript("assist", &sat, sid),
-            session_tts("assist", &sat, sid),
-            session_tts_meta("assist", &sat, sid),
-            session_tts_text("assist", &sat, sid),
-            session_done("assist", &sat, sid),
-            event_topic("assist", "session_started"),
-            provider_request("assist", "stt", "whisper"),
-            provider_response("assist", "tts", "say"),
+            sat_wildcard(FOREIGN_ROOT),
+            session_transcript(FOREIGN_ROOT, &sat, sid),
+            session_tts(FOREIGN_ROOT, &sat, sid),
+            session_tts_meta(FOREIGN_ROOT, &sat, sid),
+            session_tts_text(FOREIGN_ROOT, &sat, sid),
+            session_done(FOREIGN_ROOT, &sat, sid),
+            event_topic(FOREIGN_ROOT, "session_started"),
+            provider_request(FOREIGN_ROOT, "stt", "whisper"),
+            provider_response(FOREIGN_ROOT, "tts", "say"),
         ] {
-            assert!(t.starts_with("assist/"), "{t} kept the old root");
-            assert!(!t.contains("athena"), "{t} still mentions athena");
+            assert!(t.starts_with("athena/"), "{t} kept the old root");
+            assert!(
+                !t.contains(DEFAULT_ROOT),
+                "{t} still mentions the default root"
+            );
         }
     }
 
@@ -194,8 +210,8 @@ mod tests {
         let sid = SessionId::new_v4();
         // A satellite publishing under a different root must be ignored,
         // so two deployments can share one broker.
-        let topic = format!("assist/sat/phone-01/session/{sid}/audio");
-        assert!(parse_satellite_topic("assist", &topic).is_some());
+        let topic = format!("{FOREIGN_ROOT}/sat/phone-01/session/{sid}/audio");
+        assert!(parse_satellite_topic(FOREIGN_ROOT, &topic).is_some());
         assert!(parse_satellite_topic(DEFAULT_ROOT, &topic).is_none());
     }
 }

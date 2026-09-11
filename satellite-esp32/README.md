@@ -3,7 +3,7 @@
 Firmware for an ESP32 voice satellite — classic ESP32 (WROOM) or ESP32-S3
 — with an INMP441 I2S microphone and a MAX98357A I2S amplifier, speaking
 Athena-Voice's MQTT satellite protocol
-(`athena/sat/<sat-id>/session/<uuid>/…`, see the root README). Push a
+(`assist/sat/<sat-id>/session/<uuid>/…`, see the root README). Push a
 button, speak, and the answer plays back on the speaker — the heavy
 lifting (STT, skills, TTS) happens on the server running `serve`.
 

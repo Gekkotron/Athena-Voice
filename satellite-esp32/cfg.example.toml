@@ -6,5 +6,6 @@ wifi_pass = "hunter2"
 mqtt_url = "mqtt://192.168.1.10:1883"
 sat_id = "esp32-sat"
 locale = "fr"
-# Must match the server's [mqtt] topic_root.
-topic_root = "athena"
+# Must match the server's [mqtt] topic_root. A mismatch is silent: the
+# satellite publishes into a namespace nothing subscribes to.
+topic_root = "assist"

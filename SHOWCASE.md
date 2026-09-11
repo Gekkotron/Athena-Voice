@@ -39,9 +39,9 @@ cargo run -p athena-voice-client -- --text "météo à Strasbourg" --speak
 ```
 
 The client is an MQTT "satellite": it publishes
-`athena/sat/<sat>/session/<uuid>/{start,text,end}` and subscribes to the
+`assist/sat/<sat>/session/<uuid>/{start,text,end}` and subscribes to the
 session's `transcript` / `tts` / `done` topics (`--events` also mirrors
-`athena/events/#`). The `text` topic injects a final transcript directly,
+`assist/events/#`). The `text` topic injects a final transcript directly,
 so no STT model is needed for testing.
 
 ## Next Plans

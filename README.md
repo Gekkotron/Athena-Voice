@@ -311,7 +311,7 @@ saves.
 
 ## Satellite protocol (write your own client)
 
-Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
+Publish/subscribe under `assist/sat/<sat-id>/session/<uuid>/…`:
 
 | Topic suffix | Direction | Payload |
 |---|---|---|
@@ -324,20 +324,20 @@ Publish/subscribe under `athena/sat/<sat-id>/session/<uuid>/…`:
 | `tts` | ← runtime | audio chunks |
 | `done` | ← runtime | `{"outcome"}` |
 
-`athena/events/#` mirrors the runtime's full event bus for observability.
+`assist/events/#` mirrors the runtime's full event bus for observability.
 
 **Changing the namespace.** Every topic above (plus
-`athena/providers/…`, used between the runtime and the STT/TTS workers)
+`assist/providers/…`, used between the runtime and the STT/TTS workers)
 sits under a configurable root — set `[mqtt] topic_root` when your broker
-is shared with other software already using `athena/`:
+is shared with other software already using `assist/`:
 
 ```toml
 [mqtt]
-topic_root = "assist"    # default: "athena"
+topic_root = "voice"    # default: "assist"
 ```
 
 All four participants must agree on it: the server (config above), each
-worker (`--topic-root assist`, or `ATHENA_TOPIC_ROOT` in `.env` for the
+worker (`--topic-root voice`, or `ATHENA_TOPIC_ROOT` in `.env` for the
 Docker `voice` profile), and every satellite (`topic_root` in
 `satellite-esp32/cfg.toml`). A satellite publishing under a different
 root is simply ignored, so two deployments can share one broker.

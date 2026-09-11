@@ -45,9 +45,9 @@ keep_alive_secs = 30
 #   name = "piper"
 #
 # The MQTT-based providers each open their own connection to the broker and
-# subscribe to `athena/providers/{stt,tts}/<name>/response` — deploy a
+# subscribe to `assist/providers/{stt,tts}/<name>/response` — deploy a
 # language-agnostic worker (any language with an MQTT client) that subscribes
-# to `athena/providers/{stt,tts}/<name>/request` and publishes replies.
+# to `assist/providers/{stt,tts}/<name>/request` and publishes replies.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [providers]

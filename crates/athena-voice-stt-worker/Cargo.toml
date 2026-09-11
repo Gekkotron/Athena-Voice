@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "MQTT STT worker for Athena-Voice: bridges athena/providers/stt/<name> to whisper.cpp."
+description = "MQTT STT worker for Athena-Voice: bridges assist/providers/stt/<name> to whisper.cpp."
 
 [dependencies]
 anyhow = "1.0"

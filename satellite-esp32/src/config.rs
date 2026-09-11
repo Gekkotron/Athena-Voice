@@ -16,8 +16,9 @@ pub struct Config {
     sat_id: &'static str,
     #[default("fr")]
     locale: &'static str,
-    /// Must match the server's `[mqtt] topic_root`.
-    #[default("athena")]
+    /// Must match the server's `[mqtt] topic_root`. A mismatch is silent:
+    /// the satellite publishes into a namespace nothing subscribes to.
+    #[default("assist")]
     topic_root: &'static str,
 }
 

@@ -93,7 +93,7 @@ mod hw {
 
         let cfg = &config::CONFIG;
         config::log_lengths();
-        let topic_root = config::checked(cfg.topic_root, "topic_root", "athena");
+        let topic_root = config::checked(cfg.topic_root, "topic_root", "assist");
         let sat_id = config::checked(cfg.sat_id, "sat_id", "esp32-sat");
         let locale = config::checked(cfg.locale, "locale", "fr");
 
