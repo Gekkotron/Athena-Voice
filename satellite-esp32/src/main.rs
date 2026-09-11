@@ -92,6 +92,10 @@ mod hw {
         info!("athena-satellite-esp32 boot");
 
         let cfg = &config::CONFIG;
+        config::log_lengths();
+        let topic_root = config::checked(cfg.topic_root, "topic_root", "athena");
+        let sat_id = config::checked(cfg.sat_id, "sat_id", "esp32-sat");
+        let locale = config::checked(cfg.locale, "locale", "fr");
         let peripherals = Peripherals::take().expect("peripherals");
         let sysloop = EspSystemEventLoop::take().expect("sysloop");
         let w = wiring(peripherals.pins);
@@ -105,7 +109,7 @@ mod hw {
 
         // MQTT inbound → events.
         let (mqtt_tx, mqtt_rx) = channel::<(String, Vec<u8>)>();
-        let mut mqtt = net::Mqtt::connect(cfg.mqtt_url, cfg.topic_root, cfg.sat_id, mqtt_tx).expect("mqtt");
+        let mut mqtt = net::Mqtt::connect(cfg.mqtt_url, topic_root, sat_id, mqtt_tx).expect("mqtt");
         spawn("mqtt-fwd", {
             let tx = tx.clone();
             move || {
@@ -225,12 +229,11 @@ mod hw {
             .expect("speaker i2s");
 
         info!(
-            "ready (root={}, sat_id={}): press BOOT to talk",
-            cfg.topic_root, cfg.sat_id
+            "ready (root={topic_root}, sat_id={sat_id}): press BOOT to talk"
         );
 
         let boot = Instant::now();
-        let mut session = Session::new(cfg.topic_root, cfg.sat_id, cfg.locale);
+        let mut session = Session::new(topic_root, sat_id, locale);
         while let Ok(event) = rx.recv() {
             let input = match event {
                 AppEvent::Button => Input::Trigger,

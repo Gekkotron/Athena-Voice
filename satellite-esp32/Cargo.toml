@@ -19,7 +19,7 @@ default = ["hardware"]
 # Everything that needs ESP-IDF. Host tests run with --no-default-features
 # (see test.sh) so the protocol logic stays testable without the Xtensa
 # toolchain or an ESP-IDF checkout.
-hardware = ["dep:esp-idf-svc", "dep:toml-cfg"]
+hardware = ["dep:esp-idf-svc"]
 
 [dependencies]
 log = "0.4"
@@ -27,7 +27,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 esp-idf-svc = { version = "0.51", optional = true }
-toml-cfg = { version = "0.2", optional = true }
+# Build-time config (pure proc macro, no ESP deps) — kept out of the
+# `hardware` feature so host tests can check the generated constant.
+toml-cfg = "0.2"
 
 [build-dependencies]
 embuild = "0.33"
