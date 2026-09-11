@@ -24,7 +24,7 @@ pub struct Config {
 //   classic ESP32 (WROOM; GPIO6–11 are internal-flash pins, avoid them):
 //     INMP441 mic  (I2S0 RX): SCK→GPIO32, WS→GPIO25, SD→GPIO33, L/R→GND
 //     MAX98357A amp (I2S1 TX): BCLK→GPIO27, LRC→GPIO26, DIN→GPIO22
-//   ESP32-S3:
+//   ESP32-S3 (pins also on the XIAO ESP32S3 header: D3-D5 / D8-D10):
 //     INMP441 mic  (I2S0 RX): SCK→GPIO4, WS→GPIO5, SD→GPIO6, L/R→GND
-//     MAX98357A amp (I2S1 TX): BCLK→GPIO15, LRC→GPIO16, DIN→GPIO7
+//     MAX98357A amp (I2S1 TX): BCLK→GPIO7, LRC→GPIO8, DIN→GPIO9
 //   both: BOOT button (GPIO0, active low, internal pull-up) = push-to-talk

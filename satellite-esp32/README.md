@@ -14,16 +14,18 @@ push-to-talk only.
 
 ## Wiring
 
-ESP32-S3 — the default build (wake word capable):
+ESP32-S3 — the default build (wake word capable). The XIAO column is
+the silkscreen label on a Seeed XIAO ESP32S3; the pins were chosen to
+exist there too (GPIO15/16 are camera-only on the XIAO Sense):
 
-| INMP441 | ESP32-S3 |         | MAX98357A | ESP32-S3 |
-|---------|----------|---------|-----------|----------|
-| VDD     | 3V3      |         | VIN       | 5V       |
-| GND     | GND      |         | GND       | GND      |
-| SCK     | GPIO4    |         | BCLK      | GPIO15   |
-| WS      | GPIO5    |         | LRC       | GPIO16   |
-| SD      | GPIO6    |         | DIN       | GPIO7    |
-| L/R     | GND      |         |           |          |
+| INMP441 | ESP32-S3 | XIAO |   | MAX98357A | ESP32-S3 | XIAO |
+|---------|----------|------|---|-----------|----------|------|
+| VDD     | 3V3      | 3V3  |   | VIN       | 5V       | 5V   |
+| GND     | GND      | GND  |   | GND       | GND      | GND  |
+| SCK     | GPIO4    | D3   |   | BCLK      | GPIO7    | D8   |
+| WS      | GPIO5    | D4   |   | LRC       | GPIO8    | D9   |
+| SD      | GPIO6    | D5   |   | DIN       | GPIO9    | D10  |
+| L/R     | GND      | GND  |   |           |          |      |
 
 Classic ESP32 (WROOM, `MCU=esp32`, push-to-talk only). GPIO6–11 are
 wired to the module's internal flash, so the satellite avoids them:

@@ -69,6 +69,9 @@ mod hw {
         }
     }
 
+    /// ESP32-S3. Pins chosen to exist on the XIAO ESP32S3 header too
+    /// (mic = D3/D4/D5, amp = D8/D9/D10) — GPIO15/16 are camera pins on
+    /// the XIAO Sense and not exposed at all.
     #[cfg(esp32s3)]
     fn wiring(pins: esp_idf_svc::hal::gpio::Pins) -> Wiring {
         use esp_idf_svc::hal::gpio::IOPin;
@@ -76,9 +79,9 @@ mod hw {
             mic_bclk: pins.gpio4.downgrade(),
             mic_ws: pins.gpio5.downgrade(),
             mic_sd: pins.gpio6.downgrade(),
-            spk_bclk: pins.gpio15.downgrade(),
-            spk_lrc: pins.gpio16.downgrade(),
-            spk_din: pins.gpio7.downgrade(),
+            spk_bclk: pins.gpio7.downgrade(),
+            spk_lrc: pins.gpio8.downgrade(),
+            spk_din: pins.gpio9.downgrade(),
             button: pins.gpio0,
         }
     }
