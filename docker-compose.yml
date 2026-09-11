@@ -48,7 +48,7 @@ services:
     command:
       - --host=${ATHENA_MQTT_HOST:-mosquitto}
       - --port=${ATHENA_MQTT_PORT:-1883}
-      - --topic-root=${ATHENA_TOPIC_ROOT:-athena}
+      - --topic-root=${ATHENA_TOPIC_ROOT:-assist}
       - --whisper-bin=/app/whisper-cli
       - --model=/models/${ATHENA_WHISPER_MODEL:-ggml-base.bin}
     volumes:
@@ -62,7 +62,7 @@ services:
     command:
       - --host=${ATHENA_MQTT_HOST:-mosquitto}
       - --port=${ATHENA_MQTT_PORT:-1883}
-      - --topic-root=${ATHENA_TOPIC_ROOT:-athena}
+      - --topic-root=${ATHENA_TOPIC_ROOT:-assist}
       - --name=${ATHENA_TTS_NAME:-say}
       - --engine=piper
       - --piper-bin=/opt/piper/bin/piper
