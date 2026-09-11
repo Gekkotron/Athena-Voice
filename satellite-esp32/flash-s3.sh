@@ -9,9 +9,24 @@ cd "$(dirname "$0")"
 MCU=esp32s3 cargo build --release --target xtensa-esp32s3-espidf
 
 BIN=target/xtensa-esp32s3-espidf/release/athena-satellite-esp32
-SRMODELS=$(ls target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/out/build/srmodels/srmodels.bin 2>/dev/null | head -1)
-if [ -z "$SRMODELS" ]; then
+BUILD_DIR=$(ls -d target/xtensa-esp32s3-espidf/release/build/esp-idf-sys-*/out/build 2>/dev/null | head -1)
+SRMODELS="$BUILD_DIR/srmodels/srmodels.bin"
+if [ ! -f "$SRMODELS" ]; then
     echo "srmodels.bin not found — did the esp-sr component build?" >&2
+    exit 1
+fi
+
+# Flash the bootloader THIS build produced. espflash otherwise uses its
+# own bundled one, which tracks a different ESP-IDF release (observed:
+# a v6.1-beta bootloader booting a v5.3.3 app). The bootloader sets up
+# the flash cache and PSRAM before handing over, so a mismatched pair
+# runs correct code against wrongly-mapped memory — the app boots and
+# then fails in unrelated places, e.g. "capacity overflow" inside
+# format!. `boot:` in the monitor must report the same version as
+# `app_init: ESP-IDF:`.
+BOOTLOADER="$BUILD_DIR/bootloader/bootloader.bin"
+if [ ! -f "$BOOTLOADER" ]; then
+    echo "bootloader.bin not found in $BUILD_DIR — build first" >&2
     exit 1
 fi
 
@@ -30,6 +45,9 @@ if [ "${ERASE:-0}" = "1" ]; then
     espflash erase-flash "$@"
 fi
 
-espflash flash --flash-size "$FLASH_SIZE" --partition-table partitions_s3.csv "$BIN" "$@"
+espflash flash --flash-size "$FLASH_SIZE" \
+    --bootloader "$BOOTLOADER" \
+    --partition-table partitions_s3.csv \
+    "$BIN" "$@"
 espflash write-bin "$MODEL_OFFSET" "$SRMODELS" "$@"
 echo "Flashed app + wake model. Monitor with: espflash monitor"

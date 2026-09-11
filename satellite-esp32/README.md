@@ -84,11 +84,25 @@ first — the crate is not part of the root workspace).
 MCU=esp32 ./build.sh           # classic ESP32 (WROOM) instead
 ```
 
-Always flash the S3 with `./flash-s3.sh` — it writes the custom
-partition table **and** the wake-word model partition, which a plain
-`cargo run` would skip (the firmware then boots into push-to-talk and
-logs a warning instead of wake word). For a WROOM, flash with
+Always flash the S3 with `./flash-s3.sh` — a plain `cargo run` skips the
+custom partition table, the wake-word model **and** the bootloader this
+build produced (espflash substitutes its own, which tracks a different
+ESP-IDF release). For a WROOM, flash with
 `MCU=esp32 cargo run --release --target xtensa-esp32-espidf`.
+
+`ERASE=1 ./flash-s3.sh` wipes the chip first — do that after any
+partition-table change, and as the first response to a device that boots
+into nonsense. Then check these two monitor lines agree:
+
+```
+I (27) boot: ESP-IDF v5.3.3 2nd stage bootloader     ← bootloader
+I (1209) app_init: ESP-IDF:          v5.3.3          ← app
+```
+
+A mismatch means the bootloader configured the flash cache and PSRAM
+differently from what the app expects; the app boots and then fails
+somewhere unrelated (a "capacity overflow" panic inside `format!`, for
+instance) rather than failing outright.
 
 ## Wake word (ESP32-S3 only)
 
