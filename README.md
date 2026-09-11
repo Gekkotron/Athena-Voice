@@ -112,8 +112,14 @@ Skills can describe their settings by exporting `config_schema` (see
 
 ## Run on a Linux box (GEEKOM / home server)
 
-The assist profile answers **text** questions from a home-automation app
-over MQTT — no audio stack, no whisper, no TTS engine on the server.
+Two deployment shapes, same image:
+
+- **assist** (default) — answers **text** questions from a home-automation
+  app over MQTT. No audio stack, no models to download.
+- **voice** (`--profile voice`) — adds the whisper STT and Piper TTS
+  workers so **audio satellites** (the ESP32 in [`satellite-esp32/`](satellite-esp32/),
+  or the CLI client) can talk to it. See "Voice satellites on the server"
+  below.
 
 ### Run with Docker (recommended)
 
@@ -143,6 +149,37 @@ host exposed beyond it.
 The first `docker compose pull` needs the GHCR package to be **public**
 (a one-time owner step in the package's GitHub settings) or a prior
 `docker login ghcr.io`.
+
+### Voice satellites on the server (`--profile voice`)
+
+The plain profile above uses `fake` STT/TTS — the text bridge never calls
+them, but an audio satellite needs the real thing. The image ships
+`whisper-cli` and Piper for exactly this; only the models are missing,
+because they are large and licence-bearing:
+
+    cp athena.docker.voice.example.toml athena.docker.toml   # mqtt_stt + mqtt_tts
+    # edit the [mqtt] block, then fetch the models once (~150 MB + ~60 MB):
+    curl -L -o models/ggml-base.bin \
+      https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+    pip install piper-tts
+    python3 -m piper.download_voices fr_FR-siwis-medium --data-dir models
+    cp .env.example .env      # set ATHENA_MQTT_HOST to your broker
+    docker compose --profile voice up -d
+
+`./models` is bind-mounted read-only at `/models`; the model **filenames**
+are what `.env` overrides (`ATHENA_WHISPER_MODEL`, `ATHENA_PIPER_VOICE`),
+so swapping to `ggml-small.bin` or an English voice needs no compose edit.
+Updates keep the flag: `./update.sh --profile voice`.
+
+Check both workers came up:
+
+    docker compose --profile voice logs stt-worker tts-worker | tail
+
+Each logs a "ready" line with its topic; a missing model or wrong
+`--piper-bin` fails at startup with the reason rather than hanging a
+session later. `ggml-base.bin` is a deliberate default for a mini-PC —
+accurate enough for French sentences and a few times faster than
+`small` on CPU.
 
 Updating:
 

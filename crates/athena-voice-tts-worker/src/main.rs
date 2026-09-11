@@ -139,10 +139,25 @@ async fn main() -> anyhow::Result<()> {
                  install piper-tts) or pass --piper-bin <path>",
                 args.piper_bin
             );
-            EngineConfig::Piper {
+            let cfg = EngineConfig::Piper {
                 bin: args.piper_bin.clone(),
                 model,
-            }
+            };
+            // Synthesize one word before announcing readiness. `--help`
+            // succeeding proves nothing about the native stack: broken
+            // wheels (espeak-ng data compiled to an absent path),
+            // unreadable voices and ABI mismatches all surface only on
+            // real synthesis — and a worker that accepts requests it
+            // cannot serve leaves every session hanging.
+            let (samples, rate) = synthesize(&cfg, "test", "fr")
+                .map_err(|e| anyhow::anyhow!("piper smoke synthesis failed: {e}"))?;
+            anyhow::ensure!(
+                !samples.is_empty(),
+                "piper produced no audio for a smoke test — check the \
+                 voice model and its .onnx.json"
+            );
+            info!(rate, samples = samples.len(), "piper ready");
+            cfg
         }
     };
 

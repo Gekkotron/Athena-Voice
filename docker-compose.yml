@@ -30,6 +30,44 @@ services:
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
 
+  # Voice profile: the two workers that turn the text-only assist
+  # deployment into a full voice stack for audio satellites (ESP32 &c).
+  #   docker compose --profile voice up -d      (and ./update.sh --profile voice)
+  # Requires:
+  #   - models downloaded into ./models (see the README, "Voice on Linux")
+  #   - athena.docker.toml using the mqtt_stt / mqtt_tts providers
+  #     (copy athena.docker.voice.example.toml)
+  #   - ATHENA_MQTT_HOST in .env if your broker is not the bundled one
+  # Both run the same image with a different binary; they need no /data,
+  # no config file and no ports — only the broker and the models.
+  stt-worker:
+    image: ghcr.io/gekkotron/athena-voice:latest
+    profiles: ["voice"]
+    restart: unless-stopped
+    entrypoint: /app/athena-voice-stt-worker
+    command:
+      - --host=${ATHENA_MQTT_HOST:-mosquitto}
+      - --port=${ATHENA_MQTT_PORT:-1883}
+      - --whisper-bin=/app/whisper-cli
+      - --model=/models/${ATHENA_WHISPER_MODEL:-ggml-base.bin}
+    volumes:
+      - ./models:/models:ro
+
+  tts-worker:
+    image: ghcr.io/gekkotron/athena-voice:latest
+    profiles: ["voice"]
+    restart: unless-stopped
+    entrypoint: /app/athena-voice-tts-worker
+    command:
+      - --host=${ATHENA_MQTT_HOST:-mosquitto}
+      - --port=${ATHENA_MQTT_PORT:-1883}
+      - --name=${ATHENA_TTS_NAME:-say}
+      - --engine=piper
+      - --piper-bin=/opt/piper/bin/piper
+      - --piper-model=/models/${ATHENA_PIPER_VOICE:-fr_FR-siwis-medium.onnx}
+    volumes:
+      - ./models:/models:ro
+
 volumes:
   athena-data:
 

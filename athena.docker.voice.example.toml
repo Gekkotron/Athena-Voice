@@ -1,0 +1,71 @@
+# Athena-Voice — container profile WITH VOICE (audio satellites).
+#
+# Use this instead of athena.docker.example.toml when hardware satellites
+# (ESP32 &c) stream audio at the runtime. It differs from the plain
+# container profile in one place only: [providers] uses the real STT/TTS
+# workers rather than the `fake` stubs the text-assist bridge never calls.
+#
+#   cp athena.docker.voice.example.toml athena.docker.toml
+#   # download the models once (see "Voice on Linux (Piper)" in the README):
+#   curl -L -o models/ggml-base.bin \
+#     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+#   pip install piper-tts && python3 -m piper.download_voices \
+#     fr_FR-siwis-medium --data-dir models
+#   docker compose --profile voice up -d
+#
+# The workers run from the same image (see the `voice` profile in
+# docker-compose.yml) and reach the broker via ATHENA_MQTT_HOST in .env.
+# Model filenames are overridable there too (ATHENA_WHISPER_MODEL,
+# ATHENA_PIPER_VOICE).
+#
+# Every key can also be overridden by environment variables:
+# ATHENA__SECTION__KEY (e.g. ATHENA__MQTT__PASSWORD=... in the compose
+# environment).
+
+locales = ["fr", "en"]
+
+# DO NOT change host/port here for Docker: these are CONTAINER-INTERNAL.
+# The LAN-facing port is docker-compose.yml's mapping (host 9000 → 8080),
+# overridable with ATHENA_ADMIN_PORT — never by editing this block.
+[server]
+host = "0.0.0.0"
+port = 8080
+session_idle_secs = 120
+
+[storage]
+database_url = "sqlite:///data/athena-voice.db?mode=rwc"
+
+[mqtt]
+host = "192.168.1.2"      # <-- your LAN broker (or "mosquitto" with --profile broker)
+port = 1883
+client_id = "athena-voice"
+# username = "athena"
+# password = "change-me"  # or keep secrets out of the file via ATHENA__MQTT__PASSWORD
+
+# The real voice path: both workers bridge over MQTT, so the runtime only
+# needs their provider names. `tts.name` must match the tts-worker's
+# --name (compose default: "say", kept for config compatibility even
+# though the container's engine is Piper).
+[providers]
+stt = { mqtt_stt = { name = "whisper" } }
+llm = "none"              # unmatched questions get a spoken capabilities answer
+tts = { mqtt_tts = { name = "say" } }
+
+# The text-assist bridge stays available alongside voice satellites: a
+# home-automation app can keep asking by text while the ESP32 asks by
+# voice.
+[assist]
+enabled = true
+topic_prefix = "assist"
+locale = "fr"
+
+[skills]
+dir = "/data/skills"
+bundled_dir = "/app/skills"
+
+[skills.weather]
+http_allowlist = ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+
+[skills.jeedom]
+# Configure base_url/api_key via the admin web UI (stored in SQLite, not here).
+http_allowlist = []

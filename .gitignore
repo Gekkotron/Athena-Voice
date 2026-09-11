@@ -45,6 +45,11 @@ lcov.info
 /models/ggml-medium.bin
 /models/ggml-large*.bin
 
+# Real Piper voices are downloaded, not committed (the tracked .onnx
+# files here are stale placeholders, not usable voices)
+/models/*.onnx
+/models/*.onnx.json
+
 # Local secrets and databases must never be committed
 *.secrets.toml
 *.db
