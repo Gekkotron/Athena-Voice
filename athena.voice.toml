@@ -10,7 +10,8 @@
 #   3. cargo run -p athena-voice-stt-worker                 (own terminal)
 #   4. cargo run -p athena-voice-tts-worker                 (own terminal)
 #      On Linux (no macOS `say`), run Piper instead — see "Voice on Linux
-#      (Piper)" in the README for the one-time model download:
+#      (Piper)" in the README for `pip install piper-tts` and the
+#      one-time voice download:
 #        cargo run -p athena-voice-tts-worker -- --engine piper \
 #          --piper-model ~/.local/share/piper/fr_FR-siwis-medium.onnx
 #   5. cargo run -p athena-voice-cli -- serve --config athena.voice.toml

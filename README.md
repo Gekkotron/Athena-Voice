@@ -57,15 +57,27 @@ cargo run -p athena-voice-client -- --text "météo à Paris" --timing         #
 ## Voice on Linux (Piper)
 
 `say` is macOS-only, so on Linux the TTS worker runs [Piper](https://github.com/OHF-Voice/piper1-gpl)
-instead. Models are not vendored — fetch one once:
+instead. Piper ships as a Python wheel with a compiled core (there is no
+standalone binary), so it is installed with pip — the Docker image does
+this for you in a venv at `/opt/piper`; only a **native** run needs it on
+the host:
 
 ```bash
 pip install piper-tts
-python3 -m piper.download_voices fr_FR-siwis-medium   # or e.g. en_US-lessac-medium
 ```
 
-Then point the worker at the downloaded `.onnx` (its `.onnx.json` must sit
-next to it):
+Voices are not vendored either. Fetch one (`.onnx` plus its `.onnx.json`)
+from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices/tree/main),
+e.g.:
+
+```bash
+V=https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium
+curl -L -o models/fr_FR-siwis-medium.onnx      $V/fr_FR-siwis-medium.onnx
+curl -L -o models/fr_FR-siwis-medium.onnx.json $V/fr_FR-siwis-medium.onnx.json
+```
+
+Then point the worker at the `.onnx` (its `.onnx.json` must sit next to
+it):
 
 ```bash
 cargo run -p athena-voice-tts-worker -- \
@@ -153,18 +165,24 @@ The first `docker compose pull` needs the GHCR package to be **public**
 ### Voice satellites on the server (`--profile voice`)
 
 The plain profile above uses `fake` STT/TTS — the text bridge never calls
-them, but an audio satellite needs the real thing. The image ships
-`whisper-cli` and Piper for exactly this; only the models are missing,
-because they are large and licence-bearing:
+them, but an audio satellite needs the real thing. Both engines are
+already **inside the image** (`whisper-cli`, and Piper at
+`/opt/piper/bin/piper`); nothing but the models has to be installed on
+the host, because models are large and licence-bearing:
 
     cp athena.docker.voice.example.toml athena.docker.toml   # mqtt_stt + mqtt_tts
     # edit the [mqtt] block, then fetch the models once (~150 MB + ~60 MB):
     curl -L -o models/ggml-base.bin \
       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-    pip install piper-tts
-    python3 -m piper.download_voices fr_FR-siwis-medium --data-dir models
+    V=https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium
+    curl -L -o models/fr_FR-siwis-medium.onnx      $V/fr_FR-siwis-medium.onnx
+    curl -L -o models/fr_FR-siwis-medium.onnx.json $V/fr_FR-siwis-medium.onnx.json
     cp .env.example .env      # set ATHENA_MQTT_HOST to your broker
     docker compose --profile voice up -d
+
+(Other voices: browse [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices/tree/main)
+and take the matching `.onnx` **and** `.onnx.json` — the worker refuses to
+start if the companion JSON is missing.)
 
 `./models` is bind-mounted read-only at `/models`; the model **filenames**
 are what `.env` overrides (`ATHENA_WHISPER_MODEL`, `ATHENA_PIPER_VOICE`),
