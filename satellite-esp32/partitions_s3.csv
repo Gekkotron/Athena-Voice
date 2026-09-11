@@ -1,7 +1,10 @@
-# ESP32-S3 layout (>= 8 MB flash): room for the app plus the esp-sr
-# wake-word model partition ("model", read by esp_srmodel_init).
+# ESP32-S3 layout. Sized to fit a 4 MB flash as well as the XIAO's 8 MB,
+# so the table never exceeds the flash espflash assumes (its default is
+# 4 MB — a table that overflows it produces a header/size mismatch, and
+# mismatched flash settings read back as garbage .rodata).
+# The wake-word model (srmodels.bin) is ~285 KB; 512 KB leaves headroom.
 # Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x6000
 phy_init, data, phy,     0xf000,   0x1000
 factory,  app,  factory, 0x10000,  0x300000
-model,    data, spiffs,  0x310000, 0x100000
+model,    data, spiffs,  0x310000, 0x80000

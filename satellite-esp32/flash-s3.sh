@@ -17,7 +17,19 @@ fi
 
 # Offset of the `model` partition in partitions_s3.csv.
 MODEL_OFFSET=0x310000
+# Must match CONFIG_ESPTOOLPY_FLASHSIZE in sdkconfig.defaults.esp32s3:
+# espflash otherwise assumes 4 MB and patches a mismatched size into the
+# image header, which reads back as corrupt flash at runtime.
+FLASH_SIZE="${FLASH_SIZE:-8mb}"
 
-espflash flash --partition-table partitions_s3.csv "$BIN" "$@"
+# ERASE=1 ./flash-s3.sh wipes the chip first. Needed after changing the
+# partition table (stale tables and NVS otherwise survive a plain flash)
+# and the first thing to try if the firmware boots into garbage.
+if [ "${ERASE:-0}" = "1" ]; then
+    echo "erasing flash…"
+    espflash erase-flash "$@"
+fi
+
+espflash flash --flash-size "$FLASH_SIZE" --partition-table partitions_s3.csv "$BIN" "$@"
 espflash write-bin "$MODEL_OFFSET" "$SRMODELS" "$@"
 echo "Flashed app + wake model. Monitor with: espflash monitor"
