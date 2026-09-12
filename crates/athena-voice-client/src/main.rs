@@ -8,11 +8,13 @@
 //! athena-voice-client --text "météo à Strasbourg"
 //! ```
 //!
-//! Topics (see `crates/athena-voice-runtime/src/mqtt/topics.rs`):
-//! - publishes `athena/sat/<sat>/session/<sid>/{start,text,end}`
-//! - subscribes `athena/sat/<sat>/session/<sid>/#` for `transcript`,
+//! Topics (see `crates/athena-voice-runtime/src/mqtt/topics.rs`) live
+//! under `--topic-root` (default `assist`, matching the
+//! runtime's `[mqtt] topic_root`):
+//! - publishes `<root>/sat/<sat>/session/<sid>/{start,text,end}`
+//! - subscribes `<root>/sat/<sat>/session/<sid>/#` for `transcript`,
 //!   `tts/meta`, `tts` chunks and `done`
-//! - optionally subscribes `athena/events/#` (`--events`)
+//! - optionally subscribes `<root>/events/#` (`--events`)
 
 use std::time::Duration;
 
@@ -34,6 +36,12 @@ struct Args {
     /// Satellite id (used as the topic segment).
     #[arg(long, default_value = "dev-sat")]
     satellite: String,
+
+    /// Namespace every topic lives under — must match the runtime's
+    /// `[mqtt] topic_root`. A mismatch is silent: the session opens on the
+    /// broker and simply never gets an answer.
+    #[arg(long, default_value = "assist")]
+    topic_root: String,
 
     /// Locale sent on session start.
     #[arg(long, default_value = "fr")]
@@ -60,7 +68,7 @@ struct Args {
     #[arg(long, default_value_t = 15)]
     timeout_secs: u64,
 
-    /// Also print the runtime's `athena/events/*` firehose.
+    /// Also print the runtime's `<root>/events/*` firehose.
     #[arg(long)]
     events: bool,
 
@@ -155,7 +163,8 @@ const AUDIO_CHUNK_BYTES: usize = (STT_RATE as usize / 10) * 2;
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let sid = Uuid::new_v4();
-    let base = format!("athena/sat/{}/session/{sid}", args.satellite);
+    let base = format!("{}/sat/{}/session/{sid}", args.topic_root, args.satellite);
+    let events_prefix = format!("{}/events/", args.topic_root);
 
     // Resolve the utterance source up front: audio is fully captured/decoded
     // before the session opens, which keeps the session logic identical for
@@ -186,7 +195,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     if args.events {
         client
-            .subscribe("athena/events/#", QoS::AtLeastOnce)
+            .subscribe(format!("{}/events/#", args.topic_root), QoS::AtLeastOnce)
             .await?;
     }
 
@@ -290,6 +299,7 @@ async fn main() -> anyhow::Result<()> {
                 let chunks_before = tts_chunks.len();
                 if handle_publish(
                     &base,
+                    &events_prefix,
                     &p.topic,
                     &p.payload,
                     &mut tts_chunks,
@@ -490,6 +500,7 @@ fn speak(sentence: &str, voice: &str) {
 /// Prints one incoming message; returns `true` when the session is done.
 fn handle_publish(
     base: &str,
+    events_prefix: &str,
     topic: &str,
     payload: &[u8],
     tts_chunks: &mut Vec<Vec<u8>>,
@@ -545,7 +556,7 @@ fn handle_publish(
             }
             other => println!("? {other}: {}", String::from_utf8_lossy(payload)),
         }
-    } else if let Some(kind) = topic.strip_prefix("athena/events/") {
+    } else if let Some(kind) = topic.strip_prefix(events_prefix) {
         println!("⚡ {kind}: {}", String::from_utf8_lossy(payload));
     }
     false

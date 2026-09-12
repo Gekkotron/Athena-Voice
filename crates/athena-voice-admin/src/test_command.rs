@@ -19,6 +19,10 @@ pub struct AdminMqttConfig {
     pub port: u16,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// The runtime's `[mqtt] topic_root`. The console publishes under it and
+    /// the runtime subscribes under it; a mismatch is silent — the session
+    /// simply never gets an answer and the request times out.
+    pub topic_root: String,
 }
 
 #[derive(Debug)]
@@ -35,6 +39,11 @@ pub(crate) enum TestCommandError {
 const ANSWER_QUIET: Duration = Duration::from_millis(1200);
 const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Base topic for one console session, under the configured root.
+fn session_base(topic_root: &str, sid: uuid::Uuid) -> String {
+    format!("{topic_root}/sat/admin-ui/session/{sid}")
+}
+
 pub(crate) async fn run_text_session(
     cfg: &AdminMqttConfig,
     text: &str,
@@ -43,7 +52,7 @@ pub(crate) async fn run_text_session(
     use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS};
 
     let sid = uuid::Uuid::new_v4();
-    let base = format!("athena/sat/admin-ui/session/{sid}");
+    let base = session_base(&cfg.topic_root, sid);
 
     // Unique client id: concurrent test requests and the runtime's own
     // MQTT client must never collide on the broker.
@@ -199,6 +208,22 @@ fn err(status: StatusCode, msg: &str) -> Response {
 mod tests {
     use super::*;
 
+    /// The console must follow the runtime's configured root, not a
+    /// hardcoded one: they meet on `<root>/sat/admin-ui/session/<sid>` or
+    /// the test command silently times out.
+    #[test]
+    fn session_base_follows_the_configured_root() {
+        let sid = uuid::Uuid::new_v4();
+        assert_eq!(
+            session_base("assist", sid),
+            format!("assist/sat/admin-ui/session/{sid}")
+        );
+        assert_eq!(
+            session_base("house", sid),
+            format!("house/sat/admin-ui/session/{sid}")
+        );
+    }
+
     #[tokio::test]
     async fn unreachable_broker_reports_connect_error() {
         let cfg = AdminMqttConfig {
@@ -206,6 +231,7 @@ mod tests {
             port: 1, // nothing listens here — refused immediately
             username: None,
             password: None,
+            topic_root: "assist".into(),
         };
         let err = run_text_session(&cfg, "hello", "en").await.unwrap_err();
         assert!(matches!(err, TestCommandError::Connect(_)));

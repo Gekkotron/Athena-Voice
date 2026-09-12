@@ -34,9 +34,9 @@ port = 1883
 client_id = "athena-voice-local"
 # Namespace for every topic this project owns (<root>/sat/…, /events/…,
 # /providers/…). Change it if your broker already hosts an unrelated
-# `athena/` tree — the workers (--topic-root) and every satellite
+# `assist/` tree — the workers (--topic-root) and every satellite
 # (topic_root in its config) must use the same value.
-# topic_root = "athena"
+# topic_root = "assist"
 
 [providers]
 stt = { mqtt_stt = { name = "whisper" } }

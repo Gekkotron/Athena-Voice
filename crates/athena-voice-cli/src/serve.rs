@@ -98,6 +98,7 @@ fn spawn_admin_ui(
             port: cfg.mqtt.port,
             username: cfg.mqtt.username.clone(),
             password: cfg.mqtt.password.clone(),
+            topic_root: cfg.mqtt.topic_root.clone(),
         }),
     };
     drop(tokio::spawn(async move {
