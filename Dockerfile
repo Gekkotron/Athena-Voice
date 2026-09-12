@@ -22,10 +22,18 @@ RUN ./skills-smoke-test/build.sh && ./skills-weather/build.sh && ./skills-jeedom
 # build context: the submodule is .dockerignore'd (it would bloat every
 # build) and CI checkouts don't fetch submodules. Pinned to the same
 # commit as the repo's submodule so image and dev tree agree.
+#
+# BUILD_SHARED_LIBS=OFF is load-bearing: on Linux whisper.cpp defaults it
+# to ON, and the runtime stage copies the `whisper-cli` executable alone —
+# so a shared build ships a binary that dies on its first transcription
+# with `libwhisper.so.1: cannot open shared object file`. The worker stays
+# up and silently answers nothing, because the failure is per-request, not
+# at startup. Link it statically instead of copying a pile of .so files.
 ARG WHISPER_COMMIT=080bbbe85230f624f0b52127f1ae1218247989f9
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /whisper \
     && git -C /whisper checkout --quiet "$WHISPER_COMMIT" \
     && cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
     && cmake --build /whisper/build -j "$(nproc)" --target whisper-cli
 
 # ---------- runtime stage ----------
@@ -47,6 +55,11 @@ COPY --from=build /src/target/release/athena-voice /app/athena-voice
 COPY --from=build /src/target/release/athena-voice-stt-worker /app/athena-voice-stt-worker
 COPY --from=build /src/target/release/athena-voice-tts-worker /app/athena-voice-tts-worker
 COPY --from=build /whisper/build/bin/whisper-cli /app/whisper-cli
+# Smoke-check the engine at build time: `--help` exits 0 only if the binary
+# actually loads, so a missing/mislinked library fails the image build here
+# instead of at the first utterance on someone's satellite. Mirrors the
+# tts-worker's startup smoke-synthesis.
+RUN /app/whisper-cli --help > /dev/null
 # Bundled skills ship read-only under /app/skills (owned by athena so the
 # entrypoint can copy them out on first boot). The [skills] dir the runtime
 # actually loads from is /data/skills, on the writable /data volume — the
