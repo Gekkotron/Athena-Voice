@@ -235,16 +235,25 @@ fn transcribe(
     write_wav(&wav_path, pcm, rate)?;
 
     let lang = locale.split(['-', '_']).next().unwrap_or("fr");
+    // Deliberately NOT `-np`: that flag installs whisper's null log
+    // callback, so a failure to load the model prints absolutely nothing
+    // and this function reports "whisper-cli failed:" with an empty cause.
+    // Everything it would have suppressed (system info, timings) goes to
+    // stderr, which we only surface on failure — the transcript itself is
+    // on stdout, so the extra chatter costs nothing.
     let output = Command::new(bin)
         .arg("-m")
         .arg(model)
-        .args(["-l", lang, "-nt", "-np", "-f"])
+        .args(["-l", lang, "-nt", "-f"])
         .arg(&wav_path)
         .output()?;
     anyhow::ensure!(
         output.status.success(),
-        "whisper-cli failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "whisper-cli failed ({}) [bin={} model={}]: {}",
+        output.status,
+        bin.display(),
+        model.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(clean_transcript(&String::from_utf8_lossy(&output.stdout)))
 }
@@ -288,6 +297,25 @@ fn clean_transcript(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failing engine must name itself in the error. The worker logs this
+    /// string and nothing else when an utterance fails, so an empty or
+    /// contextless message leaves an operator with no way to tell a missing
+    /// model from a broken binary.
+    #[test]
+    fn transcribe_failure_reports_status_and_paths() {
+        let err = transcribe(
+            &PathBuf::from("/usr/bin/false"),
+            &PathBuf::from("/models/ggml-base.bin"),
+            "fr",
+            16_000,
+            &[0u8; 64],
+        )
+        .expect_err("/usr/bin/false always exits non-zero");
+        let msg = err.to_string();
+        assert!(msg.contains("exit"), "no exit status in {msg:?}");
+        assert!(msg.contains("ggml-base.bin"), "no model path in {msg:?}");
+    }
 
     #[test]
     fn clean_transcript_strips_annotations_and_punctuation() {
