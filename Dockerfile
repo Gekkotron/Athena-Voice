@@ -34,6 +34,7 @@ RUN git clone https://github.com/ggerganov/whisper.cpp.git /whisper \
     && git -C /whisper checkout --quiet "$WHISPER_COMMIT" \
     && cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_NATIVE=OFF \
     && cmake --build /whisper/build -j "$(nproc)" --target whisper-cli
 
 # ---------- runtime stage ----------
@@ -59,6 +60,11 @@ COPY --from=build /whisper/build/bin/whisper-cli /app/whisper-cli
 # actually loads, so a missing/mislinked library fails the image build here
 # instead of at the first utterance on someone's satellite. Mirrors the
 # tts-worker's startup smoke-synthesis.
+#
+# Note what this CANNOT catch: an ISA mismatch. `--help` only parses
+# arguments, and it runs on the very CPU that compiled the binary, so a
+# -march=native build passes here and then SIGILLs on the user's machine.
+# That is what GGML_NATIVE=OFF above is for; this check covers linkage.
 RUN /app/whisper-cli --help > /dev/null
 # Bundled skills ship read-only under /app/skills (owned by athena so the
 # entrypoint can copy them out on first boot). The [skills] dir the runtime
