@@ -24,6 +24,7 @@ use crate::intent::{IntentMatcher, RuleIndex};
 use crate::pipeline::llm::spawn_llm;
 use crate::pipeline::router::{RouterDeps, spawn_router};
 use crate::pipeline::sentence::{IDLE_FLUSH, SentenceBuffer};
+use crate::pipeline::tts::TtsMsg;
 use crate::wasm::dispatcher::SkillDispatcherHandle;
 use crate::wasm::host_fns::MqttPublisher;
 
@@ -189,7 +190,7 @@ impl AssistBridge {
         // Mini-pipeline: transcripts → router → (skill | LLM) → tokens.
         let (t_tx, t_rx) = mpsc::channel::<Transcript>(16);
         let (llm_prompt_tx, llm_prompt_rx) = mpsc::channel::<String>(4);
-        let (tok_tx, mut tok_rx) = mpsc::channel::<String>(64);
+        let (tok_tx, mut tok_rx) = mpsc::channel::<TtsMsg>(64);
         spawn_router(
             t_rx,
             RouterDeps {
@@ -282,11 +283,28 @@ impl AssistBridge {
                     }
                 }
                 maybe = tok_rx.recv() => {
-                    let Some(tok) = maybe else {
+                    let Some(msg) = maybe else {
                         if let Some(sentence) = buf.take() {
                             self.publish_answer(&tts_topic, &status_topic, &sentence, epoch, &mut answer_deadline).await;
                         }
                         break;
+                    };
+                    let tok = match msg {
+                        TtsMsg::Token(t) => t,
+                        TtsMsg::AnswerEnd => {
+                            flush_deadline = None;
+                            if let Some(sentence) = buf.take() {
+                                self.publish_answer(&tts_topic, &status_topic, &sentence, epoch, &mut answer_deadline).await;
+                            }
+                            // An answer that produced no text at all would
+                            // otherwise leave the app's loader spinning until
+                            // ANSWER_TIMEOUT. Release it now.
+                            if answer_deadline.as_ref().is_some_and(|(e, _)| *e == epoch) {
+                                answer_deadline = None;
+                                self.publish_status(&status_topic, "done").await;
+                            }
+                            continue;
+                        }
                     };
                     match buf.push(&tok) {
                         Some(sentence) => {

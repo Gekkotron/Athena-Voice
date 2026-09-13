@@ -216,7 +216,7 @@ fn open_session(deps: &SatelliteDeps, sat: SatelliteId, sid: SessionId, locale: 
     let (ing_tx, ing_rx) = mpsc::channel(64);
     let (vad_tx, vad_rx) = mpsc::channel(64);
     let (llm_prompt_tx, llm_prompt_rx) = mpsc::channel::<String>(4);
-    let (tok_tx, tok_rx) = mpsc::channel::<String>(64);
+    let (tok_tx, tok_rx) = mpsc::channel::<crate::pipeline::tts::TtsMsg>(64);
     let (chunk_tx, chunk_rx) = mpsc::channel::<crate::pipeline::sink::SinkMsg>(64);
 
     // audio_rx → ingest → ing_tx

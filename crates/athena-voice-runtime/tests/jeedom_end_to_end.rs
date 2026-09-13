@@ -101,7 +101,7 @@ async fn drive_utterance(base_url: &str, utterance: &str) -> String {
     let (dispatcher_handle, dispatcher_task) =
         SkillDispatcher::spawn(registry.clone(), ev_tx.clone(), cancel.clone());
 
-    let (tok_tx, tok_rx) = mpsc::channel::<String>(16);
+    let (tok_tx, tok_rx) = mpsc::channel::<athena_voice_runtime::pipeline::tts::TtsMsg>(16);
     let (chunk_tx, mut chunk_rx) = mpsc::channel::<SinkMsg>(32);
     let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
     let tts_task = spawn_tts(

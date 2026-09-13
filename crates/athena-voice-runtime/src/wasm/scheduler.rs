@@ -17,6 +17,8 @@ use rumqttc::{AsyncClient, QoS};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::pipeline::tts::TtsMsg;
 use tracing::warn;
 
 use athena_voice_core::event::Event;
@@ -94,7 +96,7 @@ fn timer_expiration_text(payload: &[u8]) -> String {
 /// without a matching user utterance.
 pub fn spawn_skill_notify_forwarder(
     mut event_rx: broadcast::Receiver<Event>,
-    tts_tok_tx: mpsc::Sender<String>,
+    tts_tok_tx: mpsc::Sender<TtsMsg>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -103,7 +105,11 @@ pub fn spawn_skill_notify_forwarder(
                 () = cancel.cancelled() => break,
                 ev = event_rx.recv() => match ev {
                     Ok(Event::SkillNotify { text, .. }) => {
-                        if tts_tok_tx.send(text).await.is_err() {
+                        // A notification (a timer going off, say) is a whole
+                        // utterance on its own, so it closes itself out.
+                        if tts_tok_tx.send(TtsMsg::Token(text)).await.is_err()
+                            || tts_tok_tx.send(TtsMsg::AnswerEnd).await.is_err()
+                        {
                             break;
                         }
                     }

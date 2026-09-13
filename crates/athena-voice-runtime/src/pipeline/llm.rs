@@ -9,6 +9,8 @@ use tracing::warn;
 use athena_voice_core::ids::{Locale, SessionId};
 use athena_voice_core::provider::Llm;
 
+use crate::pipeline::tts::TtsMsg;
+
 /// Spoken when the LLM backend fails before producing anything — silence is
 /// the one thing a voice assistant must never answer with.
 fn apology(locale: &Locale) -> &'static str {
@@ -24,7 +26,7 @@ pub fn spawn_llm(
     locale: Locale,
     llm: Arc<dyn Llm>,
     mut prompt_rx: mpsc::Receiver<String>,
-    token_tx: mpsc::Sender<String>,
+    token_tx: mpsc::Sender<TtsMsg>,
     cancel: CancellationToken,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -40,7 +42,12 @@ pub fn spawn_llm(
                             Ok(s) => s,
                             Err(err) => {
                                 warn!(error = %err, "llm complete returned error");
-                                if token_tx.send(apology(&locale).to_string()).await.is_err() {
+                                if token_tx
+                                    .send(TtsMsg::Token(apology(&locale).to_string()))
+                                    .await
+                                    .is_err()
+                                    || token_tx.send(TtsMsg::AnswerEnd).await.is_err()
+                                {
                                     return;
                                 }
                                 continue;
@@ -51,7 +58,7 @@ pub fn spawn_llm(
                             match item {
                                 Ok(t) => {
                                     sent_any = true;
-                                    if token_tx.send(t).await.is_err() {
+                                    if token_tx.send(TtsMsg::Token(t)).await.is_err() {
                                         return;
                                     }
                                 }
@@ -61,7 +68,7 @@ pub fn spawn_llm(
                                     // rather than leaving the user in silence.
                                     if !sent_any
                                         && token_tx
-                                            .send(apology(&locale).to_string())
+                                            .send(TtsMsg::Token(apology(&locale).to_string()))
                                             .await
                                             .is_err()
                                     {
@@ -70,6 +77,12 @@ pub fn spawn_llm(
                                     break;
                                 }
                             }
+                        }
+                        // One prompt answered — however it went. The satellite
+                        // is waiting on this to stop listening and re-arm, so
+                        // it must be sent on the error paths too.
+                        if token_tx.send(TtsMsg::AnswerEnd).await.is_err() {
+                            return;
                         }
                     }
                     None => break,
@@ -121,7 +134,13 @@ mod tests {
 
         p_tx.send("raconte-moi une blague".into()).await.unwrap();
         let spoken = tok_rx.recv().await.expect("apology token");
-        assert!(spoken.contains("désolé"), "got: {spoken}");
+        assert_eq!(
+            spoken,
+            TtsMsg::Token("désolé, je ne peux pas répondre pour le moment.".into())
+        );
+        // Even a failed answer must be closed out, or the satellite waits
+        // out its reply timeout with the apology already spoken.
+        assert_eq!(tok_rx.recv().await, Some(TtsMsg::AnswerEnd));
     }
 
     #[tokio::test]
@@ -143,10 +162,15 @@ mod tests {
         drop(p_tx);
 
         let mut collected = Vec::new();
-        while let Some(t) = tok_rx.recv().await {
-            collected.push(t);
+        let mut ended = false;
+        while let Some(msg) = tok_rx.recv().await {
+            match msg {
+                TtsMsg::Token(t) => collected.push(t),
+                TtsMsg::AnswerEnd => ended = true,
+            }
         }
         assert_eq!(collected.concat(), "il fait beau");
+        assert!(ended, "the answer never signalled AnswerEnd");
         handle.await.unwrap();
     }
 }

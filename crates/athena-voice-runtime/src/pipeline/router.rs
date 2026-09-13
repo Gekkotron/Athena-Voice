@@ -12,6 +12,7 @@ use athena_voice_core::types::Transcript;
 use athena_voice_skill_sdk::SkillResponse;
 
 use crate::intent::{IntentMatcher, RuleIndex};
+use crate::pipeline::tts::TtsMsg;
 use crate::wasm::dispatcher::SkillDispatcherHandle;
 
 /// Dependencies handed to the router at spawn time.
@@ -19,7 +20,7 @@ pub struct RouterDeps {
     pub llm_tx: mpsc::Sender<String>,
     /// Direct-to-TTS token channel. When a skill returns `SkillResponse::Speak`,
     /// the router feeds the speech text here, bypassing the LLM entirely.
-    pub tts_tok_tx: mpsc::Sender<String>,
+    pub tts_tok_tx: mpsc::Sender<TtsMsg>,
     pub event_tx: broadcast::Sender<Event>,
     pub session: SessionId,
     pub locale: Locale,
@@ -283,10 +284,17 @@ async fn handle_outcome(
         return;
     }
 
+    // Every outcome below ends the turn here except an LLM hand-off, which
+    // ends when the LLM's token stream does. Marking the turn over matters
+    // just as much when nothing is spoken: a skill that errors, returns
+    // `Empty`, or answers with audio would otherwise leave a satellite
+    // waiting out its full reply timeout in silence before it re-arms.
+    let hands_off_to_llm = matches!(result, Ok(SkillResponse::AskLlm { .. }));
+
     match result {
         Ok(SkillResponse::Speak { text }) => {
             let text = ensure_sentence_boundary(text);
-            if deps.tts_tok_tx.send(text).await.is_err() {
+            if deps.tts_tok_tx.send(TtsMsg::Token(text)).await.is_err() {
                 return;
             }
             *prior_work_in_flight = true;
@@ -336,6 +344,10 @@ async fn handle_outcome(
         Err(err) => {
             warn!(skill = %skill, error = %err, "skill dispatch failed");
         }
+    }
+
+    if !hands_off_to_llm {
+        let _ = deps.tts_tok_tx.send(TtsMsg::AnswerEnd).await;
     }
 }
 
@@ -525,7 +537,7 @@ mod tests {
 
     fn build_deps_with_dispatcher(
         llm_tx: mpsc::Sender<String>,
-        tts_tok_tx: mpsc::Sender<String>,
+        tts_tok_tx: mpsc::Sender<TtsMsg>,
         event_tx: broadcast::Sender<Event>,
         rules: Arc<ArcSwap<RuleIndex>>,
         dispatcher: SkillDispatcherHandle,
@@ -616,7 +628,15 @@ mod tests {
             .await
             .expect("timed out waiting for TTS token")
             .expect("tts_tok_tx closed unexpectedly");
-        assert_eq!(tok, "il est huit heures.");
+        assert_eq!(tok, TtsMsg::Token("il est huit heures.".into()));
+        // That answer closes itself out immediately — a skill reply is whole
+        // when it is sent.
+        assert_eq!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), tts_tok_rx.recv())
+                .await
+                .expect("timed out waiting for AnswerEnd"),
+            Some(TtsMsg::AnswerEnd)
+        );
 
         // Assert no further token arrives from the stalled first dispatch —
         // wait long enough for its 400ms stall to have completed.
@@ -649,6 +669,59 @@ mod tests {
         }
         assert!(saw_barge_in, "expected Event::BargeIn");
         assert!(saw_skill_cancelled, "expected Event::SkillCancelled");
+    }
+
+    /// A skill that fails speaks nothing — but the turn is still over, and
+    /// the satellite is waiting on `AnswerEnd` to re-arm its microphone.
+    /// Without this it stays deaf for its entire reply timeout after every
+    /// failed command.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failing_skill_still_ends_the_turn() {
+        let mut index = RuleIndex::new();
+        install_clock_rule(&mut index, "clock", "quelle heure est-il");
+        let plugin: Arc<Mutex<dyn SkillPlugin>> = Arc::new(Mutex::new(StallPlugin {
+            handle: |_intent: &SkillIntent| Err(SkillError::Custom("boom".into())),
+        }));
+        let reg = SkillRegistry::new();
+        reg.install("clock", plugin, &[]).unwrap();
+        let reg = Arc::new(reg);
+
+        let (ev_tx, _ev_rx) = broadcast::channel(64);
+        let (dispatcher, dispatcher_task) =
+            SkillDispatcher::spawn(reg, ev_tx.clone(), CancellationToken::new());
+
+        let (t_tx, t_rx) = mpsc::channel(4);
+        let (llm_tx, _llm_rx) = mpsc::channel(4);
+        let (tts_tok_tx, mut tts_tok_rx) = mpsc::channel(4);
+
+        let deps = build_deps_with_dispatcher(
+            llm_tx,
+            tts_tok_tx,
+            ev_tx.clone(),
+            Arc::new(ArcSwap::from_pointee(index)),
+            dispatcher.clone(),
+        );
+        let router_cancel = CancellationToken::new();
+        let router_handle = spawn_router(t_rx, deps, router_cancel.clone());
+
+        t_tx.send(Transcript {
+            text: "quelle heure est-il".into(),
+            is_final: true,
+            confidence: None,
+        })
+        .await
+        .unwrap();
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), tts_tok_rx.recv())
+            .await
+            .expect("a failed skill must still close the turn");
+        assert_eq!(msg, Some(TtsMsg::AnswerEnd));
+
+        drop(t_tx);
+        router_cancel.cancel();
+        let _ = router_handle.await;
+        drop(dispatcher);
+        let _ = dispatcher_task.await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -693,7 +766,7 @@ mod tests {
             .await
             .expect("timed out")
             .expect("tts_tok_tx closed");
-        assert_eq!(tok, "il est huit heures.");
+        assert_eq!(tok, TtsMsg::Token("il est huit heures.".into()));
 
         drop(t_tx);
         router_cancel.cancel();

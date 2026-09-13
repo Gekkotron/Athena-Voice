@@ -13,11 +13,32 @@ use athena_voice_core::provider::Tts;
 use crate::pipeline::sentence::{IDLE_FLUSH, SentenceBuffer};
 use crate::pipeline::sink::SinkMsg;
 
+/// What the router and the LLM feed the TTS stage. `AnswerEnd` must travel
+/// in-band with the tokens: it means "everything before me is the whole
+/// answer", which is only true if it cannot overtake the last token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TtsMsg {
+    Token(String),
+    AnswerEnd,
+}
+
+impl From<&str> for TtsMsg {
+    fn from(s: &str) -> Self {
+        Self::Token(s.to_string())
+    }
+}
+
+impl From<String> for TtsMsg {
+    fn from(s: String) -> Self {
+        Self::Token(s)
+    }
+}
+
 pub fn spawn_tts(
     session: SessionId,
     locale: Locale,
     tts: Arc<dyn Tts>,
-    mut token_rx: mpsc::Receiver<String>,
+    mut token_rx: mpsc::Receiver<TtsMsg>,
     chunk_tx: mpsc::Sender<SinkMsg>,
     event_tx: broadcast::Sender<Event>,
     cancel: CancellationToken,
@@ -56,11 +77,27 @@ pub fn spawn_tts(
                     }
                 }
                 maybe = token_rx.recv() => {
-                    let Some(tok) = maybe else {
+                    let Some(msg) = maybe else {
                         if let Some(sentence) = buf.take() {
                             let _ = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
                         }
                         break;
+                    };
+                    let tok = match msg {
+                        TtsMsg::Token(t) => t,
+                        // Speak whatever is still buffered — the answer may
+                        // have ended on an unpunctuated fragment that the
+                        // idle flush hasn't reached yet — then tell the sink.
+                        TtsMsg::AnswerEnd => {
+                            flush_deadline = None;
+                            if let Some(sentence) = buf.take() {
+                                seq = flush(&tts, session, &locale, &sentence, seq, &chunk_tx, &event_tx, &mut barge_rx).await;
+                            }
+                            if chunk_tx.send(SinkMsg::AnswerEnd).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
                     };
                     match buf.push(&tok) {
                         Some(sentence) => {
@@ -168,7 +205,7 @@ mod tests {
     fn chunk_bytes(msg: SinkMsg) -> Option<bytes::Bytes> {
         match msg {
             SinkMsg::Chunk(b) => Some(b),
-            SinkMsg::Format { .. } => None,
+            SinkMsg::Format { .. } | SinkMsg::AnswerEnd => None,
         }
     }
 
@@ -193,7 +230,7 @@ mod tests {
         // (a session outlives its answers), so only the idle flush can
         // trigger synthesis.
         for tok in ["je ", "ne ", "sais ", "pas"] {
-            tok_tx.send(tok.to_string()).await.unwrap();
+            tok_tx.send(TtsMsg::Token(tok.to_string())).await.unwrap();
         }
         // The provider's format is declared before its first chunk.
         let first = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
@@ -201,7 +238,13 @@ mod tests {
             .expect("idle flush must synthesize buffered text")
             .expect("message");
         assert!(
-            matches!(first, SinkMsg::Format { format: AudioFormat::Text, .. }),
+            matches!(
+                first,
+                SinkMsg::Format {
+                    format: AudioFormat::Text,
+                    ..
+                }
+            ),
             "expected a Format message first, got {first:?}"
         );
         let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), chunk_rx.recv())
@@ -211,6 +254,51 @@ mod tests {
             .expect("chunk");
         assert_eq!(&chunk[..], b"je");
         drop(tok_tx);
+    }
+
+    /// The satellite re-arms on `done`, which the sink publishes when it sees
+    /// `AnswerEnd`. So an answer that ends on an unpunctuated fragment must be
+    /// spoken *before* the marker is forwarded, and the marker must arrive
+    /// without waiting for the idle flush or for the channel to close — that
+    /// wait is exactly what left devices deaf for their whole reply timeout.
+    #[tokio::test]
+    async fn answer_end_flushes_the_tail_then_signals_the_sink() {
+        let (tok_tx, tok_rx) = mpsc::channel(16);
+        let (chunk_tx, mut chunk_rx) = mpsc::channel(32);
+        let (ev_tx, _ev_rx) = broadcast::channel(32);
+        let tts: Arc<dyn Tts> = Arc::new(FakeTts::new());
+
+        let _handle = spawn_tts(
+            SessionId::new_v4(),
+            Locale::new("fr").unwrap(),
+            tts,
+            tok_rx,
+            chunk_tx,
+            ev_tx,
+            CancellationToken::new(),
+        );
+
+        // No terminal punctuation, and the channel stays open afterwards.
+        tok_tx.send(TtsMsg::Token("il fait beau".into())).await.unwrap();
+        tok_tx.send(TtsMsg::AnswerEnd).await.unwrap();
+
+        let mut spoken = 0usize;
+        let mut ended = false;
+        // IDLE_FLUSH is 800ms; anything under that proves we did not merely
+        // wait for the idle timer to rescue us.
+        let deadline = std::time::Duration::from_millis(400);
+        while let Ok(Some(msg)) = tokio::time::timeout(deadline, chunk_rx.recv()).await {
+            match msg {
+                SinkMsg::Chunk(_) => spoken += 1,
+                SinkMsg::Format { .. } => {}
+                SinkMsg::AnswerEnd => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        assert!(spoken > 0, "the unpunctuated tail was never spoken");
+        assert!(ended, "AnswerEnd never reached the sink");
     }
 
     #[tokio::test]
