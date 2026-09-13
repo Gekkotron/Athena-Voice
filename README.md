@@ -180,6 +180,21 @@ the host, because models are large and licence-bearing:
     cp .env.example .env      # set ATHENA_MQTT_HOST to your broker
     docker compose --profile voice up -d
 
+**Set `ATHENA_MQTT_HOST`** — it is the one value with a default that
+cannot work for you. The runtime reads its broker from `[mqtt] host` in
+`athena.docker.toml`, but the workers read `ATHENA_MQTT_HOST`, which falls
+back to `mosquitto` (the bundled broker, present only under `--profile
+broker`). Point it at the same broker as the runtime, or the workers spin
+forever on `failed to lookup address information: Name or service not
+known` while compose cheerfully reports them as `Running`.
+
+Uncommenting `COMPOSE_PROFILES=voice` in the same `.env` saves typing
+`--profile voice` on every command afterwards — and prevents a subtler
+trap: `docker compose pull` without the profile fetches images only for
+the default profile, so a rebuilt worker image is never downloaded and
+`up -d` reports `Running` instead of `Recreated`. If you ever pull an
+update and nothing seems to change, that word is the thing to check.
+
 (Other voices: browse [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices/tree/main)
 and take the matching `.onnx` **and** `.onnx.json` — the worker refuses to
 start if the companion JSON is missing.)
@@ -187,7 +202,9 @@ start if the companion JSON is missing.)
 `./models` is bind-mounted read-only at `/models`; the model **filenames**
 are what `.env` overrides (`ATHENA_WHISPER_MODEL`, `ATHENA_PIPER_VOICE`),
 so swapping to `ggml-small.bin` or an English voice needs no compose edit.
-Updates keep the flag: `./update.sh --profile voice`.
+Updates keep the flag: `./update.sh --profile voice` — or set
+`COMPOSE_PROFILES=voice` in `.env` once and plain `./update.sh` does the
+right thing forever after.
 
 Check both workers came up:
 
@@ -198,6 +215,25 @@ Each logs a "ready" line with its topic; a missing model or wrong
 session later. `ggml-base.bin` is a deliberate default for a mini-PC —
 accurate enough for French sentences and a few times faster than
 `small` on CPU.
+
+#### CPU requirements for the bundled `whisper-cli`
+
+The published image builds whisper.cpp with `-DGGML_NATIVE=OFF`, which
+targets **SSE4.2 + AVX + AVX2** — every x86-64 CPU since Haswell (2013),
+AMD Zen included. This is deliberate: ggml defaults to `-march=native`,
+which would tune the binary for whatever machine built it (a GitHub
+Actions runner) and kill it with SIGILL anywhere else.
+
+On an older or low-end CPU without AVX2 — pre-2013 Core, or a Goldmont
+Celeron/Atom — `whisper-cli` dies the instant it starts transcribing, and
+the worker logs `whisper-cli failed (signal: 4 ...)`. Exit code **132** is
+the giveaway. Rebuild the image with a lower floor:
+
+    docker build --build-arg WHISPER_CMAKE_EXTRA="-DGGML_AVX2=OFF -DGGML_AVX=OFF" \
+      -t ghcr.io/gekkotron/athena-voice:latest .
+
+That falls back to scalar SSE2 — correct everywhere, roughly 2-3× slower.
+Consider `ggml-tiny.bin` alongside it on such a machine.
 
 Updating:
 

@@ -30,11 +30,17 @@ RUN ./skills-smoke-test/build.sh && ./skills-weather/build.sh && ./skills-jeedom
 # up and silently answers nothing, because the failure is per-request, not
 # at startup. Link it statically instead of copying a pile of .so files.
 ARG WHISPER_COMMIT=080bbbe85230f624f0b52127f1ae1218247989f9
+# Escape hatch for CPUs below the AVX2 floor (pre-2013 Core, Goldmont
+# Celeron/Atom), which SIGILL on the default build:
+#   --build-arg WHISPER_CMAKE_EXTRA="-DGGML_AVX2=OFF -DGGML_AVX=OFF"
+# See "CPU requirements for the bundled whisper-cli" in the README.
+ARG WHISPER_CMAKE_EXTRA=""
 RUN git clone https://github.com/ggerganov/whisper.cpp.git /whisper \
     && git -C /whisper checkout --quiet "$WHISPER_COMMIT" \
     && cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DGGML_NATIVE=OFF \
+        $WHISPER_CMAKE_EXTRA \
     && cmake --build /whisper/build -j "$(nproc)" --target whisper-cli
 
 # ---------- runtime stage ----------
