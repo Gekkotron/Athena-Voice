@@ -68,11 +68,34 @@ from the task's title before dispatch.
 
 # Disk hygiene
 
-This workspace accumulates build artifacts unusually fast. The runtime's build
-script emits a ~470 MB compiled whisper.cpp tree into a new
+**Check free space before any build, test run, or firmware flash:**
+
+```bash
+df -h . | awk 'NR==2 {print $4 " free"}'
+```
+
+Act on what it says:
+
+| Free | What to do |
+|------|------------|
+| **> 20 GB** | Fine. Build. |
+| **5–20 GB** | Run `./scripts/clean-stale.sh` first, then build. |
+| **< 5 GB** | Do not start a build. Clean, and tell the user how much came back. |
+
+Report the number when it is under 20 GB rather than cleaning silently — the
+user decides how aggressive to be, and a `cargo clean` here is not free.
+
+This matters more than it would elsewhere, because the workspace accumulates
+build artifacts unusually fast. The runtime's build script emits a ~470 MB
+compiled whisper.cpp tree into a new
 `target/debug/build/athena-voice-runtime-<hash>/out/` whenever its inputs
 change, and cargo never reclaims the superseded copies — left alone, `target/`
-reached 38 GB in four days of ordinary work.
+reached 38 GB in four days of ordinary work, on a machine that was down to
+9.3 GB free.
+
+A build that runs out of disk does not fail cleanly: linkers truncate output,
+sccache-style caches corrupt, and the resulting error blames the code rather
+than the volume. Checking first is cheaper than debugging that.
 
 **The rule: when disk is tight, run `./scripts/clean-stale.sh`, never
 `cargo clean`.** The script drops superseded build-hash directories (keeping a
