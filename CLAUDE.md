@@ -65,3 +65,26 @@ appends an HTML comment on the checkbox line:
 You can also add `<!-- blocked: reason -->` on an in-progress task to have the
 planner surface it in the next planning session. Both comments are stripped
 from the task's title before dispatch.
+
+# Disk hygiene
+
+This workspace accumulates build artifacts unusually fast. The runtime's build
+script emits a ~470 MB compiled whisper.cpp tree into a new
+`target/debug/build/athena-voice-runtime-<hash>/out/` whenever its inputs
+change, and cargo never reclaims the superseded copies — left alone, `target/`
+reached 38 GB in four days of ordinary work.
+
+**The rule: when disk is tight, run `./scripts/clean-stale.sh`, never
+`cargo clean`.** The script drops superseded build-hash directories (keeping a
+few generations per package) and incremental caches; `--all` adds
+`satellite-esp32/target` and finished review scratch under `.superpowers/sdd/`.
+`cargo clean` frees more but forces a full whisper.cpp rebuild, which is a poor
+trade in a headless orchestrator session.
+
+There is deliberately no scheduler — cleanup is manual, because a background job
+that silently invalidates a build cache mid-session is worse than a full disk.
+Do not add one without asking.
+
+Two things the script must keep, and does: `models/` (downloaded whisper and
+piper weights, 680 MB) and `satellite-esp32/.embuild/` (the ESP-IDF toolchain,
+3.8 GB and slow to re-fetch).

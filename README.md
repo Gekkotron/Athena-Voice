@@ -411,3 +411,22 @@ a full-featured example.
 
 Roadmap and task backlog: [`PLAN.md`](PLAN.md). Feature status:
 [`SHOWCASE.md`](SHOWCASE.md).
+
+### Reclaiming disk
+
+`target/` grows faster here than in most Rust projects: the runtime's build
+script emits a compiled whisper.cpp tree (~470 MB) into a fresh
+`target/debug/build/athena-voice-runtime-<hash>/out/` every time its inputs
+change, and cargo never deletes the superseded copies. Fourteen of them add up
+to 6.5 GB of pure duplication.
+
+```bash
+./scripts/clean-stale.sh -n      # dry run — see what would go
+./scripts/clean-stale.sh         # superseded build dirs + incremental caches
+./scripts/clean-stale.sh --all   # also satellite-esp32/target and old review scratch
+```
+
+Run it when the disk gets tight; there is no scheduler. It never touches
+`models/`, `whisper.cpp/`, `satellite-esp32/.embuild/` (the ESP-IDF toolchain),
+or tracked files, and deleting too much only ever costs rebuild time. Prefer it
+to `cargo clean`, which frees more but forces a full whisper.cpp rebuild.
