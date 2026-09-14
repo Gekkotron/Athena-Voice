@@ -153,6 +153,31 @@ if [ "$DO_SDD" -eq 1 ]; then
     fi
 fi
 
+# Long-lived athena processes are easy to lose track of: a `serve` launched from
+# a throwaway session config reparents to launchd and keeps running for days,
+# holding port 8080 and running a binary that no longer matches the source. This
+# only reports — deciding what to stop is yours.
+echo
+echo "Running athena processes:"
+procs="$(pgrep -fl 'athena-voice' 2>/dev/null | grep -v clean-stale || true)"
+if [ -z "$procs" ]; then
+    echo "  none"
+else
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        pid="${line%% *}"
+        printf '  pid %-7s up %-12s %s\n' \
+            "$pid" \
+            "$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')" \
+            "$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-90)"
+        # A config living under /private/tmp disappears when macOS prunes it,
+        # so the process survives only until its next restart.
+        case "$line" in
+            */private/tmp/*) echo "      ^ config is in /private/tmp — will not survive a restart" ;;
+        esac
+    done <<< "$procs"
+fi
+
 echo
 if [ "$RECLAIMED_KB" -eq 0 ]; then
     echo "Nothing stale to remove."

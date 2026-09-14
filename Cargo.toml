@@ -106,3 +106,21 @@ result_large_err = "allow"      # Error variants with source strings are inheren
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# Debug builds were the single largest thing on disk: 29 GB in
+# target/debug/deps, of which 10.6 GB was 58k .o files. On macOS rustc defaults
+# to split-debuginfo="unpacked", so full debuginfo for every dependency stays
+# behind as loose object files. Line tables keep backtraces pointing at real
+# file:line, which is how this codebase is actually debugged.
+[profile.dev]
+debug = "line-tables-only"
+
+# Dependencies are stepped through approximately never, and they are the bulk
+# of the tree. Workspace crates keep their line tables via [profile.dev] above.
+[profile.dev.package."*"]
+debug = false
+
+# Build scripts are throwaway host binaries; athena-voice-runtime's is the one
+# that emits the ~470 MB whisper tree.
+[profile.dev.build-override]
+debug = false

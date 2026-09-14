@@ -430,3 +430,16 @@ Run it when the disk gets tight; there is no scheduler. It never touches
 `models/`, `whisper.cpp/`, `satellite-esp32/.embuild/` (the ESP-IDF toolchain),
 or tracked files, and deleting too much only ever costs rebuild time. Prefer it
 to `cargo clean`, which frees more but forces a full whisper.cpp rebuild.
+
+It also lists any long-running `athena-voice` processes it finds. A `serve`
+started from a throwaway config reparents to launchd and keeps running for days
+— holding port 8080, and running a binary that no longer matches the source.
+The script only reports them; stopping them is your call.
+
+`[profile.dev]` deliberately limits debuginfo to line tables, and switches it
+off entirely for dependencies and build scripts. On macOS rustc defaults to
+`split-debuginfo = "unpacked"`, which had left 58,000 loose `.o` files worth
+10.6 GB in `target/debug/deps`. Backtraces still carry real `file:line`; what
+you lose is variable inspection when stepping through a *dependency* in a
+debugger. Drop the `[profile.dev.package."*"]` block temporarily if you ever
+need that.

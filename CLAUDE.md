@@ -88,3 +88,32 @@ Do not add one without asking.
 Two things the script must keep, and does: `models/` (downloaded whisper and
 piper weights, 680 MB) and `satellite-esp32/.embuild/` (the ESP-IDF toolchain,
 3.8 GB and slow to re-fetch).
+
+`[profile.dev]` in `Cargo.toml` keeps debuginfo to line tables and switches it
+off for dependencies and build scripts. Do not "helpfully" restore full
+debuginfo — that setting is what stops `target/debug/deps` from growing another
+10 GB of loose `.o` files.
+
+## Where this actually runs
+
+The server runs on the home Linux box, not on the dev Mac. Locally, the thing
+that genuinely needs to build is `satellite-esp32/` (the ESP32-S3 firmware);
+the native workspace is built here only to typecheck and run tests.
+
+Two consequences:
+
+- A wiped `target/` is cheap. Do not rebuild the workspace just to restore a
+  warm cache — rebuild when a test or a check actually needs it.
+- `satellite-esp32/.embuild/` and the `esp` rustup toolchain are the local
+  prerequisites worth protecting. `satellite-esp32/target/` is disposable.
+
+## Long-running processes
+
+Before starting a `serve`, check whether one is already up — `pgrep -fl
+athena-voice`, or just run `scripts/clean-stale.sh`, which reports them.
+
+Never point a long-running process at a config under `/private/tmp` (a session
+scratchpad). It reparents to launchd and outlives the session that made it,
+while macOS is free to prune the config out from under it. One such stack ran
+for three days holding port 8080 before anyone noticed. Put configs the server
+should keep using in the repo, gitignored.
