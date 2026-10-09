@@ -136,10 +136,7 @@ async fn main() -> anyhow::Result<()> {
                 config.display()
             );
             anyhow::ensure!(
-                Command::new(&args.piper_bin)
-                    .arg("--help")
-                    .output()
-                    .is_ok(),
+                Command::new(&args.piper_bin).arg("--help").output().is_ok(),
                 "piper binary not runnable: {} — install piper (pip \
                  install piper-tts) or pass --piper-bin <path>",
                 args.piper_bin
@@ -166,6 +163,13 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    serve(&args, engine_cfg).await
+}
+
+/// Connects to the broker and serves TTS requests until the process exits.
+/// Reconnects are handled by the event loop; the request subscription is
+/// re-issued on each `ConnAck`.
+async fn serve(args: &Args, engine_cfg: EngineConfig) -> anyhow::Result<()> {
     let request_topic = format!("{}/providers/tts/{}/request", args.topic_root, args.name);
     let response_topic = format!("{}/providers/tts/{}/response", args.topic_root, args.name);
 
@@ -178,7 +182,13 @@ async fn main() -> anyhow::Result<()> {
     // Synthesized chunks for a long sentence can exceed the 10 KiB default.
     opts.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
     let (client, mut eventloop) = AsyncClient::new(opts, 64);
-    client.subscribe(&request_topic, QoS::AtLeastOnce).await?;
+
+    // The request topic is (re)subscribed on every `ConnAck` below — that
+    // fires on the first connect too, so there is no separate startup
+    // subscribe. rumqttc 0.24's `MqttState::clean()` re-queues only
+    // Publish/PubRel on reconnect, NOT prior Subscribe packets, so without
+    // this a broker restart (clean session is the default) would leave the
+    // worker connected but permanently deaf.
 
     info!(topic = %request_topic, engine = ?args.engine, "TTS worker ready");
 
@@ -198,6 +208,11 @@ async fn main() -> anyhow::Result<()> {
                         error!(error = %e, "TTS request failed");
                     }
                 });
+            }
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                if let Err(e) = client.subscribe(&request_topic, QoS::AtLeastOnce).await {
+                    warn!(error = %e, "request subscribe failed");
+                }
             }
             Ok(_) => {}
             Err(e) => {
@@ -285,11 +300,7 @@ async fn handle_request(
 
 /// Synthesizes `text` to s16le mono samples, returning them with the
 /// rate they are actually at.
-fn synthesize(
-    engine: &EngineConfig,
-    text: &str,
-    locale: &str,
-) -> anyhow::Result<(Vec<i16>, u32)> {
+fn synthesize(engine: &EngineConfig, text: &str, locale: &str) -> anyhow::Result<(Vec<i16>, u32)> {
     match engine {
         EngineConfig::Say { voice, rate } => {
             Ok((synthesize_say(text, locale, voice, *rate)?, *rate))
@@ -333,7 +344,9 @@ fn synthesize_piper(
     let samples = if spec.channels > 1 {
         samples
             .chunks(spec.channels as usize)
-            .map(|f| (f.iter().map(|s| i32::from(*s)).sum::<i32>() / i32::from(spec.channels)) as i16)
+            .map(|f| {
+                (f.iter().map(|s| i32::from(*s)).sum::<i32>() / i32::from(spec.channels)) as i16
+            })
             .collect()
     } else {
         samples
@@ -478,5 +491,83 @@ mod tests {
         // worker clamps to 1 so `chunks()` can't panic.
         let samples_per_chunk = (8u32 * 10 / 1000).max(1) as usize;
         assert_eq!(samples_per_chunk, 1);
+    }
+
+    /// Reads one MQTT packet: fixed-header byte plus the body, framed by the
+    /// remaining-length varint.
+    async fn read_packet(s: &mut tokio::net::TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
+        use tokio::io::AsyncReadExt;
+        let first = s.read_u8().await?;
+        let (mut len, mut mult) = (0usize, 1usize);
+        loop {
+            let b = s.read_u8().await?;
+            len += usize::from(b & 0x7f) * mult;
+            if b & 0x80 == 0 {
+                break;
+            }
+            mult *= 128;
+        }
+        let mut body = vec![0u8; len];
+        s.read_exact(&mut body).await?;
+        Ok((first, body))
+    }
+
+    /// Reads packets until a SUBSCRIBE arrives; returns (packet id, topic).
+    /// Anything else (PINGREQ, ...) is ignored.
+    async fn read_subscribe(s: &mut tokio::net::TcpStream) -> std::io::Result<(u16, String)> {
+        loop {
+            let (first, body) = read_packet(s).await?;
+            if first == 0x82 {
+                let pid = u16::from_be_bytes([body[0], body[1]]);
+                let tlen = usize::from(u16::from_be_bytes([body[2], body[3]]));
+                let topic = String::from_utf8_lossy(&body[4..4 + tlen]).into_owned();
+                return Ok((pid, topic));
+            }
+        }
+    }
+
+    /// Minimal MQTT 3.1.1 broker: the first connection is accepted, its
+    /// SUBSCRIBE acked, then the socket is dropped (a broker restart). The
+    /// task resolves with the topic subscribed on the second connection.
+    async fn fake_broker_restart() -> (u16, tokio::task::JoinHandle<String>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            assert_eq!(read_packet(&mut s).await.unwrap().0, 0x10, "CONNECT");
+            s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            let (pid, _) = read_subscribe(&mut s).await.unwrap();
+            let [hi, lo] = pid.to_be_bytes();
+            s.write_all(&[0x90, 0x03, hi, lo, 0x01]).await.unwrap();
+            drop(s);
+
+            let (mut s, _) = listener.accept().await.unwrap();
+            assert_eq!(read_packet(&mut s).await.unwrap().0, 0x10, "CONNECT");
+            s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            read_subscribe(&mut s).await.unwrap().1
+        });
+        (port, task)
+    }
+
+    /// rumqttc does not replay SUBSCRIBE packets on reconnect, so the worker
+    /// must subscribe on every `ConnAck` or it goes deaf after a broker
+    /// restart.
+    #[tokio::test]
+    async fn resubscribes_request_topic_after_broker_restart() {
+        let (port, broker) = fake_broker_restart().await;
+        let args = Args::parse_from(["tts", "--port", &port.to_string()]);
+        let engine_cfg = EngineConfig::Say {
+            voice: args.voice.clone(),
+            rate: args.rate,
+        };
+        let worker = tokio::spawn(async move { serve(&args, engine_cfg).await });
+
+        let topic = tokio::time::timeout(Duration::from_secs(5), broker)
+            .await
+            .expect("no SUBSCRIBE after reconnect")
+            .unwrap();
+        assert_eq!(topic, "athena/providers/tts/say/request");
+        worker.abort();
     }
 }

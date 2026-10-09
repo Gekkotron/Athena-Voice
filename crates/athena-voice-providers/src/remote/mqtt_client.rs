@@ -27,8 +27,11 @@ pub struct MqttProviderClient {
 }
 
 impl MqttProviderClient {
-    /// Constructs a client, connects to the broker (queued), subscribes to
-    /// `response_topic`, and spawns the pump task.
+    /// Constructs a client, connects to the broker (queued), and spawns the
+    /// pump task, which subscribes to `response_topic` on every connect.
+    // Stays `async` so callers keep their `.await`; `spawn_pump` needs a
+    // runtime context to `tokio::spawn`.
+    #[allow(clippy::unused_async)]
     pub async fn connect(
         broker_host: impl Into<String>,
         broker_port: u16,
@@ -43,11 +46,12 @@ impl MqttProviderClient {
         opts.set_max_packet_size(2 * 1024 * 1024, 2 * 1024 * 1024);
         let (client, event_loop) = AsyncClient::new(opts, 128);
         let response_topic = response_topic.into();
-        // Subscribe to responses. Ignore error — pump will retry on reconnect.
-        let _ = client.subscribe(&response_topic, QoS::AtLeastOnce).await;
-
+        // `response_topic` is (re)subscribed by the pump on every `ConnAck`
+        // — that fires on the first connect too, so there is no separate
+        // startup subscribe here.
         let routes: Arc<DashMap<SessionId, mpsc::Sender<Publish>>> = Arc::new(DashMap::new());
         let pump = spawn_pump(
+            client.clone(),
             Arc::new(Mutex::new(event_loop)),
             routes.clone(),
             response_topic.clone(),
@@ -122,8 +126,12 @@ impl MqttProviderClient {
 }
 
 /// Pumps the MQTT event loop and routes incoming publishes on `response_topic`
-/// to the appropriate per-session channel.
+/// to the appropriate per-session channel. Subscribes to `response_topic` on
+/// every `ConnAck`: rumqttc 0.24's `MqttState::clean()` re-queues only
+/// Publish/PubRel on reconnect, NOT prior Subscribe packets, so a one-shot
+/// startup subscribe would silently die with the first broker restart.
 fn spawn_pump(
+    client: AsyncClient,
     event_loop: Arc<Mutex<EventLoop>>,
     routes: Arc<DashMap<SessionId, mpsc::Sender<Publish>>>,
     response_topic: String,
@@ -132,6 +140,11 @@ fn spawn_pump(
         loop {
             let event = { event_loop.lock().await.poll().await };
             match event {
+                Ok(rumqttc::Event::Incoming(rumqttc::Incoming::ConnAck(_))) => {
+                    if let Err(e) = client.subscribe(&response_topic, QoS::AtLeastOnce).await {
+                        warn!(error = %e, "mqtt provider client subscribe failed");
+                    }
+                }
                 Ok(rumqttc::Event::Incoming(rumqttc::Incoming::Publish(p))) => {
                     if p.topic != response_topic {
                         continue;
@@ -164,4 +177,89 @@ fn spawn_pump(
 fn extract_session(payload: &[u8]) -> Option<SessionId> {
     let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
     v.get("session_id")?.as_str()?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reads one MQTT packet: fixed-header byte plus the body, framed by the
+    /// remaining-length varint.
+    async fn read_packet(s: &mut tokio::net::TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
+        use tokio::io::AsyncReadExt;
+        let first = s.read_u8().await?;
+        let (mut len, mut mult) = (0usize, 1usize);
+        loop {
+            let b = s.read_u8().await?;
+            len += usize::from(b & 0x7f) * mult;
+            if b & 0x80 == 0 {
+                break;
+            }
+            mult *= 128;
+        }
+        let mut body = vec![0u8; len];
+        s.read_exact(&mut body).await?;
+        Ok((first, body))
+    }
+
+    /// Reads packets until a SUBSCRIBE arrives; returns (packet id, topic).
+    /// Anything else (PINGREQ, ...) is ignored.
+    async fn read_subscribe(s: &mut tokio::net::TcpStream) -> std::io::Result<(u16, String)> {
+        loop {
+            let (first, body) = read_packet(s).await?;
+            if first == 0x82 {
+                let pid = u16::from_be_bytes([body[0], body[1]]);
+                let tlen = usize::from(u16::from_be_bytes([body[2], body[3]]));
+                let topic = String::from_utf8_lossy(&body[4..4 + tlen]).into_owned();
+                return Ok((pid, topic));
+            }
+        }
+    }
+
+    /// Minimal MQTT 3.1.1 broker: the first connection is accepted, its
+    /// SUBSCRIBE acked, then the socket is dropped (a broker restart). The
+    /// task resolves with the topic subscribed on the second connection.
+    async fn fake_broker_restart() -> (u16, tokio::task::JoinHandle<String>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            assert_eq!(read_packet(&mut s).await.unwrap().0, 0x10, "CONNECT");
+            s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            let (pid, _) = read_subscribe(&mut s).await.unwrap();
+            let [hi, lo] = pid.to_be_bytes();
+            s.write_all(&[0x90, 0x03, hi, lo, 0x01]).await.unwrap();
+            drop(s);
+
+            let (mut s, _) = listener.accept().await.unwrap();
+            assert_eq!(read_packet(&mut s).await.unwrap().0, 0x10, "CONNECT");
+            s.write_all(&[0x20, 0x02, 0x00, 0x00]).await.unwrap();
+            read_subscribe(&mut s).await.unwrap().1
+        });
+        (port, task)
+    }
+
+    /// rumqttc does not replay SUBSCRIBE packets on reconnect, so the pump
+    /// must subscribe on every `ConnAck` or responses stop arriving after a
+    /// broker restart.
+    #[tokio::test]
+    async fn resubscribes_response_topic_after_broker_restart() {
+        let (port, broker) = fake_broker_restart().await;
+        let _client = MqttProviderClient::connect(
+            "127.0.0.1",
+            port,
+            "test-client",
+            "athena/providers/x/request",
+            "athena/providers/x/response",
+            Duration::from_secs(1),
+        )
+        .await;
+
+        let topic = tokio::time::timeout(Duration::from_secs(5), broker)
+            .await
+            .expect("no SUBSCRIBE after reconnect")
+            .unwrap();
+        assert_eq!(topic, "athena/providers/x/response");
+    }
 }
